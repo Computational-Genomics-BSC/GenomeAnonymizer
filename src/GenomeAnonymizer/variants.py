@@ -23,6 +23,10 @@ class CalledGenomicVariant:
         self.length = length
         self.allele: str = allele
         self.somatic_variation_type = SomaticVariationType.UNCLASSIFIED
+        self.supporting_read_ids = []
+
+    def add_supporting_read_id(self, read_id):
+        self.supporting_read_ids.append(read_id)
 
     def __eq__(self, var2):
         if self.seq_name != var2.seq_name:
