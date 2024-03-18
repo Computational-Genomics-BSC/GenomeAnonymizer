@@ -4,7 +4,9 @@ import re
 from typing import Dict, List
 import pysam
 from variant_extractor import VariantExtractor
+from variant_extractor.variants import VariantType
 from variants import CalledGenomicVariant, SomaticVariationType
+
 
 # constants
 DATASET_IDX_TUMORAL = 0
@@ -31,8 +33,8 @@ def process_indels(pileup_column, dataset_idx, seen_read_alns, called_genomic_va
                 if cigar_op in cigar_indels:
                     pos = start_ref_pos + current_cigar_len
                     length = int(symbol)
-                    var_type = CalledGenomicVariant.TYPE_INDEL
-                    end = pos + 1 if symbol == 'I' else pos + length
+                    var_type = VariantType.INS if cigar_op == 'I' else VariantType.DEL
+                    end = pos + 1 if var_type == VariantType.INS else pos + length
                     called_indel = CalledGenomicVariant(seq_name, pos, end, var_type, length, "")
                     called_indel.add_supporting_read_id(aln.query_name)
                     if called_indel.pos not in called_genomic_variants:
@@ -78,7 +80,7 @@ def process_snvs(pileup_column, dataset_idx, called_genomic_variants):
         base = base.upper()
         if base in ignore_bases:
             continue
-        called_snv = CalledGenomicVariant(seq_name, column_pos, column_pos, CalledGenomicVariant.TYPE_SNV, 1,
+        called_snv = CalledGenomicVariant(seq_name, column_pos, column_pos, VariantType.SNV, 1,
                                           base)
         called_snv.add_supporting_read_id(read_names[i])
         if called_snv.pos not in called_genomic_variants:

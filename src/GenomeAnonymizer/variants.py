@@ -1,5 +1,7 @@
 # @author: Nicolas Gaitan
 from enum import Enum
+from variant_extractor.variants import VariantRecord
+from variant_extractor.variants import VariantType
 
 
 class SomaticVariationType(Enum):
@@ -12,26 +14,31 @@ class SomaticVariationType(Enum):
 
 
 class CalledGenomicVariant:
-    TYPE_SNV = 'SNV'
-    TYPE_INDEL = 'INDEL'
+    # TYPE_SNV = 'SNV'
+    # TYPE_INDEL = 'INDEL'
 
     def __init__(self, seq_name, pos, end, var_type, length, allele):
         self.seq_name: str = seq_name
         self.pos: int = pos
         self.end: int = end
-        self.var_type: str = var_type
+        self.variant_type: VariantType = var_type
         self.length = length
         self.allele: str = allele
         self.somatic_variation_type = SomaticVariationType.UNCLASSIFIED
-        self.supporting_read_ids = []
+        self.supporting_read_ids = set()
+
+    @classmethod
+    def from_variant_record(cls, variant_record: VariantRecord):
+        return cls(variant_record.contig, variant_record.pos, variant_record.end,
+                   variant_record.variant_type, variant_record.length, variant_record.alt)
 
     def add_supporting_read_id(self, read_id):
-        self.supporting_read_ids.append(read_id)
+        self.supporting_read_ids.add(read_id)
 
     def __eq__(self, var2):
         if self.seq_name != var2.seq_name:
             return False
-        if self.var_type != var2.var_type:
+        if self.variant_type != var2.variant_type:
             return False
         if self.pos != var2.pos:
             return False
