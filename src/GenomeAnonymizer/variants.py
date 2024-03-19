@@ -25,15 +25,16 @@ class CalledGenomicVariant:
         self.length = length
         self.allele: str = allele
         self.somatic_variation_type = SomaticVariationType.UNCLASSIFIED
-        self.supporting_read_ids = set()
+        # Dictionary with the supporting read ids as key and the position of the variant in the read as value
+        self.supporting_reads = dict()
 
     @classmethod
     def from_variant_record(cls, variant_record: VariantRecord):
         return cls(variant_record.contig, variant_record.pos, variant_record.end,
                    variant_record.variant_type, variant_record.length, variant_record.alt)
 
-    def add_supporting_read_id(self, read_id):
-        self.supporting_read_ids.add(read_id)
+    def add_supporting_read(self, read_id, var_read_pos):
+        self.supporting_reads[read_id] = var_read_pos
 
     def __eq__(self, var2):
         if self.seq_name != var2.seq_name:

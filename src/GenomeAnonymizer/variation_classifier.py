@@ -1,9 +1,6 @@
 # @author: Nicolas Gaitan
 
 import re
-from typing import Dict, List
-import pysam
-from variant_extractor import VariantExtractor
 from variant_extractor.variants import VariantType
 from variants import CalledGenomicVariant, SomaticVariationType
 
@@ -17,6 +14,7 @@ def process_indels(pileup_column, dataset_idx, seen_read_alns, called_genomic_va
     regexp = r"(?<=[a-zA-Z=])(?=[0-9])|(?<=[0-9])(?=[a-zA-Z=])"  # regex to split cigar string
     cigar_indels = {"I", "D"}  # cigar operations to report
     ref_consuming = {'M', 'D', 'N', '=', 'X'}  # stores reference consuming cigar operations
+    read_consuming_only = ['S', 'H', 'I']  # stores read consuming cigar operations
     pileups = pileup_column.pileups
     for pileup_read in pileups:
         aln = pileup_read.alignment
@@ -26,17 +24,19 @@ def process_indels(pileup_column, dataset_idx, seen_read_alns, called_genomic_va
         cigar_list = re.split(regexp, aln.cigarstring)
         start_ref_pos = aln.reference_start
         current_cigar_len = 0
+        read_consumed_bases = 0
         seq_name = aln.reference_name
         for cigar_list_idx, symbol in enumerate(cigar_list):
             if symbol.isdigit():
                 cigar_op = cigar_list[cigar_list_idx + 1]
                 if cigar_op in cigar_indels:
                     pos = start_ref_pos + current_cigar_len
+                    in_read_pos = current_cigar_len + read_consumed_bases
                     length = int(symbol)
                     var_type = VariantType.INS if cigar_op == 'I' else VariantType.DEL
                     end = pos + 1 if var_type == VariantType.INS else pos + length
                     called_indel = CalledGenomicVariant(seq_name, pos, end, var_type, length, "")
-                    called_indel.add_supporting_read_id(aln.query_name)
+                    called_indel.add_supporting_read(aln.query_name, in_read_pos)
                     if called_indel.pos not in called_genomic_variants:
                         called_genomic_variants[called_indel.pos] = []
                     indel_pos_list = called_genomic_variants[called_indel.pos]
@@ -68,6 +68,10 @@ def process_indels(pileup_column, dataset_idx, seen_read_alns, called_genomic_va
                                 called_indel.somatic_variation_type = SomaticVariationType.NORMAL_ONLY_VARIANT
                 if cigar_op in ref_consuming:
                     current_cigar_len += int(symbol)
+                if cigar_op in read_consuming_only:
+                    read_consumed_bases += int(symbol)
+                if cigar_op == 'D':
+                    read_consumed_bases -= int(symbol)
 
 
 def process_snvs(pileup_column, dataset_idx, called_genomic_variants):
@@ -76,13 +80,14 @@ def process_snvs(pileup_column, dataset_idx, called_genomic_variants):
     column_pos = pileup_column.reference_pos
     ignore_bases = {'.', ',', 'N'}
     read_names = pileup_column.get_query_names
+    in_read_positions = pileup_column.get_query_positions
     for i, base in enumerate(column_bases):
         base = base.upper()
         if base in ignore_bases:
             continue
         called_snv = CalledGenomicVariant(seq_name, column_pos, column_pos, VariantType.SNV, 1,
                                           base)
-        called_snv.add_supporting_read_id(read_names[i])
+        called_snv.add_supporting_read(read_names[i], in_read_positions[i])
         if called_snv.pos not in called_genomic_variants:
             called_genomic_variants[called_snv.pos] = []
         snv_pos_list = called_genomic_variants[called_snv.pos]

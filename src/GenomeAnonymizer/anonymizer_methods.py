@@ -1,13 +1,13 @@
 # @author: Nicolas Gaitan
 
-from typing import Protocol
+from typing import Protocol, Dict, List, Iterable
 
 import pysam
 from variants import CalledGenomicVariant, SomaticVariationType
 from variant_extractor.variants import VariantRecord
 from variant_extractor.variants import VariantType
 from variation_classifier import classify_variation_in_pileup_column
-from variation_classifier import DATASET_IDX_NORMAL, DATASET_IDX_TUMORAL
+from variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL
 
 
 class Anonymizer(Protocol):
@@ -29,10 +29,17 @@ class Anonymizer(Protocol):
     def mask_germline_snvs(self, pileup_column, called_genomic_variants, variant_record) -> None:
         pass
 
+    def get_anonymized_reads(self):
+        pass
+
+    def yield_anonymized_reads(self):
+        pass
+
 
 class CompleteGermlineAnonymizer:
     def __init__(self):
-        self.anonymized_reads = dict()
+        self.anonymized_reads: Dict[str, AnonymizedRead] = dict()
+        self.has_anonymized_reads = False
 
     def anonymize(self, variant_record, tumor_reads_pileup, normal_reads_pileup):
         called_genomic_variants = {}
@@ -40,10 +47,11 @@ class CompleteGermlineAnonymizer:
         for dataset_idx, current_pileup in enumerate((tumor_reads_pileup, normal_reads_pileup)):
             for pileup_column in current_pileup:
                 classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_alns, called_genomic_variants)
+                # TODO: mask indels
                 self.mask_germline_snvs(pileup_column, dataset_idx, called_genomic_variants, variant_record)
+                self.has_anonymized_reads = True
 
     def mask_germline_snvs(self, pileup_column, dataset_idx, called_genomic_variants, variant_record):
-        # TODO: mask indels
         pos = pileup_column.reference_pos
         for pileup_read in pileup_column.pileups:
             aln = pileup_read.alignment
@@ -51,17 +59,33 @@ class CompleteGermlineAnonymizer:
                 self.anonymized_reads[aln.query_name] = AnonymizedRead(aln, dataset_idx)
         variants_in_column = called_genomic_variants.get(pos, None)
         if variants_in_column is None:
-            # TODO: Still collect reads without variation
             return
         variant_to_keep = CalledGenomicVariant.from_variant_record(variant_record)
         for called_variant in variants_in_column:
-            if (called_variant.variant_type == VariantType.SNV and
-                    called_variant.somatic_variation_type == SomaticVariationType.TUMORAL_NORMAL_VARIANT
+            if (called_variant.somatic_variation_type == SomaticVariationType.TUMORAL_NORMAL_VARIANT
                     and called_variant != variant_to_keep):
-                for read_id in called_variant.supporting_read_ids:
-                    # TODO: modify reads according to the variation
-                    pass
-                pass
+                if called_variant.variant_type == VariantType.SNV:
+                    # TODO: mask indels
+                    for read_id, var_read_pos in called_variant.supporting_reads.items():
+                        self.anonymized_reads[read_id].modify_base_pair(var_read_pos, called_variant.allele)
+
+    def get_anonymized_reads(self):
+        fastx_records = ([], [])
+        if not self.has_anonymized_reads:
+            raise ValueError("No reads have been anonymized, call anonymize() first")
+        for read_id, anonymized_read_obj in self.anonymized_reads.items():
+            dataset_records = fastx_records[anonymized_read_obj.dataset_idx]
+            dataset_records.append(anonymized_read_obj.get_anonymized_read())
+        return fastx_records
+
+    def yield_anonymized_reads(self):
+        if not self.has_anonymized_reads:
+            raise ValueError("No reads have been anonymized, call anonymize() first")
+        for read_id, anonymized_read_obj in self.anonymized_reads.items():
+            if anonymized_read_obj.dataset_idx == DATASET_IDX_TUMORAL:
+                yield DATASET_IDX_TUMORAL, anonymized_read_obj.get_anonymized_read()
+            elif anonymized_read_obj.dataset_idx == DATASET_IDX_NORMAL:
+                yield DATASET_IDX_NORMAL, anonymized_read_obj.get_anonymized_read()
 
 
 class AnonymizedRead:
@@ -81,7 +105,8 @@ class AnonymizedRead:
 
     def get_anonymized_read(self) -> pysam.FastxRecord:
         anonymized_read_seq = ''.join(self.anonymized_sequence_list)
-        anonimized_read_qual = ''.join(self.anonymized_qualities_list)
+        anonimized_read_qual = ''.join(map(lambda x: chr( x+33 ), self.anonymized_qualities_list))
+        # anonimized_read_qual = ''.join(self.anonymized_qualities_list)
         if len(anonymized_read_seq) != len(self.original_sequence):
             raise ValueError("Anonymized read length does not match original read length")
         if len(anonimized_read_qual) != len(self.original_qualities):
@@ -89,3 +114,4 @@ class AnonymizedRead:
         anonymized_read: pysam.FastxRecord = pysam.FastxRecord(name=self.read_id, sequence=anonymized_read_seq,
                                                                quality=anonimized_read_qual)
         return anonymized_read
+
