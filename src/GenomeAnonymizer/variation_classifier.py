@@ -2,7 +2,7 @@
 
 import re
 from variant_extractor.variants import VariantType
-from variants import CalledGenomicVariant, SomaticVariationType
+from src.GenomeAnonymizer.variants import CalledGenomicVariant, SomaticVariationType
 
 
 # constants

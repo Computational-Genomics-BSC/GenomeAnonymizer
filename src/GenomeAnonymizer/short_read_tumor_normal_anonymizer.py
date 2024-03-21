@@ -8,8 +8,8 @@ import pysam
 import os
 from variant_extractor import VariantExtractor
 from variant_extractor.variants import VariantRecord, VariantType
-from anonymizer_methods import Anonymizer
-from variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL
+from src.GenomeAnonymizer.anonymizer_methods import Anonymizer
+from src.GenomeAnonymizer.variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL
 
 """Module for anonymizing short read tumor-normal pair genomes, using any object that implements the Anonymizer 
 protocol"""

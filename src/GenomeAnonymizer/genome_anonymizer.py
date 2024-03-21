@@ -5,9 +5,8 @@ from argparse import ArgumentParser
 import logging
 import pysam
 from variant_extractor import VariantExtractor
-from anonymizer_methods import Anonymizer
-
-from short_read_tumor_normal_anonymizer import run_short_read_tumor_normal_anonymizer
+from src.GenomeAnonymizer.anonymizer_methods import Anonymizer
+from src.GenomeAnonymizer.short_read_tumor_normal_anonymizer import run_short_read_tumor_normal_anonymizer
 
 
 def exec_parser():

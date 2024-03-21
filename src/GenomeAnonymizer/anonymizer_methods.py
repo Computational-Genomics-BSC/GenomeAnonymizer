@@ -1,13 +1,12 @@
 # @author: Nicolas Gaitan
 
-from typing import Protocol, Dict, List, Iterable
+from typing import Protocol, Dict
 
 import pysam
-from variants import CalledGenomicVariant, SomaticVariationType
-from variant_extractor.variants import VariantRecord
 from variant_extractor.variants import VariantType
-from variation_classifier import classify_variation_in_pileup_column
-from variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL
+from src.GenomeAnonymizer.variants import CalledGenomicVariant, SomaticVariationType
+from src.GenomeAnonymizer.variation_classifier import classify_variation_in_pileup_column
+from src.GenomeAnonymizer.variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL
 
 
 class Anonymizer(Protocol):

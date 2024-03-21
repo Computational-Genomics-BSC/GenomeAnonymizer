@@ -1,9 +1,10 @@
 [tool.poetry]
-name = "genomeanonymizer"
-version = "0.1.0"
+name = "GenomeAnonymizer"
+version = "0.0.1"
 description = ""
 authors = ["Nicolas Gaitan <ngaitan55@gmail.com>"]
 readme = "README.md"
+packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -14,3 +15,9 @@ variant-extractor = "^4.0.6"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+genome_anonymizer = "src.GenomeAnonymizer.genome_anonymizer:run_anonymizer"
+
+
+
