@@ -48,12 +48,11 @@ class CompleteGermlineAnonymizer:
     def mask_germline_snvs(self, pileup_column, dataset_idx, called_genomic_variants, variant_record):  # , ref_genome):
         pos = pileup_column.reference_pos
         ref_base = -1
-        # ref_base = pileup_column.reference_base
-        # ref_base = ref_genome.fetch(pileup_column, pos - 1, pos) -> Might cause issues due to accesing the same file again,
-        #                                                                        after classification
+        # ref_base = pileup_column.reference_base ref_base = ref_genome.fetch(pileup_column, pos - 1, pos) -> Might
+        # cause issues due to accesing the same file again, after classification
         for pileup_read in pileup_column.pileups:
             aln = pileup_read.alignment
-            if ref_base == -1: # Requires the MD tag to be present in the alignment
+            if ref_base == -1:  # Requires the MD tag to be present in the alignment
                 ref_base = aln.get_reference_sequence()[pos]
             if aln.query_name not in self.anonymized_reads:
                 self.anonymized_reads[aln.query_name] = AnonymizedRead(aln, dataset_idx)

@@ -1,4 +1,5 @@
 # @author: Nicolas Gaitan
+import bisect
 import gzip
 import logging
 from typing import Union, List, Tuple
@@ -6,21 +7,49 @@ from typing import Union, List, Tuple
 import pysam
 import os
 from variant_extractor import VariantExtractor
-from variant_extractor.variants import VariantRecord
+from variant_extractor.variants import VariantRecord, VariantType
 from anonymizer_methods import Anonymizer
 from variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL
 
-"""Module for anonymizing short read tumor-normal pair genomes, using any object that implements the Anonymizer protocol"""
+"""Module for anonymizing short read tumor-normal pair genomes, using any object that implements the Anonymizer 
+protocol"""
 
 
-def get_window(variant_record, window_size=2000):
-    """
-    A function that calculates a window around a variant record position.
-    Returns:
-    tuple: A tuple containing contig, start position, and end position of the window.
-    """
+def get_windows(variants, ref_genome, window_size=2000):
     half_window = int(window_size / 2)
-    return variant_record.contig, variant_record.pos - half_window, variant_record.end + half_window
+    windows = dict()
+    for seq in ref_genome.references:
+        windows[seq] = []
+    for variant in variants:
+        if variant.variant_type == VariantType.INV:
+            if variant.pos + half_window > variant.end - half_window:
+                bisect.insort(windows[variant.contig],
+                              (variant.pos - half_window, variant.end + half_window, variant),
+                              key=lambda x: (x[0], x[1]))
+            else:
+                bisect.insort(windows[variant.contig],
+                              (variant.pos - half_window, variant.pos + half_window, variant),
+                              key=lambda x: (x[0], x[1]))
+                bisect.insort(windows[variant.contig],
+                              (variant.end - half_window, variant.end + half_window, variant),
+                              key=lambda x: (x[0], x[1]))
+        elif variant.variant_type == VariantType.TRA:
+            bisect.insort(windows[variant.contig],
+                          (variant.pos - half_window, variant.pos + half_window, variant),
+                          key=lambda x: (x[0], x[1]))
+            bisect.insort(windows[variant.contig],
+                          (variant.end - half_window, variant.end + half_window, variant),
+                          key=lambda x: (x[0], x[1]))
+        elif variant.variant_type == VariantType.SNV:
+            bisect.insort(windows[variant.contig],
+                          (variant.pos - half_window, variant.pos + half_window, variant),
+                          key=lambda x: (x[0], x[1]))
+        else:
+            bisect.insort(windows[variant.contig],
+                          (variant.pos - half_window, variant.end + half_window, variant),
+                          key=lambda x: (x[0], x[1]))
+
+    return windows
 
 
 def anonymize_genome(vcf_variants: VariantExtractor, tumor_bam: pysam.AlignmentFile, normal_bam: pysam.AlignmentFile,
@@ -31,33 +60,35 @@ def anonymize_genome(vcf_variants: VariantExtractor, tumor_bam: pysam.AlignmentF
     classifier, and anonymizer object.
     """
     try:
-        for variant_record in vcf_variants:
-            window = get_window(variant_record)
-            tumor_reads_pileup = tumor_bam.pileup(contig=window[0], start=window[1], stop=window[2],
-                                                  fastafile=ref_genome, min_base_quality=0)
-            normal_reads_pileup = normal_bam.pileup(contig=window[0], start=window[1], stop=window[2],
-                                                    fastafile=ref_genome, min_base_quality=0)
-            anonymizer.anonymize(variant_record, tumor_reads_pileup, normal_reads_pileup)  # , ref_genome)
-            anonymized_reads_generator = anonymizer.yield_anonymized_reads()
-            with (gzip.open(tumor_output_fastq + '.1.fastq.gz', 'wb') as tumor_fastq_writer_pair1,
-                  gzip.open(normal_output_fastq + '.1.fastq.gz', 'wb') as normal_fastq_writer_pair1,
-                  gzip.open(tumor_output_fastq + '.2.fastq.gz', 'wb') as tumor_fastq_writer_pair2,
-                  gzip.open(normal_output_fastq + '.2.fastq.gz', 'wb') as normal_fastq_writer_pair2
-                  ):
-                for dataset_idx, fastq_record in anonymized_reads_generator:
-                    byte_coded_record = str(fastq_record).encode()
-                    if dataset_idx == DATASET_IDX_TUMORAL:
-                        if fastq_record.is_read1:
-                            tumor_fastq_writer_pair1.write(byte_coded_record)
-                        elif fastq_record.is_read2:
-                            tumor_fastq_writer_pair2.write(byte_coded_record)
-                        # tumor_fastq_writer.write(byte_coded_record)
-                    elif dataset_idx == DATASET_IDX_NORMAL:
-                        if fastq_record.is_read1:
-                            normal_fastq_writer_pair1.write(byte_coded_record)
-                        elif fastq_record.is_read2:
-                            normal_fastq_writer_pair2.write(byte_coded_record)
-                        # normal_fastq_writer.write(byte_coded_record)
+        windows = get_windows(vcf_variants, ref_genome)
+        for seq_name, seq_windows in windows.items():
+            for window in seq_windows:
+                # Window is a tuple (start, end, VariantRecord)
+                tumor_reads_pileup = tumor_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
+                                                      fastafile=ref_genome, min_base_quality=0)
+                normal_reads_pileup = normal_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
+                                                        fastafile=ref_genome, min_base_quality=0)
+                anonymizer.anonymize(window[2], tumor_reads_pileup, normal_reads_pileup)  # , ref_genome)
+                anonymized_reads_generator = anonymizer.yield_anonymized_reads()
+                with (gzip.open(tumor_output_fastq + '.1.fastq.gz', 'wb') as tumor_fastq_writer_pair1,
+                      gzip.open(normal_output_fastq + '.1.fastq.gz', 'wb') as normal_fastq_writer_pair1,
+                      gzip.open(tumor_output_fastq + '.2.fastq.gz', 'wb') as tumor_fastq_writer_pair2,
+                      gzip.open(normal_output_fastq + '.2.fastq.gz', 'wb') as normal_fastq_writer_pair2
+                      ):
+                    for dataset_idx, fastq_record in anonymized_reads_generator:
+                        byte_coded_record = str(fastq_record).encode()
+                        if dataset_idx == DATASET_IDX_TUMORAL:
+                            if fastq_record.is_read1:
+                                tumor_fastq_writer_pair1.write(byte_coded_record)
+                            elif fastq_record.is_read2:
+                                tumor_fastq_writer_pair2.write(byte_coded_record)
+                            # tumor_fastq_writer.write(byte_coded_record)
+                        elif dataset_idx == DATASET_IDX_NORMAL:
+                            if fastq_record.is_read1:
+                                normal_fastq_writer_pair1.write(byte_coded_record)
+                            elif fastq_record.is_read2:
+                                normal_fastq_writer_pair2.write(byte_coded_record)
+                            # normal_fastq_writer.write(byte_coded_record)
     except Exception as e:
         logging.error(e)
 
