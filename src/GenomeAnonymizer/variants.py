@@ -14,8 +14,6 @@ class SomaticVariationType(Enum):
 
 
 class CalledGenomicVariant:
-    # TYPE_SNV = 'SNV'
-    # TYPE_INDEL = 'INDEL'
 
     def __init__(self, seq_name, pos, end, var_type, length, allele):
         self.seq_name: str = seq_name

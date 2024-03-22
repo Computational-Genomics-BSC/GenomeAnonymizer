@@ -1,13 +1,10 @@
 # @author: Nicolas Gaitan
-import bisect
 import gzip
 import logging
-from typing import Union, List, Tuple
-
+from typing import List, Tuple
 import pysam
-import os
 from variant_extractor import VariantExtractor
-from variant_extractor.variants import VariantRecord, VariantType
+from variant_extractor.variants import VariantType
 from src.GenomeAnonymizer.anonymizer_methods import Anonymizer
 from src.GenomeAnonymizer.variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL
 
@@ -21,34 +18,22 @@ def get_windows(variants, ref_genome, window_size=2000):
     for seq in ref_genome.references:
         windows[seq] = []
     for variant in variants:
+        windows_in_seq = windows[variant.contig]
         if variant.variant_type == VariantType.INV:
             if variant.pos + half_window > variant.end - half_window:
-                bisect.insort(windows[variant.contig],
-                              (variant.pos - half_window, variant.end + half_window, variant),
-                              key=lambda x: (x[0], x[1]))
+                windows_in_seq.append((variant.pos - half_window, variant.end + half_window, variant))
             else:
-                bisect.insort(windows[variant.contig],
-                              (variant.pos - half_window, variant.pos + half_window, variant),
-                              key=lambda x: (x[0], x[1]))
-                bisect.insort(windows[variant.contig],
-                              (variant.end - half_window, variant.end + half_window, variant),
-                              key=lambda x: (x[0], x[1]))
+                windows_in_seq.append((variant.pos - half_window, variant.pos + half_window, variant))
+                windows_in_seq.append((variant.end - half_window, variant.end + half_window, variant))
         elif variant.variant_type == VariantType.TRA:
-            bisect.insort(windows[variant.contig],
-                          (variant.pos - half_window, variant.pos + half_window, variant),
-                          key=lambda x: (x[0], x[1]))
-            bisect.insort(windows[variant.contig],
-                          (variant.end - half_window, variant.end + half_window, variant),
-                          key=lambda x: (x[0], x[1]))
+            windows_in_seq.append((variant.pos - half_window, variant.pos + half_window, variant))
+            windows_in_seq.append((variant.end - half_window, variant.end + half_window, variant))
         elif variant.variant_type == VariantType.SNV:
-            bisect.insort(windows[variant.contig],
-                          (variant.pos - half_window, variant.pos + half_window, variant),
-                          key=lambda x: (x[0], x[1]))
+            windows_in_seq.append((variant.pos - half_window, variant.pos + half_window, variant))
         else:
-            bisect.insort(windows[variant.contig],
-                          (variant.pos - half_window, variant.end + half_window, variant),
-                          key=lambda x: (x[0], x[1]))
-
+            windows_in_seq.append((variant.pos - half_window, variant.end + half_window, variant))
+    for seq_name, seq_windows in windows.items():
+        seq_windows.sort(key=lambda x: (x[0], x[1]))
     return windows
 
 
@@ -82,25 +67,23 @@ def anonymize_genome(vcf_variants: VariantExtractor, tumor_bam: pysam.AlignmentF
                                 tumor_fastq_writer_pair1.write(byte_coded_record)
                             elif fastq_record.is_read2:
                                 tumor_fastq_writer_pair2.write(byte_coded_record)
-                            # tumor_fastq_writer.write(byte_coded_record)
                         elif dataset_idx == DATASET_IDX_NORMAL:
                             if fastq_record.is_read1:
                                 normal_fastq_writer_pair1.write(byte_coded_record)
                             elif fastq_record.is_read2:
                                 normal_fastq_writer_pair2.write(byte_coded_record)
-                            # normal_fastq_writer.write(byte_coded_record)
     except Exception as e:
         logging.error(e)
 
 
-def run_short_read_tumor_normal_anonymizer(vcf_variants: VariantExtractor,
+def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[VariantExtractor],
                                            tumor_normal_samples: List[Tuple[pysam.AlignmentFile, pysam.AlignmentFile]],
                                            ref_genome: pysam.FastaFile, anonymizer: Anonymizer,
                                            output_filenames: List[Tuple[str, str]]):
     """
     Anonymizes genomic sequencing from short read tumor-normal pairs, in the windows from each VCF variant
     Args:
-        :param vcf_variants: The VCF variants around which the sequencing data will be anonymized
+        :param vcf_variants_per_sample: The VCF variants around which the sequencing data will be anonymized, for each sample
         :param tumor_normal_samples: The list of tumor-normal samples containing the reads to be anonymized. Each sample is a
             tuple containing the tumor and normal bam files in that order
         :param ref_genome: The reference genome to which the reads were mapped
@@ -108,9 +91,9 @@ def run_short_read_tumor_normal_anonymizer(vcf_variants: VariantExtractor,
         :param output_filenames: The output filenames for the anonymized reads, in the same format as the input samples
     """
     # TODO: Implement multithreading for each sample pair
-    for sample, sample_output_files in zip(tumor_normal_samples, output_filenames):
+    for vcf_variants, samples, sample_output_files in zip(vcf_variants_per_sample, tumor_normal_samples, output_filenames):
         try:
-            anonymize_genome(vcf_variants, sample[0], sample[1], ref_genome, anonymizer, sample_output_files[0],
+            anonymize_genome(vcf_variants, samples[0], samples[1], ref_genome, anonymizer, sample_output_files[0],
                              sample_output_files[1])
         except Exception as e:
             logging.error(e)

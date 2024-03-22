@@ -1,7 +1,6 @@
 # @author: Nicolas Gaitan
 
 from typing import Protocol, Dict
-
 import pysam
 from variant_extractor.variants import VariantType
 from src.GenomeAnonymizer.variants import CalledGenomicVariant, SomaticVariationType
