@@ -8,6 +8,9 @@ from variant_extractor import VariantExtractor
 from src.GenomeAnonymizer.anonymizer_methods import Anonymizer
 from src.GenomeAnonymizer.short_read_tumor_normal_anonymizer import run_short_read_tumor_normal_anonymizer
 
+# Anonymizer algorithm options
+COMPLETE_GERMLINE_ANONYMIZER_ALGORITHM = 'complete_germline'
+
 
 def exec_parser():
     parser = ArgumentParser(
@@ -18,12 +21,12 @@ def exec_parser():
     parser.add_argument('-d', '--directory', type=str, help='Directory in which the tumor-normal sample pairs '
                                                             'and the samples text file are stored', required=True)
     parser.add_argument('-s', '--samples', type=str,
-                        help='Text file with two columns with the tumor <first column> normal <second column> '
-                             'sample pair file names and the vcf files <third column> from each sample, separated by tab',
+                        help='Text file with two columns with the tumor <first column>, normal <second column> '
+                             'sample pair file names, and the vcf files <third column> from each sample, separated by tab </\t>',
                         required=True)
-    parser.add_argument('-r', '--reference', type=str, help='reference genome to which the mappings were done',
+    parser.add_argument('-r', '--reference', type=str, help='reference genome to which the reads are mapped',
                         required=True)
-    parser.add_argument('-m', '--method', type=str, help='anonymization method to apply on the samples ' 
+    parser.add_argument('-m', '--method', type=str, help='anonymization method to apply on the samples '
                                                          'complete_germline: Mask all SNVs in the reads in the variant windows',
                         required=False,
                         default='complete_germline', choices=['complete_germline'])
@@ -46,13 +49,12 @@ def run_anonymizer():
     logging.basicConfig(level=logging.INFO)
     logging.info('Beginning execution')
     config = exec_parser()
-    # vcf_path = config.input
     variants_per_sample = []
     directory = config.directory
     ref_genome = pysam.FastaFile(config.reference)
     anonymizer_algorithm_name = config.method
     anonymizer_algorithm: Anonymizer = Anonymizer()
-    if anonymizer_algorithm_name == 'complete_germline':
+    if anonymizer_algorithm_name == COMPLETE_GERMLINE_ANONYMIZER_ALGORITHM:
         from anonymizer_methods import CompleteGermlineAnonymizer
         anonymizer_algorithm: CompleteGermlineAnonymizer = CompleteGermlineAnonymizer()
     path_to_samples = join_dir_file(directory, config.samples)
@@ -61,6 +63,8 @@ def run_anonymizer():
     output_samples = []
     with open(path_to_samples) as samples_file:
         for line in samples_file:
+            if line.startswith('#'):
+                continue
             sample_files = line.strip().split('\t')
             tumor_sample = join_dir_file(directory, sample_files[0])
             normal_sample = join_dir_file(directory, sample_files[1])
@@ -76,7 +80,8 @@ def run_anonymizer():
             samples_output_files = (tumor_output_prefix, normal_output_prefix)
             output_samples.append(samples_output_files)
     logging.info('Beginning execution of the anonymizer algorithm')
-    run_short_read_tumor_normal_anonymizer(variants_per_sample, samples, ref_genome, anonymizer_algorithm, output_samples)
+    run_short_read_tumor_normal_anonymizer(variants_per_sample, samples, ref_genome, anonymizer_algorithm,
+                                           output_samples)
     logging.info('Finished execution of GenomeAnonymizer successfully')
 
 

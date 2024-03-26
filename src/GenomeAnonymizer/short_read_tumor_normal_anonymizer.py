@@ -91,7 +91,8 @@ def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[Variant
         :param output_filenames: The output filenames for the anonymized reads, in the same format as the input samples
     """
     # TODO: Implement multithreading for each sample pair
-    for vcf_variants, samples, sample_output_files in zip(vcf_variants_per_sample, tumor_normal_samples, output_filenames):
+    for vcf_variants, samples, sample_output_files in zip(vcf_variants_per_sample, tumor_normal_samples,
+                                                          output_filenames):
         try:
             anonymize_genome(vcf_variants, samples[0], samples[1], ref_genome, anonymizer, sample_output_files[0],
                              sample_output_files[1])

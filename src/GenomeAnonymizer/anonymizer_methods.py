@@ -41,7 +41,7 @@ class CompleteGermlineAnonymizer:
                 # TODO: mask indels
                 self.mask_germline_snvs(pileup_column, dataset_idx, called_genomic_variants, variant_record)
                 # , ref_genome)
-                self.has_anonymized_reads = True
+        self.has_anonymized_reads = True
 
     def mask_germline_snvs(self, pileup_column, dataset_idx, called_genomic_variants, variant_record):  # , ref_genome):
         pos = pileup_column.reference_pos
