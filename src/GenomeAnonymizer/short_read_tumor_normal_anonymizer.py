@@ -45,10 +45,10 @@ def anonymize_genome(vcf_variants: VariantExtractor, tumor_bam: pysam.AlignmentF
     Anonymizes genomic data using the provided VCF variants, normal and tumor BAM files, reference genome,
     classifier, and anonymizer object.
     """
-    start1 = timer()
+    # start1 = timer()
     windows = get_windows(vcf_variants, ref_genome)
-    end1 = timer()
-    print(f'Time to get windows: {end1 - start1} s')
+    # end1 = timer()
+    # print(f'Time to get windows: {end1 - start1} s')
     open(tumor_output_fastq + '.1.fastq', 'w').close()
     open(normal_output_fastq + '.1.fastq', 'w').close()
     open(tumor_output_fastq + '.2.fastq', 'w').close()
@@ -60,34 +60,35 @@ def anonymize_genome(vcf_variants: VariantExtractor, tumor_bam: pysam.AlignmentF
                                                   fastafile=ref_genome, min_base_quality=0)
             normal_reads_pileup = normal_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
                                                     fastafile=ref_genome, min_base_quality=0)
-            start2 = timer()
+            # start2 = timer()
             anonymizer.anonymize(window[2], tumor_reads_pileup, normal_reads_pileup, ref_genome)
-            end2 = timer()
-            print(f'Time to anonymize reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end2 - start2} s')
+            # end2 = timer()
+            # print(f'Time to anonymize reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end2 - start2} s')
             # Anonymized reads generated per window
-            anonymized_reads_generator: Iterable[AnonymizedRead] = anonymizer.yield_anonymized_reads()
+            anonymized_reads_generator: Iterable[Tuple[AnonymizedRead, AnonymizedRead]] = anonymizer.yield_anonymized_reads()
             start3 = timer()
             with (open(tumor_output_fastq + '.1.fastq', 'a') as tumor_fastq_writer_pair1,
                   open(normal_output_fastq + '.1.fastq', 'a') as normal_fastq_writer_pair1,
                   open(tumor_output_fastq + '.2.fastq', 'a') as tumor_fastq_writer_pair2,
                   open(normal_output_fastq + '.2.fastq', 'a') as normal_fastq_writer_pair2
                   ):
-                for anonymized_read in anonymized_reads_generator:
-                    fastq_record = anonymized_read.get_anonymized_read()
-                    string_record = str(fastq_record)
-                    dataset_idx = anonymized_read.dataset_idx
+                for anonymized_read_pair in anonymized_reads_generator:
+                    anonymized_read_pair1 = anonymized_read_pair[0]
+                    anonymized_read_pair2 = anonymized_read_pair[1]
+                    if anonymized_read_pair1 is None or anonymized_read_pair2 is None:
+                        # TODO: Handle singletons, if any
+                        continue
+                    fastq_record_pair1 = str(anonymized_read_pair1.get_anonymized_fastq_record())
+                    fastq_record_pair2 = str(anonymized_read_pair2.get_anonymized_fastq_record())
+                    dataset_idx = anonymized_read_pair1.dataset_idx
                     if dataset_idx == DATASET_IDX_TUMORAL:
-                        if anonymized_read.is_read1:
-                            tumor_fastq_writer_pair1.write(string_record)
-                        elif anonymized_read.is_read2:
-                            tumor_fastq_writer_pair2.write(string_record)
+                        tumor_fastq_writer_pair1.write(f'{fastq_record_pair1}\n')
+                        tumor_fastq_writer_pair2.write(f'{fastq_record_pair2}\n')
                     elif dataset_idx == DATASET_IDX_NORMAL:
-                        if anonymized_read.is_read1:
-                            normal_fastq_writer_pair1.write(string_record)
-                        elif anonymized_read.is_read2:
-                            normal_fastq_writer_pair2.write(string_record)
-            end3 = timer()
-            print(f'Time to write anonymized reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end3 - start3} s')
+                        normal_fastq_writer_pair1.write(f'{fastq_record_pair1}\n')
+                        normal_fastq_writer_pair2.write(f'{fastq_record_pair2}\n')
+            # end3 = timer()
+            # print(f'Time to write anonymized reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end3 - start3} s')
             anonymizer.reset()
 
 
