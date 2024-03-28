@@ -1,16 +1,22 @@
 # @author: Nicolas Gaitan
 
 import re
+
+from pysam import PileupColumn, FastaFile
 from variant_extractor.variants import VariantType
 from src.GenomeAnonymizer.variants import CalledGenomicVariant, SomaticVariationType
-
+from timeit import default_timer as timer
 
 # constants
 DATASET_IDX_TUMORAL = 0
 DATASET_IDX_NORMAL = 1
 
 
-def process_indels(pileup_column, dataset_idx, seen_read_alns, called_genomic_variants):
+def generate_pair_name(aln):
+    return aln.query_name + ";1" if aln.is_read1 else aln.query_name + ";2"
+
+
+def process_indels(pileup_column, dataset_idx, seen_read_alns, ref_genome, called_genomic_variants):
     regexp = r"(?<=[a-zA-Z=])(?=[0-9])|(?<=[0-9])(?=[a-zA-Z=])"  # regex to split cigar string
     cigar_indels = {"I", "D"}  # cigar operations to report
     ref_consuming = {'M', 'D', 'N', '=', 'X'}  # stores reference consuming cigar operations
@@ -18,9 +24,11 @@ def process_indels(pileup_column, dataset_idx, seen_read_alns, called_genomic_va
     pileups = pileup_column.pileups
     for pileup_read in pileups:
         aln = pileup_read.alignment
-        if aln.query_name in seen_read_alns:
+        specific_pair_query_name = generate_pair_name(aln)
+        if specific_pair_query_name in seen_read_alns:
             continue
-        seen_read_alns.add(aln.query_name)
+        specific_pair_query_name = generate_pair_name(aln)
+        seen_read_alns.add(specific_pair_query_name)
         cigar_list = re.split(regexp, aln.cigarstring)
         start_ref_pos = aln.reference_start
         current_cigar_len = 0
@@ -35,8 +43,9 @@ def process_indels(pileup_column, dataset_idx, seen_read_alns, called_genomic_va
                     length = int(symbol)
                     var_type = VariantType.INS if cigar_op == 'I' else VariantType.DEL
                     end = pos + 1 if var_type == VariantType.INS else pos + length
-                    called_indel = CalledGenomicVariant(seq_name, pos, end, var_type, length, "")
-                    called_indel.add_supporting_read(aln.query_name, in_read_pos)
+                    # TODO: Fix alleles for indel masking
+                    called_indel = CalledGenomicVariant(seq_name, pos, end, var_type, length, "", "")
+                    called_indel.add_supporting_read(specific_pair_query_name, in_read_pos)
                     if called_indel.pos not in called_genomic_variants:
                         called_genomic_variants[called_indel.pos] = []
                     indel_pos_list = called_genomic_variants[called_indel.pos]
@@ -74,19 +83,20 @@ def process_indels(pileup_column, dataset_idx, seen_read_alns, called_genomic_va
                     read_consumed_bases -= int(symbol)
 
 
-def process_snvs(pileup_column, dataset_idx, called_genomic_variants):
+def process_snvs(pileup_column: PileupColumn, dataset_idx, ref_genome, called_genomic_variants):
     column_bases = pileup_column.get_query_sequences(mark_matches=True)
     seq_name = pileup_column.reference_name
     column_pos = pileup_column.reference_pos
     ignore_bases = {'.', ',', 'N'}
-    read_names = pileup_column.get_query_names
-    in_read_positions = pileup_column.get_query_positions
+    read_names = pileup_column.get_query_names()
+    in_read_positions = pileup_column.get_query_positions()
+    ref_base = ref_genome.fetch(seq_name, column_pos, column_pos + 1)[0].upper()
     for i, base in enumerate(column_bases):
         base = base.upper()
         if base in ignore_bases:
             continue
         called_snv = CalledGenomicVariant(seq_name, column_pos, column_pos, VariantType.SNV, 1,
-                                          base)
+                                          allele=base, ref_allele=ref_base)
         called_snv.add_supporting_read(read_names[i], in_read_positions[i])
         if called_snv.pos not in called_genomic_variants:
             called_genomic_variants[called_snv.pos] = []
@@ -119,9 +129,17 @@ def process_snvs(pileup_column, dataset_idx, called_genomic_variants):
                     called_snv.somatic_variation_type = SomaticVariationType.NORMAL_ONLY_VARIANT
 
 
-def classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_alns, called_genomic_variants):
+def classify_variation_in_pileup_column(pileup_column: PileupColumn, dataset_idx, seen_read_alns, ref_genome: FastaFile,
+                                        called_genomic_variants):
     """
     Classify the read variation returning a dictionary with every INDEL and SNV CalledGenomicVariant by coordinate.
     """
-    process_indels(pileup_column, dataset_idx, seen_read_alns, called_genomic_variants)
-    process_snvs(pileup_column, dataset_idx, called_genomic_variants)
+
+    start1 = timer()
+    process_indels(pileup_column, dataset_idx, seen_read_alns, ref_genome, called_genomic_variants)
+    end1 = timer()
+    print("Time to process indels: " + str(end1 - start1))
+    start2 = timer()
+    process_snvs(pileup_column, dataset_idx, ref_genome, called_genomic_variants)
+    end2 = timer()
+    print("Time to process SNVs: " + str(end2 - start2))

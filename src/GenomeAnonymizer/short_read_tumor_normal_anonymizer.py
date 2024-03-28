@@ -1,12 +1,13 @@
 # @author: Nicolas Gaitan
 import gzip
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Iterable
 import pysam
 from variant_extractor import VariantExtractor
 from variant_extractor.variants import VariantType
-from src.GenomeAnonymizer.anonymizer_methods import Anonymizer
+from src.GenomeAnonymizer.anonymizer_methods import Anonymizer, AnonymizedRead
 from src.GenomeAnonymizer.variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL
+from timeit import default_timer as timer
 
 """Module for anonymizing short read tumor-normal pair genomes, using any object that implements the Anonymizer 
 protocol"""
@@ -44,36 +45,50 @@ def anonymize_genome(vcf_variants: VariantExtractor, tumor_bam: pysam.AlignmentF
     Anonymizes genomic data using the provided VCF variants, normal and tumor BAM files, reference genome,
     classifier, and anonymizer object.
     """
-    try:
-        windows = get_windows(vcf_variants, ref_genome)
-        for seq_name, seq_windows in windows.items():
-            for window in seq_windows:
-                # Window is a tuple (start, end, VariantRecord)
-                tumor_reads_pileup = tumor_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
-                                                      fastafile=ref_genome, min_base_quality=0)
-                normal_reads_pileup = normal_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
-                                                        fastafile=ref_genome, min_base_quality=0)
-                anonymizer.anonymize(window[2], tumor_reads_pileup, normal_reads_pileup)  # , ref_genome)
-                anonymized_reads_generator = anonymizer.yield_anonymized_reads()
-                with (gzip.open(tumor_output_fastq + '.1.fastq.gz', 'wb') as tumor_fastq_writer_pair1,
-                      gzip.open(normal_output_fastq + '.1.fastq.gz', 'wb') as normal_fastq_writer_pair1,
-                      gzip.open(tumor_output_fastq + '.2.fastq.gz', 'wb') as tumor_fastq_writer_pair2,
-                      gzip.open(normal_output_fastq + '.2.fastq.gz', 'wb') as normal_fastq_writer_pair2
-                      ):
-                    for dataset_idx, fastq_record in anonymized_reads_generator:
-                        byte_coded_record = str(fastq_record).encode()
-                        if dataset_idx == DATASET_IDX_TUMORAL:
-                            if fastq_record.is_read1:
-                                tumor_fastq_writer_pair1.write(byte_coded_record)
-                            elif fastq_record.is_read2:
-                                tumor_fastq_writer_pair2.write(byte_coded_record)
-                        elif dataset_idx == DATASET_IDX_NORMAL:
-                            if fastq_record.is_read1:
-                                normal_fastq_writer_pair1.write(byte_coded_record)
-                            elif fastq_record.is_read2:
-                                normal_fastq_writer_pair2.write(byte_coded_record)
-    except Exception as e:
-        logging.error(e)
+    start1 = timer()
+    windows = get_windows(vcf_variants, ref_genome)
+    end1 = timer()
+    print(f'Time to get windows: {end1 - start1} s')
+    open(tumor_output_fastq + '.1.fastq', 'w').close()
+    open(normal_output_fastq + '.1.fastq', 'w').close()
+    open(tumor_output_fastq + '.2.fastq', 'w').close()
+    open(normal_output_fastq + '.2.fastq', 'w').close()
+    for seq_name, seq_windows in windows.items():
+        for window in seq_windows:
+            # Window is a tuple (start, end, VariantRecord)
+            tumor_reads_pileup = tumor_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
+                                                  fastafile=ref_genome, min_base_quality=0)
+            normal_reads_pileup = normal_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
+                                                    fastafile=ref_genome, min_base_quality=0)
+            start2 = timer()
+            anonymizer.anonymize(window[2], tumor_reads_pileup, normal_reads_pileup, ref_genome)
+            end2 = timer()
+            print(f'Time to anonymize reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end2 - start2} s')
+            # Anonymized reads generated per window
+            anonymized_reads_generator: Iterable[AnonymizedRead] = anonymizer.yield_anonymized_reads()
+            start3 = timer()
+            with (open(tumor_output_fastq + '.1.fastq', 'a') as tumor_fastq_writer_pair1,
+                  open(normal_output_fastq + '.1.fastq', 'a') as normal_fastq_writer_pair1,
+                  open(tumor_output_fastq + '.2.fastq', 'a') as tumor_fastq_writer_pair2,
+                  open(normal_output_fastq + '.2.fastq', 'a') as normal_fastq_writer_pair2
+                  ):
+                for anonymized_read in anonymized_reads_generator:
+                    fastq_record = anonymized_read.get_anonymized_read()
+                    string_record = str(fastq_record)
+                    dataset_idx = anonymized_read.dataset_idx
+                    if dataset_idx == DATASET_IDX_TUMORAL:
+                        if anonymized_read.is_read1:
+                            tumor_fastq_writer_pair1.write(string_record)
+                        elif anonymized_read.is_read2:
+                            tumor_fastq_writer_pair2.write(string_record)
+                    elif dataset_idx == DATASET_IDX_NORMAL:
+                        if anonymized_read.is_read1:
+                            normal_fastq_writer_pair1.write(string_record)
+                        elif anonymized_read.is_read2:
+                            normal_fastq_writer_pair2.write(string_record)
+            end3 = timer()
+            print(f'Time to write anonymized reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end3 - start3} s')
+            anonymizer.reset()
 
 
 def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[VariantExtractor],
@@ -93,8 +108,5 @@ def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[Variant
     # TODO: Implement multithreading for each sample pair
     for vcf_variants, samples, sample_output_files in zip(vcf_variants_per_sample, tumor_normal_samples,
                                                           output_filenames):
-        try:
-            anonymize_genome(vcf_variants, samples[0], samples[1], ref_genome, anonymizer, sample_output_files[0],
-                             sample_output_files[1])
-        except Exception as e:
-            logging.error(e)
+        anonymize_genome(vcf_variants, samples[0], samples[1], ref_genome, anonymizer, sample_output_files[0],
+                         sample_output_files[1])

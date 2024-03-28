@@ -15,13 +15,14 @@ class SomaticVariationType(Enum):
 
 class CalledGenomicVariant:
 
-    def __init__(self, seq_name, pos, end, var_type, length, allele):
+    def __init__(self, seq_name, pos, end, var_type, length, allele, ref_allele):
         self.seq_name: str = seq_name
         self.pos: int = pos
         self.end: int = end
         self.variant_type: VariantType = var_type
         self.length = length
         self.allele: str = allele
+        self.ref_allele = ref_allele
         self.somatic_variation_type = SomaticVariationType.UNCLASSIFIED
         # Dictionary with the supporting read ids as key and the position of the variant in the read as value
         self.supporting_reads = dict()
@@ -29,7 +30,7 @@ class CalledGenomicVariant:
     @classmethod
     def from_variant_record(cls, variant_record: VariantRecord):
         return cls(variant_record.contig, variant_record.pos, variant_record.end,
-                   variant_record.variant_type, variant_record.length, variant_record.alt)
+                   variant_record.variant_type, variant_record.length, variant_record.alt, variant_record.ref)
 
     def add_supporting_read(self, read_id, var_read_pos):
         self.supporting_reads[read_id] = var_read_pos
