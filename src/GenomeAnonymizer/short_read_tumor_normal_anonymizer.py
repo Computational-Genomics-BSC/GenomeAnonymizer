@@ -1,6 +1,8 @@
 # @author: Nicolas Gaitan
 import gzip
 import logging
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List, Tuple, Iterable
 import pysam
 from variant_extractor import VariantExtractor
@@ -38,14 +40,20 @@ def get_windows(variants, ref_genome, window_size=2000):
     return windows
 
 
-def anonymize_genome(vcf_variants: VariantExtractor, tumor_bam: pysam.AlignmentFile, normal_bam: pysam.AlignmentFile,
-                     ref_genome: pysam.FastaFile, anonymizer: Anonymizer, tumor_output_fastq: str,
+def anonymize_genome(vcf_variant_file: str, tumor_bam_file: str, normal_bam_file: str,
+                     # vcf_variants: VariantExtractor, tumor_bam: pysam.AlignmentFile, normal_bam: pysam.AlignmentFile,
+                     # ref_genome: pysam.FastaFile, anonymizer: Anonymizer, tumor_output_fastq: str,
+                     ref_genome_file: str, anonymizer: Anonymizer, tumor_output_fastq: str,
                      normal_output_fastq: str):
     """
     Anonymizes genomic data using the provided VCF variants, normal and tumor BAM files, reference genome,
     classifier, and anonymizer object.
     """
     # start1 = timer()
+    vcf_variants = VariantExtractor(vcf_variant_file)
+    tumor_bam = pysam.AlignmentFile(tumor_bam_file)
+    normal_bam = pysam.AlignmentFile(normal_bam_file)
+    ref_genome = pysam.FastaFile(ref_genome_file)
     windows = get_windows(vcf_variants, ref_genome)
     # end1 = timer()
     # print(f'Time to get windows: {end1 - start1} s')
@@ -53,6 +61,8 @@ def anonymize_genome(vcf_variants: VariantExtractor, tumor_bam: pysam.AlignmentF
     open(normal_output_fastq + '.1.fastq', 'w').close()
     open(tumor_output_fastq + '.2.fastq', 'w').close()
     open(normal_output_fastq + '.2.fastq', 'w').close()
+    open(tumor_output_fastq + '.single_end.fastq', 'w').close()
+    open(normal_output_fastq + '.single_end.fastq', 'w').close()
     for seq_name, seq_windows in windows.items():
         for window in seq_windows:
             # Window is a tuple (start, end, VariantRecord)
@@ -65,37 +75,52 @@ def anonymize_genome(vcf_variants: VariantExtractor, tumor_bam: pysam.AlignmentF
             # end2 = timer()
             # print(f'Time to anonymize reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end2 - start2} s')
             # Anonymized reads generated per window
-            anonymized_reads_generator: Iterable[Tuple[AnonymizedRead, AnonymizedRead]] = anonymizer.yield_anonymized_reads()
-            start3 = timer()
+            anonymized_reads_generator: Iterable[
+                Tuple[AnonymizedRead, AnonymizedRead]] = anonymizer.yield_anonymized_reads()
+            # start3 = timer()
             with (open(tumor_output_fastq + '.1.fastq', 'a') as tumor_fastq_writer_pair1,
                   open(normal_output_fastq + '.1.fastq', 'a') as normal_fastq_writer_pair1,
                   open(tumor_output_fastq + '.2.fastq', 'a') as tumor_fastq_writer_pair2,
-                  open(normal_output_fastq + '.2.fastq', 'a') as normal_fastq_writer_pair2
+                  open(normal_output_fastq + '.2.fastq', 'a') as normal_fastq_writer_pair2,
+                  open(tumor_output_fastq + '.single_end.fastq', 'a') as tumor_fastq_writer_single_end,
+                  open(normal_output_fastq + '.single_end.fastq', 'a') as normal_fastq_writer_single_end
                   ):
                 for anonymized_read_pair in anonymized_reads_generator:
                     anonymized_read_pair1 = anonymized_read_pair[0]
                     anonymized_read_pair2 = anonymized_read_pair[1]
-                    if anonymized_read_pair1 is None or anonymized_read_pair2 is None:
-                        # TODO: Handle singletons, if any
-                        continue
-                    fastq_record_pair1 = str(anonymized_read_pair1.get_anonymized_fastq_record())
-                    fastq_record_pair2 = str(anonymized_read_pair2.get_anonymized_fastq_record())
-                    dataset_idx = anonymized_read_pair1.dataset_idx
-                    if dataset_idx == DATASET_IDX_TUMORAL:
-                        tumor_fastq_writer_pair1.write(f'{fastq_record_pair1}\n')
-                        tumor_fastq_writer_pair2.write(f'{fastq_record_pair2}\n')
-                    elif dataset_idx == DATASET_IDX_NORMAL:
-                        normal_fastq_writer_pair1.write(f'{fastq_record_pair1}\n')
-                        normal_fastq_writer_pair2.write(f'{fastq_record_pair2}\n')
+                    if anonymized_read_pair1 is not None and anonymized_read_pair2 is not None:
+                        fastq_record_pair1 = str(anonymized_read_pair1.get_anonymized_fastq_record())
+                        fastq_record_pair2 = str(anonymized_read_pair2.get_anonymized_fastq_record())
+                        dataset_idx = anonymized_read_pair1.dataset_idx
+                        if dataset_idx == DATASET_IDX_TUMORAL:
+                            tumor_fastq_writer_pair1.write(f'{fastq_record_pair1}\n')
+                            tumor_fastq_writer_pair2.write(f'{fastq_record_pair2}\n')
+                        elif dataset_idx == DATASET_IDX_NORMAL:
+                            normal_fastq_writer_pair1.write(f'{fastq_record_pair1}\n')
+                            normal_fastq_writer_pair2.write(f'{fastq_record_pair2}\n')
+                    else:
+                        if anonymized_read_pair1 is not None:
+                            dataset_idx = anonymized_read_pair1.dataset_idx
+                            fastq_record = str(anonymized_read_pair1.get_anonymized_fastq_record())
+                        elif anonymized_read_pair2 is not None:
+                            dataset_idx = anonymized_read_pair2.dataset_idx
+                            fastq_record = str(anonymized_read_pair2.get_anonymized_fastq_record())
+                        if dataset_idx == DATASET_IDX_TUMORAL:
+                            tumor_fastq_writer_single_end.write(f'{fastq_record}\n')
+                        elif dataset_idx == DATASET_IDX_NORMAL:
+                            normal_fastq_writer_single_end.write(f'{fastq_record}\n')
             # end3 = timer()
             # print(f'Time to write anonymized reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end3 - start3} s')
             anonymizer.reset()
 
 
-def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[VariantExtractor],
-                                           tumor_normal_samples: List[Tuple[pysam.AlignmentFile, pysam.AlignmentFile]],
-                                           ref_genome: pysam.FastaFile, anonymizer: Anonymizer,
-                                           output_filenames: List[Tuple[str, str]]):
+def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[str],
+                                           # vcf_variants_per_sample: List[VariantExtractor],
+                                           # tumor_normal_samples: List[Tuple[pysam.AlignmentFile, pysam.AlignmentFile]],
+                                           tumor_normal_samples: List[Tuple[str, str]],
+                                           # ref_genome: pysam.FastaFile, anonymizer: Anonymizer,
+                                           ref_genome: str, anonymizer: Anonymizer,
+                                           output_filenames: List[Tuple[str, str]], cpus):
     """
     Anonymizes genomic sequencing from short read tumor-normal pairs, in the windows from each VCF variant
     Args:
@@ -105,9 +130,16 @@ def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[Variant
         :param ref_genome: The reference genome to which the reads were mapped
         :param anonymizer: The specified anonymizing method
         :param output_filenames: The output filenames for the anonymized reads, in the same format as the input samples
+        :param cpus: The number of cpus to use for the anonymization of each tumor-normal sample
     """
     # TODO: Implement multithreading for each sample pair
-    for vcf_variants, samples, sample_output_files in zip(vcf_variants_per_sample, tumor_normal_samples,
-                                                          output_filenames):
-        anonymize_genome(vcf_variants, samples[0], samples[1], ref_genome, anonymizer, sample_output_files[0],
-                         sample_output_files[1])
+    tasks = []
+    with ProcessPoolExecutor(max_workers=cpus) as executor:
+        for vcf_variants, samples, sample_output_files in zip(vcf_variants_per_sample, tumor_normal_samples,
+                                                              output_filenames):
+            tasks.append(executor.submit(anonymize_genome, vcf_variants, samples[0], samples[1], ref_genome, anonymizer,
+                                         sample_output_files[0], sample_output_files[1]))
+            # anonymize_genome(vcf_variants, samples[0], samples[1], ref_genome, anonymizer, sample_output_files[0],
+            #                 sample_output_files[1])
+        for task in as_completed(tasks):
+            task.result()

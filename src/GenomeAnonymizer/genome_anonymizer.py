@@ -1,9 +1,9 @@
 import re
 import sys
+import os
 from argparse import ArgumentParser
 import logging
-import pysam
-from variant_extractor import VariantExtractor
+from typing import Tuple
 from src.GenomeAnonymizer.anonymizer_methods import CompleteGermlineAnonymizer
 from src.GenomeAnonymizer.short_read_tumor_normal_anonymizer import run_short_read_tumor_normal_anonymizer
 from timeit import default_timer as timer
@@ -34,6 +34,7 @@ def exec_parser():
                                                          'complete_germline: Mask all SNVs in the reads in the variant windows',
                         required=False,
                         default='complete_germline', choices=['complete_germline'])
+    parser.add_argument('-c', '--cpu', help='Number of CPUs available for the execution', type=int, default=1)
     config = parser.parse_args()
     return config
 
@@ -57,7 +58,7 @@ def run_anonymizer():
     config = exec_parser()
     variants_per_sample = []
     directory = config.directory
-    ref_genome = pysam.FastaFile(config.reference)
+    ref_genome = config.reference
     anonymizer_algorithm_name = config.method
     if anonymizer_algorithm_name not in ANONYMIZER_ALGORITHMS:
         logging.error('Anonymizer algorithm %s is not a valid option', anonymizer_algorithm_name)
@@ -80,10 +81,12 @@ def run_anonymizer():
                 normal_sample = join_dir_file(directory, sample_files[1])
                 vcf_sample = join_dir_file(directory, sample_files[2])
                 logging.info('Reading sample files %s and %s', tumor_sample, normal_sample)
-                samples_aln_files = (pysam.AlignmentFile(tumor_sample), pysam.AlignmentFile(normal_sample))
+                # samples_aln_files = (pysam.AlignmentFile(tumor_sample), pysam.AlignmentFile(normal_sample))
+                samples_aln_files: Tuple[str, str] = (tumor_sample, normal_sample)
                 samples.append(samples_aln_files)
                 logging.info('Reading vcf sample %s', vcf_sample)
-                variants_per_sample.append(VariantExtractor(vcf_sample))
+                # variants_per_sample.append(VariantExtractor(vcf_sample))
+                variants_per_sample.append(vcf_sample)
                 tumor_output_prefix = name_output(tumor_sample)
                 normal_output_prefix = name_output(normal_sample)
                 logging.info('Anonymized samples will be written as %s and %s', tumor_output_prefix,
@@ -92,7 +95,7 @@ def run_anonymizer():
                 output_samples.append(samples_output_files)
         logging.info('Beginning execution of the anonymizer algorithm')
         run_short_read_tumor_normal_anonymizer(variants_per_sample, samples, ref_genome, anonymizer_algorithm,
-                                               output_samples)
+                                               output_samples, config.cpu)
         logging.info('Finished execution of GenomeAnonymizer successfully')
     except Exception as e:
         logging.error(e)
