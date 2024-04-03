@@ -12,9 +12,12 @@ from timeit import default_timer as timer
 DATASET_IDX_TUMORAL = 0
 DATASET_IDX_NORMAL = 1
 
+PAIR_1_IDX = 0
+PAIR_2_IDX = 1
+
 
 def generate_pair_name(aln):
-    return aln.query_name + ";1" if aln.is_read1 else aln.query_name + ";2"
+    return f'aln.query_name;{PAIR_1_IDX}' if aln.is_read1 else f'aln.query_name;{PAIR_2_IDX}'
 
 
 def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, ref_genome, called_genomic_variants):
@@ -132,7 +135,7 @@ def classify_variation_in_pileup_column(pileup_column: PileupColumn, dataset_idx
     # DEBUG
     # in_read_positions = pileup_column.get_query_positions()
     for pileup_read in pileups:
-        aln = pileup_read.alignment
+        aln: AlignedSegment = pileup_read.alignment
         specific_pair_query_name = generate_pair_name(aln)
         if specific_pair_query_name not in seen_read_alns:
             # start1 = timer()

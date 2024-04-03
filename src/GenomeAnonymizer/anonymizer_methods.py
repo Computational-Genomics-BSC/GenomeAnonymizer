@@ -4,12 +4,15 @@ from typing import Protocol, Dict, List, Tuple, Generator
 import pysam
 from variant_extractor.variants import VariantType
 from src.GenomeAnonymizer.variants import CalledGenomicVariant, SomaticVariationType
-from src.GenomeAnonymizer.variation_classifier import classify_variation_in_pileup_column, DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL
+from src.GenomeAnonymizer.variation_classifier import classify_variation_in_pileup_column, DATASET_IDX_TUMORAL, \
+    DATASET_IDX_NORMAL, PAIR_1_IDX, PAIR_2_IDX
 from timeit import default_timer as timer
 
 
 class AnonymizedRead:
     def __init__(self, read_alignment: pysam.AlignedSegment, dataset_idx: int):
+        self.anonymized_sequence_list = []
+        self.anonymized_qualities_list = []
         self.read_id = read_alignment.query_name
         self.is_read1 = read_alignment.is_read1
         self.is_read2 = read_alignment.is_read2
@@ -17,9 +20,27 @@ class AnonymizedRead:
         self.read_alignment = read_alignment
         self.original_sequence = read_alignment.query_sequence
         self.original_qualities = read_alignment.query_qualities
-        self.anonymized_sequence_list = list(self.original_sequence)
-        self.anonymized_qualities_list = list(self.original_qualities)
+        self.set_original_sequence()
+        self.set_original_qualities()
         self.dataset_idx = dataset_idx
+        # If AnonymizedReads are initialized correctly, this only happens once if a supp. begins before the primary
+        self.has_only_supplementary = read_alignment.is_supplementary
+
+    def update_from_primary_mapping(self, aln: pysam.AlignedSegment):
+        if aln.is_supplementary:
+            raise ValueError("Trying to update AnonymizedRead using a supplementary alignment: "
+                             "The update should always be called only if the primary mapping appears")
+        self.original_sequence = aln.query_sequence
+        self.original_qualities = aln.query_qualities
+        self.set_original_sequence()
+        self.set_original_qualities()
+        self.has_only_supplementary = False
+
+    def set_original_sequence(self):
+        self.anonymized_sequence_list = list(self.original_sequence)
+
+    def set_original_qualities(self):
+        self.anonymized_qualities_list = list(self.original_qualities)
 
     def mask_or_modify_base_pair(self, pos_in_read: int, new_base: str, modify_qualities: bool = False,
                                  new_quality: int = 0):
@@ -90,21 +111,26 @@ class CompleteGermlineAnonymizer:
         if aln.query_name not in self.anonymized_reads:
             self.anonymized_reads[aln.query_name] = [None, None]
             paired_anonymized_read_list = self.anonymized_reads[aln.query_name]
+            current_anonymized_read = AnonymizedRead(aln, dataset_idx)
             if aln.is_read1:
-                paired_anonymized_read_list[0] = AnonymizedRead(aln, dataset_idx)
+                paired_anonymized_read_list[PAIR_1_IDX] = current_anonymized_read
             if aln.is_read2:
-                paired_anonymized_read_list[1] = AnonymizedRead(aln, dataset_idx)
+                paired_anonymized_read_list[PAIR_2_IDX] = current_anonymized_read
         else:
             paired_anonymized_read_list = self.anonymized_reads[aln.query_name]
+            current_anonymized_read = AnonymizedRead(aln, dataset_idx)
             if aln.is_read1:
-                if paired_anonymized_read_list[0] is None:
-                    paired_anonymized_read_list[0] = AnonymizedRead(aln, dataset_idx)
+                if paired_anonymized_read_list[PAIR_1_IDX] is None:
+                    paired_anonymized_read_list[PAIR_1_IDX] = current_anonymized_read
             if aln.is_read2:
-                if paired_anonymized_read_list[1] is None:
-                    paired_anonymized_read_list[1] = AnonymizedRead(aln, dataset_idx)
+                if paired_anonymized_read_list[PAIR_2_IDX] is None:
+                    paired_anonymized_read_list[PAIR_2_IDX] = current_anonymized_read
+            if not aln.is_supplementary and current_anonymized_read.has_only_supplementary:
+                current_anonymized_read.update_from_primary_mapping(aln)
 
     def anonymize(self, variant_record, tumor_reads_pileup, normal_reads_pileup, ref_genome):
         called_genomic_variants = {}
+        left_overs_to_mask: List[Tuple[AnonymizedRead, int, str]] = []
         for dataset_idx, current_pileup in enumerate((tumor_reads_pileup, normal_reads_pileup)):
             seen_read_alns = set()
             for pileup_column in current_pileup:
@@ -124,17 +150,25 @@ class CompleteGermlineAnonymizer:
                     if variants_in_column is None:
                         # print(f"Variants in column is None at pos {pos}")
                         continue
-                    self.mask_germline_snvs(pos, variants_in_column, variant_record)
+                    self.mask_germline_snvs(variants_in_column, variant_record, left_overs_to_mask)
                 # end2 = timer()
                 # print(f"Mask germline snvs time: {end2 - start2}")
                 # , ref_genome)
             # DEBUG
-                # if dataset_idx == DATASET_IDX_NORMAL and pileup_column.reference_pos == 903426:
-                #     exit()
+            # if dataset_idx == DATASET_IDX_NORMAL and pileup_column.reference_pos == 903426:
+            #     exit()
             # DEBUG
+        # Mask leftovers, referring to reads that were updated from their primary alignment,
+        # after initializing with their supplementary
+        for anonymized_read, var_pos, ref_allele in left_overs_to_mask:
+            if anonymized_read.read_id == 'HWI-ST1154:211:C1K7HACXX:1:1115:5188:67236':
+                print(f'read length: {len(anonymized_read.original_sequence)}'
+                      f'var pos: {var_pos} ref_allele: {ref_allele}'
+                      f'read seq: {anonymized_read.original_sequence}')
+            anonymized_read.mask_or_modify_base_pair(var_pos, ref_allele)
         self.has_anonymized_reads = True
 
-    def mask_germline_snvs(self, pos, variants_in_column, variant_record):  # , ref_genome):
+    def mask_germline_snvs(self, variants_in_column, variant_record, left_overs_to_mask):  # , ref_genome):
         variant_to_keep = CalledGenomicVariant.from_variant_record(variant_record)
         # DEBUG
         # if pos == 903426:
@@ -159,12 +193,20 @@ class CompleteGermlineAnonymizer:
                         read_id, pair = decode_specific_read_pair_name(specific_read_id)
                         # DEBUG
                         # if pos == 903426:
-                        #     print(f'read id: {read_id} pair: {pair}')
+                        # print(f'read id: {read_id} pair: {pair} ')
                         # DEBUG
                         anonymized_read = self.anonymized_reads[read_id][pair]
+                        print(
+                            f'read id: {read_id} pair: {pair} anonymized_read_pos: {anonymized_read.read_alignment.pos}'
+                            f' var_read_pos: {var_read_pos} ref_allele: {called_variant.ref_allele} allele: {called_variant.allele}'
+                            f' has_only_supplementary: {anonymized_read.has_only_supplementary}')
+                        if anonymized_read.has_only_supplementary:
+                            left_overs_to_mask.append((anonymized_read, var_read_pos, called_variant.ref_allele))
+                            continue
                         # DEBUG
-                        # if pos == 903426:
-                        #     print(f'REF_POS at igv 903426: {pos} with old base: {anonymized_read.anonymized_sequence_list[var_read_pos]}')
+                        if anonymized_read.read_id == 'HWI-ST1154:211:C1K7HACXX:1:1115:5188:67236':
+                            print(f'read length: {len(anonymized_read.original_sequence)}')
+                            print(f'read seq: {anonymized_read.original_sequence}')
                         # DEBUG
                         anonymized_read.mask_or_modify_base_pair(var_read_pos, called_variant.ref_allele)
                         # DEBUG
