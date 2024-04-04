@@ -8,7 +8,7 @@ import pysam
 from variant_extractor import VariantExtractor
 from variant_extractor.variants import VariantType
 from src.GenomeAnonymizer.anonymizer_methods import Anonymizer, AnonymizedRead
-from src.GenomeAnonymizer.variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL
+from src.GenomeAnonymizer.variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL, PAIR_1_IDX, PAIR_2_IDX
 from timeit import default_timer as timer
 
 """Module for anonymizing short read tumor-normal pair genomes, using any object that implements the Anonymizer 
@@ -86,8 +86,8 @@ def anonymize_genome(vcf_variant_file: str, tumor_bam_file: str, normal_bam_file
                   open(normal_output_fastq + '.single_end.fastq', 'a') as normal_fastq_writer_single_end
                   ):
                 for anonymized_read_pair in anonymized_reads_generator:
-                    anonymized_read_pair1 = anonymized_read_pair[0]
-                    anonymized_read_pair2 = anonymized_read_pair[1]
+                    anonymized_read_pair1 = anonymized_read_pair[PAIR_1_IDX]
+                    anonymized_read_pair2 = anonymized_read_pair[PAIR_2_IDX]
                     if anonymized_read_pair1 is not None and anonymized_read_pair2 is not None:
                         fastq_record_pair1 = str(anonymized_read_pair1.get_anonymized_fastq_record())
                         fastq_record_pair2 = str(anonymized_read_pair2.get_anonymized_fastq_record())
