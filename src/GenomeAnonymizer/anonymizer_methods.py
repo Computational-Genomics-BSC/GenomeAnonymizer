@@ -94,8 +94,30 @@ def decode_specific_read_pair_name(specific_read_pair_name) -> Tuple[str, int]:
     """Decodes the read pair and the read name from the coding applied in the variation classifier"""
     split_name = specific_read_pair_name.split(';')
     read_name = split_name[0]
-    pair_number = int(split_name[1]) - 1
+    pair_number = int(split_name[1])
     return read_name, pair_number
+
+
+def add_anonymized_read_pair_to_collection(anonymized_reads: Dict[str, List[AnonymizedRead]], aln: pysam.AlignedSegment, dataset_idx: int):
+    if aln.query_name not in anonymized_reads:
+        anonymized_reads[aln.query_name] = [None, None]
+        paired_anonymized_read_list = anonymized_reads[aln.query_name]
+        current_anonymized_read = AnonymizedRead(aln, dataset_idx)
+        if aln.is_read1:
+            paired_anonymized_read_list[PAIR_1_IDX] = current_anonymized_read
+        if aln.is_read2:
+            paired_anonymized_read_list[PAIR_2_IDX] = current_anonymized_read
+    else:
+        paired_anonymized_read_list = anonymized_reads[aln.query_name]
+        current_anonymized_read = AnonymizedRead(aln, dataset_idx)
+        if aln.is_read1:
+            if paired_anonymized_read_list[PAIR_1_IDX] is None:
+                paired_anonymized_read_list[PAIR_1_IDX] = current_anonymized_read
+        if aln.is_read2:
+            if paired_anonymized_read_list[PAIR_2_IDX] is None:
+                paired_anonymized_read_list[PAIR_2_IDX] = current_anonymized_read
+        if not aln.is_supplementary and current_anonymized_read.has_only_supplementary:
+            current_anonymized_read.update_from_primary_mapping(aln)
 
 
 class CompleteGermlineAnonymizer:
@@ -106,27 +128,6 @@ class CompleteGermlineAnonymizer:
     def reset(self):
         self.anonymized_reads = dict()
         self.has_anonymized_reads = False
-
-    def add_anonymized_read_pair(self, aln: pysam.AlignedSegment, dataset_idx: int):
-        if aln.query_name not in self.anonymized_reads:
-            self.anonymized_reads[aln.query_name] = [None, None]
-            paired_anonymized_read_list = self.anonymized_reads[aln.query_name]
-            current_anonymized_read = AnonymizedRead(aln, dataset_idx)
-            if aln.is_read1:
-                paired_anonymized_read_list[PAIR_1_IDX] = current_anonymized_read
-            if aln.is_read2:
-                paired_anonymized_read_list[PAIR_2_IDX] = current_anonymized_read
-        else:
-            paired_anonymized_read_list = self.anonymized_reads[aln.query_name]
-            current_anonymized_read = AnonymizedRead(aln, dataset_idx)
-            if aln.is_read1:
-                if paired_anonymized_read_list[PAIR_1_IDX] is None:
-                    paired_anonymized_read_list[PAIR_1_IDX] = current_anonymized_read
-            if aln.is_read2:
-                if paired_anonymized_read_list[PAIR_2_IDX] is None:
-                    paired_anonymized_read_list[PAIR_2_IDX] = current_anonymized_read
-            if not aln.is_supplementary and current_anonymized_read.has_only_supplementary:
-                current_anonymized_read.update_from_primary_mapping(aln)
 
     def anonymize(self, variant_record, tumor_reads_pileup, normal_reads_pileup, ref_genome):
         called_genomic_variants = {}
@@ -143,7 +144,7 @@ class CompleteGermlineAnonymizer:
                 # start2 = timer()
                 for pileup_read in pileup_column.pileups:
                     aln = pileup_read.alignment
-                    self.add_anonymized_read_pair(aln, dataset_idx)
+                    add_anonymized_read_pair_to_collection(self.anonymized_reads, aln, dataset_idx)
                 if dataset_idx == DATASET_IDX_NORMAL:
                     pos = pileup_column.reference_pos
                     variants_in_column: List[CalledGenomicVariant] = called_genomic_variants.get(pos, None)
@@ -161,11 +162,18 @@ class CompleteGermlineAnonymizer:
         # Mask leftovers, referring to reads that were updated from their primary alignment,
         # after initializing with their supplementary
         for anonymized_read, var_pos, ref_allele in left_overs_to_mask:
-            if anonymized_read.read_id == 'HWI-ST1154:211:C1K7HACXX:1:1115:5188:67236':
-                print(f'read length: {len(anonymized_read.original_sequence)}'
-                      f'var pos: {var_pos} ref_allele: {ref_allele}'
-                      f'read seq: {anonymized_read.original_sequence}')
-            anonymized_read.mask_or_modify_base_pair(var_pos, ref_allele)
+            # if anonymized_read.read_id == 'HWI-ST1154:211:C1K7HACXX:1:1115:5188:67236':
+            print(f'LEFTOVER: read length: {len(anonymized_read.original_sequence)}'
+                  f' var pos: {var_pos} ref_allele: {ref_allele}'
+                  f' read seq: {anonymized_read.original_sequence}')
+            if not anonymized_read.has_only_supplementary:
+                anonymized_read.mask_or_modify_base_pair(var_pos, ref_allele)
+            else:
+                # TODO: manage leftovers with only supplementary, to include their primary mappings
+                logging.warning(
+                    f'Leftover found with only supplementary alignment: {anonymized_read.read_id}'
+                    f'Primary mapping may or not be inside of a region to include'
+                )
         self.has_anonymized_reads = True
 
     def mask_germline_snvs(self, variants_in_column, variant_record, left_overs_to_mask):  # , ref_genome):
@@ -204,9 +212,9 @@ class CompleteGermlineAnonymizer:
                             left_overs_to_mask.append((anonymized_read, var_read_pos, called_variant.ref_allele))
                             continue
                         # DEBUG
-                        if anonymized_read.read_id == 'HWI-ST1154:211:C1K7HACXX:1:1115:5188:67236':
-                            print(f'read length: {len(anonymized_read.original_sequence)}')
-                            print(f'read seq: {anonymized_read.original_sequence}')
+                        # if anonymized_read.read_id == 'HWI-ST1154:211:C1K7HACXX:1:1115:5188:67236':
+                        #    print(f'read length: {len(anonymized_read.original_sequence)}')
+                        #    print(f'read seq: {anonymized_read.original_sequence}')
                         # DEBUG
                         anonymized_read.mask_or_modify_base_pair(var_read_pos, called_variant.ref_allele)
                         # DEBUG

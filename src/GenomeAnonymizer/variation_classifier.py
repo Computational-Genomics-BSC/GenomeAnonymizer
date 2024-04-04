@@ -17,7 +17,7 @@ PAIR_2_IDX = 1
 
 
 def generate_pair_name(aln):
-    return f'aln.query_name;{PAIR_1_IDX}' if aln.is_read1 else f'aln.query_name;{PAIR_2_IDX}'
+    return f'{aln.query_name};{PAIR_1_IDX}' if aln.is_read1 else f'{aln.query_name};{PAIR_2_IDX}'
 
 
 def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, ref_genome, called_genomic_variants):
