@@ -30,6 +30,7 @@ class AnonymizedRead:
         if aln.is_supplementary:
             raise ValueError("Trying to update AnonymizedRead using a supplementary alignment: "
                              "The update should always be called only if the primary mapping appears")
+        self.read_alignment = aln
         self.original_sequence = aln.query_sequence
         self.original_qualities = aln.query_qualities
         self.set_original_sequence()
@@ -102,22 +103,24 @@ def add_anonymized_read_pair_to_collection(anonymized_reads: Dict[str, List[Anon
     if aln.query_name not in anonymized_reads:
         anonymized_reads[aln.query_name] = [None, None]
         paired_anonymized_read_list = anonymized_reads[aln.query_name]
-        current_anonymized_read = AnonymizedRead(aln, dataset_idx)
+        new_anonymized_read = AnonymizedRead(aln, dataset_idx)
         if aln.is_read1:
-            paired_anonymized_read_list[PAIR_1_IDX] = current_anonymized_read
+            paired_anonymized_read_list[PAIR_1_IDX] = new_anonymized_read
         if aln.is_read2:
-            paired_anonymized_read_list[PAIR_2_IDX] = current_anonymized_read
+            paired_anonymized_read_list[PAIR_2_IDX] = new_anonymized_read
     else:
         paired_anonymized_read_list = anonymized_reads[aln.query_name]
-        current_anonymized_read = AnonymizedRead(aln, dataset_idx)
+        new_anonymized_read = AnonymizedRead(aln, dataset_idx)
         if aln.is_read1:
             if paired_anonymized_read_list[PAIR_1_IDX] is None:
-                paired_anonymized_read_list[PAIR_1_IDX] = current_anonymized_read
+                paired_anonymized_read_list[PAIR_1_IDX] = new_anonymized_read
+            new_anonymized_read = paired_anonymized_read_list[PAIR_1_IDX]
         if aln.is_read2:
             if paired_anonymized_read_list[PAIR_2_IDX] is None:
-                paired_anonymized_read_list[PAIR_2_IDX] = current_anonymized_read
-        if not aln.is_supplementary and current_anonymized_read.has_only_supplementary:
-            current_anonymized_read.update_from_primary_mapping(aln)
+                paired_anonymized_read_list[PAIR_2_IDX] = new_anonymized_read
+            new_anonymized_read = paired_anonymized_read_list[PAIR_2_IDX]
+        if not aln.is_supplementary and new_anonymized_read.has_only_supplementary:
+            new_anonymized_read.update_from_primary_mapping(aln)
 
 
 class CompleteGermlineAnonymizer:
@@ -163,7 +166,7 @@ class CompleteGermlineAnonymizer:
         # after initializing with their supplementary
         for anonymized_read, var_pos, ref_allele in left_overs_to_mask:
             # if anonymized_read.read_id == 'HWI-ST1154:211:C1K7HACXX:1:1115:5188:67236':
-            print(f'LEFTOVER: read length: {len(anonymized_read.original_sequence)}'
+            print(f'LEFTOVER: read  id: {anonymized_read.read_id} read length: {len(anonymized_read.original_sequence)}'
                   f' var pos: {var_pos} ref_allele: {ref_allele}'
                   f' read seq: {anonymized_read.original_sequence}')
             if not anonymized_read.has_only_supplementary:
@@ -172,7 +175,7 @@ class CompleteGermlineAnonymizer:
                 # TODO: manage leftovers with only supplementary, to include their primary mappings
                 logging.warning(
                     f'Leftover found with only supplementary alignment: {anonymized_read.read_id}'
-                    f'Primary mapping may or not be inside of a region to include'
+                    f' Primary mapping may or not be inside of a region to include'
                 )
         self.has_anonymized_reads = True
 
@@ -203,7 +206,7 @@ class CompleteGermlineAnonymizer:
                         # if pos == 903426:
                         # print(f'read id: {read_id} pair: {pair} ')
                         # DEBUG
-                        anonymized_read = self.anonymized_reads[read_id][pair]
+                        anonymized_read = self.anonymized_reads.get(read_id)[pair]
                         print(
                             f'read id: {read_id} pair: {pair} anonymized_read_pos: {anonymized_read.read_alignment.pos}'
                             f' var_read_pos: {var_read_pos} ref_allele: {called_variant.ref_allele} allele: {called_variant.allele}'
@@ -252,8 +255,8 @@ class CompleteGermlineAnonymizer:
                 # DEBUG
                 raise ValueError(
                     f'Unexpected number of anonymized reads {len(anonymized_read_obj_pair)} in read id: {read_id}')
-            if anonymized_read_obj_pair[0] is None:
-                logging.warning('Single pair1 read not found for read id: ' + read_id)
-            if anonymized_read_obj_pair[1] is None:
-                logging.warning('Single pair2 read not found for read id: ' + read_id)
+            # if anonymized_read_obj_pair[0] is None:
+            #    logging.warning('Single pair1 read not found for read id: ' + read_id)
+            # if anonymized_read_obj_pair[1] is None:
+            #    logging.warning('Single pair2 read not found for read id: ' + read_id)
             yield anonymized_read_obj_pair

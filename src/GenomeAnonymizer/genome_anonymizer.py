@@ -54,7 +54,7 @@ def run_anonymizer():
     # logging.basicConfig(level=logging.INFO)
     start1 = timer()
     logging.basicConfig(level=logging.DEBUG)
-    logging.info('Beginning execution')
+    logging.info('Beginning execution of GenomeAnonymizer v 0.0.1')
     config = exec_parser()
     variants_per_sample = []
     directory = config.directory
