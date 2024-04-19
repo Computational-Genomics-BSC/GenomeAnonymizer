@@ -29,7 +29,8 @@ class CalledGenomicVariant:
 
     @classmethod
     def from_variant_record(cls, variant_record: VariantRecord):
-        return cls(variant_record.contig, variant_record.pos, variant_record.end,
+        # VariantRecord coordinates are 1-based, while CalledGenomicVariant coordinates are 0-based
+        return cls(variant_record.contig, variant_record.pos-1, variant_record.end-1,
                    variant_record.variant_type, variant_record.length, variant_record.alt, variant_record.ref)
 
     def add_supporting_read(self, read_id, var_read_pos):
@@ -49,3 +50,8 @@ class CalledGenomicVariant:
         if self.allele != var2.allele:
             return False
         return True
+
+    def __str__(self):
+        return (f'seq_name: {self.seq_name} pos: {self.pos} end: {self.end} var_type: {self.variant_type} '
+                f'length: {self.length} alt_allele: {self.allele} ref_allele: {self.ref_allele} '
+                f'somatic_variation_type: {self.somatic_variation_type}')

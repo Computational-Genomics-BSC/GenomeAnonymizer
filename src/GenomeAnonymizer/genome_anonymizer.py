@@ -95,7 +95,7 @@ def run_anonymizer():
         logging.error(e)
         raise
     end1 = timer()
-    logging.info(f'Total execution time: {end1 - start1} s')
+    logging.debug(f'Total execution time: {end1 - start1} s')
 
 
 if __name__ == "__main__":
