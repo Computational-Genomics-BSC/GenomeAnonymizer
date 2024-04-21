@@ -13,12 +13,15 @@ from variant_extractor import VariantExtractor
 from variant_extractor.variants import VariantType
 from src.GenomeAnonymizer.anonymizer_methods import Anonymizer, AnonymizedRead, \
     add_anonymized_read_pair_to_collection_from_alignment, \
-    add_or_update_anonymized_read_from_other
+    add_or_update_anonymized_read_from_other, anonymized_read_pair_is_writeable
 from src.GenomeAnonymizer.variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL, PAIR_1_IDX, PAIR_2_IDX, \
     DEBUG_TOTAL_TIMES
 
 """Module for anonymizing short read tumor-normal pair genomes, using any object that implements the Anonymizer 
 protocol"""
+
+# DEBUG
+process = psutil.Process()
 
 
 def get_windows(variants, ref_genome, window_size=2000):
@@ -46,15 +49,6 @@ def get_windows(variants, ref_genome, window_size=2000):
     return windows
 
 
-def anonymized_read_pair_is_writeable(anonymized_read_pair1: AnonymizedRead,
-                                      anonymized_read_pair2: AnonymizedRead) -> bool:
-    if anonymized_read_pair1 is None or anonymized_read_pair2 is None:
-        return False
-    if anonymized_read_pair1.is_supplementary or anonymized_read_pair2.is_supplementary:
-        return False
-    return True
-
-
 def write_pair(indexed_writer_streams, anonymized_read_pair1, anonymized_read_pair2):
     fastq_record_pair1 = str(anonymized_read_pair1.get_anonymized_fastq_record())
     fastq_record_pair2 = str(anonymized_read_pair2.get_anonymized_fastq_record())
@@ -70,20 +64,20 @@ def close_paired_streams(indexed_pair_writer_streams):
     indexed_pair_writer_streams = []
 
 
+# def anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq, ref_genome,
+#                      anonymizer, to_pair_anonymized_reads)
 def anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq, ref_genome,
-                     anonymizer, to_pair_anonymized_reads):
+                     anonymizer, to_pair_anonymized_reads, mem_debug_writer):
     tumor_reads_pileup = tumor_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
                                           fastafile=ref_genome, min_base_quality=0)
     normal_reads_pileup = normal_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
                                             fastafile=ref_genome, min_base_quality=0)
     start2 = timer()
-    anonymizer.anonymize(window[2], tumor_reads_pileup, normal_reads_pileup, ref_genome)
+    anonymized_reads_generator = anonymizer.anonymize(window[2], tumor_reads_pileup, normal_reads_pileup, ref_genome)
     end2 = timer()
     DEBUG_TOTAL_TIMES['anonymize_call'] += end2 - start2
     # Anonymized reads generated per window
     # TODO: Actually yield the anonymized reads without saving to memory for ever
-    anonymized_reads_generator: Iterable[
-        Tuple[AnonymizedRead, AnonymizedRead]] = anonymizer.yield_anonymized_reads()
     indexed_pair_writer_streams = [
         [open(tumor_output_fastq + '.1.fastq', 'a'), open(tumor_output_fastq + '.2.fastq', 'a')],
         [open(normal_output_fastq + '.1.fastq', 'a'), open(normal_output_fastq + '.2.fastq', 'a')]]
@@ -93,6 +87,7 @@ def anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq
         anonymized_read_pair2 = anonymized_read_pair[PAIR_2_IDX]
         # gc.collect(2)
         if anonymized_read_pair_is_writeable(anonymized_read_pair1, anonymized_read_pair2):
+            # TODO: Manage anonymized pairs that have a supplementary in another window
             write_pair(indexed_pair_writer_streams, anonymized_read_pair1, anonymized_read_pair2)
         else:
             check_missing_pair_limits = False
@@ -135,12 +130,12 @@ def anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq
         f'Time to write anonymized reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end3 - start3}')
     DEBUG_TOTAL_TIMES['mask_germlines_left_overs_in_window'] += end3 - start3
     close_paired_streams(indexed_pair_writer_streams)
-    # memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
-    # mem_debug_writer.write(
-    #     f'Memory usage after window {seq_name}-{window[0]}-{window[1]}'
-    #     f': {memory_usage} MB\n')
+    memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
+    mem_debug_writer.write(
+        f'Memory usage after window {seq_name}-{window[0]}-{window[1]}'
+        f': {memory_usage} MB\n')
     # Reset the anonymizer for the next window
-    anonymizer.reset()
+    # anonymizer.reset()
 
 
 def pair_unpaired_or_supplementaries(to_pair_anonymized_reads, tumor_bam_file, normal_bam_file,
@@ -204,8 +199,7 @@ def anonymize_genome(vcf_variant_file: str, tumor_bam_file: str, normal_bam_file
     Anonymizes genomic data using the provided VCF variants, normal and tumor BAM files, reference genome,
     classifier, and anonymizer object.
     """
-    # process = psutil.Process()
-    # mem_debug_writer = open(f'{tumor_output_fastq.split("/")[-1]}_{normal_output_fastq.split("/")[-1]}.mem_debug', 'w')
+    mem_debug_writer = open(f'{tumor_output_fastq.split("/")[-1]}_{normal_output_fastq.split("/")[-1]}.mem_debug', 'w')
     vcf_variants = VariantExtractor(vcf_variant_file)
     threads_per_file = available_threads  # max(available_threads  - 1 // 2, 1)
     # remaining_thread = available_threads - threads_per_file
@@ -225,24 +219,27 @@ def anonymize_genome(vcf_variant_file: str, tumor_bam_file: str, normal_bam_file
     open(tumor_output_fastq + '.2.fastq', 'w').close()
     open(normal_output_fastq + '.1.fastq', 'w').close()
     open(normal_output_fastq + '.2.fastq', 'w').close()
-    # memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
-    # mem_debug_writer.write(f'Memory usage before windows: {memory_usage} MB\n')
+    memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
+    mem_debug_writer.write(f'Memory usage before windows: {memory_usage} MB\n')
     for seq_name, seq_windows in windows.items():
         for window in seq_windows:
             with pysam.AlignmentFile(tumor_bam_file) as tumor_bam, \
                     pysam.AlignmentFile(normal_bam_file) as normal_bam:
                 # Window is a tuple (start, end, VariantRecord)
                 start2 = timer()
+                # anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
+                #                 ref_genome, anonymizer, to_pair_anonymized_reads)
+                #DEBUG CALL
                 anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
-                                 ref_genome, anonymizer, to_pair_anonymized_reads)
+                                 ref_genome, anonymizer, to_pair_anonymized_reads, mem_debug_writer)
                 end2 = timer()
                 logging.debug(
                     f'Time to anonymize reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end2 - start2}')
                 DEBUG_TOTAL_TIMES['anonymize_windows'] += end2 - start2
     # Deal with any remaining anonymized reads, which have pairs or primary mappings in non-window regions
-    # memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
-    # mem_debug_writer.write(
-    #     f'Memory usage after windows: {memory_usage} MB\n')
+    memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
+    mem_debug_writer.write(
+        f'Memory usage after windows: {memory_usage} MB\n')
     ref_genome.close()
     logging.info('Searching for remaining unpaired anonymized reads')
     if to_pair_anonymized_reads:
@@ -253,19 +250,19 @@ def anonymize_genome(vcf_variant_file: str, tumor_bam_file: str, normal_bam_file
         logging.debug(f'Time to pair unpaired anonymized reads: {end3 - start3}')
         DEBUG_TOTAL_TIMES['unpaired_searches'] += end3 - start3
         # If there are still objects in the collection, write them as single end reads
-        # memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
-        # mem_debug_writer.write(
-        #     f'Memory usage after pairing leftover reads: {memory_usage} MB\n')
+        memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
+        mem_debug_writer.write(
+            f'Memory usage after pairing leftover reads: {memory_usage} MB\n')
         if to_pair_anonymized_reads:
             start4 = timer()
             write_single_end_reads(to_pair_anonymized_reads, tumor_output_fastq, normal_output_fastq)
             end4 = timer()
             logging.debug(f'Time to write single end reads: {end4 - start4}')
             DEBUG_TOTAL_TIMES['write_pairs'] += end4 - start4
-    # memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
-    # mem_debug_writer.write(
-    #     f'Final memory usage: {memory_usage} MB\n')
-    # mem_debug_writer.close()
+    memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
+    mem_debug_writer.write(
+        f'Final memory usage: {memory_usage} MB\n')
+    mem_debug_writer.close()
     for k, v in DEBUG_TOTAL_TIMES.items():
         logging.debug(f'{k}={v} s')
 

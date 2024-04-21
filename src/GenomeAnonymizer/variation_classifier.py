@@ -14,7 +14,7 @@ DATASET_IDX_NORMAL = 1
 PAIR_1_IDX = 0
 PAIR_2_IDX = 1
 
-DEBUG_TOTAL_TIMES = {'anonymize_windows': 0, 'anonymize_call': 0, 'write_pairs': 0,
+DEBUG_TOTAL_TIMES = {'anonymize_windows': 0, 'anonymize_call': 0, 'anonymize_with_pileup': 0, 'write_pairs': 0,
                      'unpaired_searches': 0, 'process_indels': 0, 'process_snvs': 0,
                      'mask_germlines': 0, 'mask_germline_snvs': 0, 'mask_germlines_left_overs_in_window': 0, 'classify_variants': 0}
 

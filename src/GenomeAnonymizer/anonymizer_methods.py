@@ -1,7 +1,7 @@
 # @author: Nicolas Gaitan
 import logging
 from typing import Protocol, Dict, List, Tuple, Generator, Set, Union
-
+import itertools as it
 import numpy as np
 import pysam
 from timeit import default_timer as timer
@@ -24,6 +24,11 @@ def encode_base(base: str):
 
 def decode_base(int_base: int) -> str:
     return chr(int_base)
+
+
+def pile_up_grouper(inputs, n=2, fill_value=None):
+    iters = [iter(inputs)] * n
+    return it.zip_longest(*iters, fillvalue=fill_value)
 
 
 class AnonymizedRead:
@@ -210,20 +215,44 @@ def add_or_update_anonymized_read_from_other(anonymized_reads: Dict[str, List[An
                 saved_anonymized_read.has_left_overs_to_mask = True
 
 
+def anonymized_read_pair_is_writeable(anonymized_read_pair1: AnonymizedRead,
+                                      anonymized_read_pair2: AnonymizedRead) -> bool:
+    if anonymized_read_pair1 is None or anonymized_read_pair2 is None:
+        return False
+    if anonymized_read_pair1.is_supplementary or anonymized_read_pair2.is_supplementary:
+        return False
+    return True
+
+
+def is_candidate_to_yield(aln, pile_up_column_ref_pos):
+   # if aln.has_tag('SA'):
+        # if aln.get_tag('SA') != '':
+   #     if aln.query_name == 'HWI-ST1324:58:D1D2VACXX:6:2212:3144:42486':
+   #         print('SA tag found')
+   #     return False
+    if aln.reference_end != pile_up_column_ref_pos:
+        return False
+    return True
+
+
 class CompleteGermlineAnonymizer:
     def __init__(self):
         self.anonymized_reads: Dict[str, List[AnonymizedRead]] = dict()
-        self.has_anonymized_reads = False
+        # self.has_anonymized_reads = False
 
     def reset(self):
         self.anonymized_reads = dict()
-        self.has_anonymized_reads = False
+        # self.has_anonymized_reads = False
 
-    def anonymize(self, variant_record, tumor_reads_pileup, normal_reads_pileup, ref_genome):
+    def anonymize(self, variant_record, tumor_reads_pileup, normal_reads_pileup, ref_genome) -> \
+            Generator[Tuple[AnonymizedRead, AnonymizedRead], None, None]:
         called_genomic_variants = {}
         left_overs_to_mask: Set[AnonymizedRead] = set()
+        start0 = timer()
+        to_yield_anonymized_reads: Set[str] = set()
         for dataset_idx, current_pileup in enumerate((tumor_reads_pileup, normal_reads_pileup)):
             seen_read_alns = set()
+            is_in_normal = dataset_idx == DATASET_IDX_NORMAL
             for pileup_column in current_pileup:
                 start1 = timer()
                 # TODO: Multithread this part
@@ -237,22 +266,34 @@ class CompleteGermlineAnonymizer:
                 for pileup_read in pileup_column.pileups:
                     aln = pileup_read.alignment
                     add_anonymized_read_pair_to_collection_from_alignment(self.anonymized_reads, aln, dataset_idx)
-                if dataset_idx == DATASET_IDX_NORMAL:
+                    if is_candidate_to_yield(aln, pileup_column.reference_pos):
+                        to_yield_anonymized_reads.add(aln.query_name)
+                if is_in_normal:
                     pos = pileup_column.reference_pos
                     variants_in_column: List[CalledGenomicVariant] = called_genomic_variants.get(pos, None)
-                    if variants_in_column is None:
-                        continue
-                    start2 = timer()
-                    self.mask_germline_snvs(variants_in_column, variant_record, left_overs_to_mask)
-                    end2 = timer()
-                    logging.debug(f"Mask germline snvs time: {end2 - start2}")
-                    DEBUG_TOTAL_TIMES['mask_germline_snvs'] += end2 - start2
+                    if variants_in_column is not None:
+                        start2 = timer()
+                        self.mask_germline_snvs(variants_in_column, variant_record, left_overs_to_mask)
+                        end2 = timer()
+                        logging.debug(f"Mask germline snvs time: {end2 - start2}")
+                        DEBUG_TOTAL_TIMES['mask_germline_snvs'] += end2 - start2
+                    yielded_reads = set()
+                    for read_id in to_yield_anonymized_reads:
+                        candidate_pair = self.anonymized_reads.get(read_id)
+                        if anonymized_read_pair_is_writeable(candidate_pair[PAIR_1_IDX], candidate_pair[PAIR_2_IDX]):
+                            yield candidate_pair
+                            self.anonymized_reads.pop(read_id)
+                            yielded_reads.add(read_id)
+                    to_yield_anonymized_reads = to_yield_anonymized_reads - yielded_reads
                 end4 = timer()
                 DEBUG_TOTAL_TIMES['mask_germlines'] += end4 - start4
+        end0 = timer()
+        DEBUG_TOTAL_TIMES['anonymize_with_pileup'] += end0 - start0
         # Mask leftovers, referring to reads that were updated from their primary alignment,
         # after initializing with their supplementary
         start3 = timer()
         for anonymized_read in left_overs_to_mask:
+            read_id = anonymized_read.query_name
             if not anonymized_read.is_supplementary:  # and anonymized_read.has_left_overs_to_mask:
                 anonymized_read.mask_or_anonymize_left_over_variants()
             else:
@@ -260,10 +301,15 @@ class CompleteGermlineAnonymizer:
                     f'Leftover found with only supplementary alignment: {anonymized_read.query_name}'
                     f' Primary mapping may or not be inside of a region to include'
                 )
+            yield self.anonymized_reads[read_id]
+            self.anonymized_reads.pop(read_id)
         end3 = timer()
         logging.debug(f"Mask left over time: {end3 - start3}")
         DEBUG_TOTAL_TIMES['mask_germlines_left_overs_in_window'] += end3 - start3
-        self.has_anonymized_reads = True
+        for anonymized_read in self.anonymized_reads.values():
+            yield anonymized_read
+        self.reset()
+        # self.has_anonymized_reads = True
 
     def mask_germline_snvs(self, variants_in_column, variant_record,
                            left_overs_to_mask: Set[AnonymizedRead]):
@@ -282,22 +328,22 @@ class CompleteGermlineAnonymizer:
                             continue
                         anonymized_read.mask_or_modify_base_pair(var_read_pos, called_variant.ref_allele)
 
-    def get_anonymized_reads(self) -> Tuple[List[AnonymizedRead], List[AnonymizedRead]]:
+    """def get_anonymized_reads(self) -> Tuple[List[AnonymizedRead], List[AnonymizedRead]]:
         anonymized_reads_by_dataset = ([], [])
         if not self.has_anonymized_reads:
             raise ValueError("No reads have been anonymized, call anonymize() first")
         for read_id, anonymized_read_obj_pair in self.anonymized_reads.items():
             dataset_records = anonymized_reads_by_dataset[anonymized_read_obj_pair[0].dataset_idx]
             dataset_records.append(anonymized_read_obj_pair)
-        return anonymized_reads_by_dataset
+        return anonymized_reads_by_dataset"""
 
-    def yield_anonymized_reads(self) -> Generator[Tuple[AnonymizedRead, AnonymizedRead], None, None]:
-        """Generator that returns the anonymized reads in pairs (Tuple), indexed by their corresponding pair number:
-        0 if pair1, 1 if pair2"""
+    """def yield_anonymized_reads(self) -> Generator[Tuple[AnonymizedRead, AnonymizedRead], None, None]:
+        Generator that returns the anonymized reads in pairs (Tuple), indexed by their corresponding pair number:
+        0 if pair1, 1 if pair2
         if not self.has_anonymized_reads:
             raise ValueError("No reads have been anonymized, call anonymize() first")
         for read_id, anonymized_read_obj_pair in self.anonymized_reads.items():
             if len(anonymized_read_obj_pair) != 2:
                 raise ValueError(
                     f'Unexpected number of anonymized reads {len(anonymized_read_obj_pair)} in read id: {read_id}')
-            yield anonymized_read_obj_pair
+            yield anonymized_read_obj_pair"""
