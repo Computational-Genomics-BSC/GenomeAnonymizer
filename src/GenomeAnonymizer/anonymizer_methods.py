@@ -1,10 +1,13 @@
 # @author: Nicolas Gaitan
 import logging
+import sys
 from typing import Protocol, Dict, List, Tuple, Generator, Set, Union
 import itertools as it
 import numpy as np
 import pysam
 from timeit import default_timer as timer
+
+from pysam import PileupColumn
 from variant_extractor.variants import VariantType
 from src.GenomeAnonymizer.variants import CalledGenomicVariant, SomaticVariationType
 from src.GenomeAnonymizer.variation_classifier import classify_variation_in_pileup_column, DATASET_IDX_TUMORAL, \
@@ -26,9 +29,20 @@ def decode_base(int_base: int) -> str:
     return chr(int_base)
 
 
-def pile_up_grouper(inputs, n=2, fill_value=None):
-    iters = [iter(inputs)] * n
-    return it.zip_longest(*iters, fillvalue=fill_value)
+def get_pileup_pair_in_order(pileup1, pileup2) -> Generator[Tuple[PileupColumn, PileupColumn], None, None]:
+    p1: PileupColumn = next(pileup1, None)
+    p2: PileupColumn = next(pileup2, None)
+    while p1 is not None and p2 is not None:
+        if p1.reference_pos < p2.reference_pos or p2 is None:
+            yield p1, None
+            p1 = next(pileup1, None)
+        elif p1.reference_pos > p2.reference_pos or p1 is None:
+            yield None, p2
+            p2 = next(pileup2, None)
+        else:
+            yield p1, p2
+            p1 = next(pileup1, None)
+            p2 = next(pileup2, None)
 
 
 class AnonymizedRead:
@@ -48,6 +62,12 @@ class AnonymizedRead:
         # Left over variants that were found in the suppl. but the primary mapping was not found yet
         self.left_over_variants_to_mask: List[Tuple[int, int]] = []
         self.has_left_overs_to_mask = False
+
+    def get_pair_idx(self):
+        if self.is_read1:
+            return PAIR_1_IDX
+        if self.is_read2:
+            return PAIR_2_IDX
 
     def update_from_primary_mapping(self, aln: pysam.AlignedSegment):
         if aln.is_supplementary:
@@ -89,16 +109,20 @@ class AnonymizedRead:
         # anonymized_read_seq = ''.join(map(lambda x: decode_base(x), self.anonymized_sequence_array))
         anonymized_read_seq: str = np.array2string(self.anonymized_sequence_array,
                                                    formatter={'int': lambda x: decode_base(x)},
-                                                   separator='').strip('[]')
+                                                   separator='',
+                                                   max_line_width=sys.maxsize).strip('[]')
         # anonimized_read_qual: str = ''.join(map(lambda x: chr(x + 33), self.anonymized_qualities_array))
-        anonimized_read_qual: str = np.array2string(self.anonymized_qualities_array,
-                                                    formatter={'int': lambda x: chr(x + 33)},
-                                                    separator='').strip('[]')
+        # anonimized_read_qual: str = np.array2string(self.anonymized_qualities_array,
+        #                                            formatter={'int': lambda x: chr(x + 33)},
+        #                                            separator='',
+        #                                            max_line_width=sys.maxsize).strip('[]')
+        anonimized_read_qual: str = ''.join([chr(x + 33) for x in self.anonymized_qualities_array])
         # if len(anonymized_read_seq) != len(self.original_sequence):
         #    raise ValueError("Anonymized read length does not match original read length")
         # if len(anonimized_read_qual) != len(self.original_qualities):
         #    raise ValueError("Anonymized qualities length does not match original qualities length")
-        anonymized_read: pysam.FastxRecord = pysam.FastxRecord(name=self.query_name, sequence=anonymized_read_seq,
+        read_pair_name = f'{self.query_name}/{PAIR_1_IDX + 1}' if self.is_read1 else f'{self.query_name}/{PAIR_2_IDX + 1}'
+        anonymized_read: pysam.FastxRecord = pysam.FastxRecord(name=read_pair_name, sequence=anonymized_read_seq,
                                                                quality=anonimized_read_qual)
         return anonymized_read
 
@@ -120,6 +144,9 @@ class AnonymizedRead:
         for var_pos_in_read, new_base in self.left_over_variants_to_mask:
             self.mask_or_modify_base_pair(var_pos_in_read, decode_base(new_base))
         self.has_left_overs_to_mask = False
+
+    def __hash__(self):
+        return hash((self.query_name, self.get_pair_idx()))
 
 
 class Anonymizer(Protocol):
@@ -159,21 +186,15 @@ def add_anonymized_read_pair_to_collection_from_alignment(anonymized_reads: Dict
         anonymized_reads[aln.query_name] = [None, None]
         paired_anonymized_read_list = anonymized_reads[aln.query_name]
         new_anonymized_read = AnonymizedRead(aln, dataset_idx)
-        if aln.is_read1:
-            paired_anonymized_read_list[PAIR_1_IDX] = new_anonymized_read
-        if aln.is_read2:
-            paired_anonymized_read_list[PAIR_2_IDX] = new_anonymized_read
+        pair_idx = new_anonymized_read.get_pair_idx()
+        paired_anonymized_read_list[pair_idx] = new_anonymized_read
     else:
         paired_anonymized_read_list = anonymized_reads[aln.query_name]
         new_anonymized_read = AnonymizedRead(aln, dataset_idx)
-        if aln.is_read1:
-            if paired_anonymized_read_list[PAIR_1_IDX] is None:
-                paired_anonymized_read_list[PAIR_1_IDX] = new_anonymized_read
-            new_anonymized_read = paired_anonymized_read_list[PAIR_1_IDX]
-        if aln.is_read2:
-            if paired_anonymized_read_list[PAIR_2_IDX] is None:
-                paired_anonymized_read_list[PAIR_2_IDX] = new_anonymized_read
-            new_anonymized_read = paired_anonymized_read_list[PAIR_2_IDX]
+        pair_idx = new_anonymized_read.get_pair_idx()
+        if paired_anonymized_read_list[pair_idx] is None:
+            paired_anonymized_read_list[pair_idx] = new_anonymized_read
+        new_anonymized_read = paired_anonymized_read_list[pair_idx]
         # This only happens if the aln is an AlignedSegment, is not a supplementary mapping,
         # and the new_anonymized_read does not come from a primary mapping
         if not aln.is_supplementary and new_anonymized_read.is_supplementary:
@@ -185,24 +206,15 @@ def add_or_update_anonymized_read_from_other(anonymized_reads: Dict[str, List[An
     if anonymized_read.query_name not in anonymized_reads:
         anonymized_reads[anonymized_read.query_name] = [None, None]
         paired_anonymized_read_list = anonymized_reads[anonymized_read.query_name]
-        if anonymized_read.is_read1:
-            paired_anonymized_read_list[PAIR_1_IDX] = anonymized_read
-        if anonymized_read.is_read2:
-            paired_anonymized_read_list[PAIR_2_IDX] = anonymized_read
+        pair_idx = anonymized_read.get_pair_idx()
+        paired_anonymized_read_list[pair_idx] = anonymized_read
     else:
         paired_anonymized_read_list = anonymized_reads[anonymized_read.query_name]
-        if anonymized_read.is_read1:
-            if paired_anonymized_read_list[PAIR_1_IDX] is None:
-                paired_anonymized_read_list[PAIR_1_IDX] = anonymized_read
-                return
-            saved_anonymized_read = paired_anonymized_read_list[PAIR_1_IDX]
-            pair_idx = PAIR_1_IDX
-        if anonymized_read.is_read2:
-            if paired_anonymized_read_list[PAIR_2_IDX] is None:
-                paired_anonymized_read_list[PAIR_2_IDX] = anonymized_read
-                return
-            saved_anonymized_read = paired_anonymized_read_list[PAIR_2_IDX]
-            pair_idx = PAIR_2_IDX
+        pair_idx = anonymized_read.get_pair_idx()
+        if paired_anonymized_read_list[pair_idx] is None:
+            paired_anonymized_read_list[pair_idx] = anonymized_read
+            return
+        saved_anonymized_read = paired_anonymized_read_list[pair_idx]
         if saved_anonymized_read.is_supplementary and not anonymized_read.is_supplementary:
             anonymized_read.left_over_variants_to_mask.extend(saved_anonymized_read.left_over_variants_to_mask)
             if len(anonymized_read.left_over_variants_to_mask) > 0:
@@ -225,14 +237,23 @@ def anonymized_read_pair_is_writeable(anonymized_read_pair1: AnonymizedRead,
 
 
 def is_candidate_to_yield(aln, pile_up_column_ref_pos):
-   # if aln.has_tag('SA'):
-        # if aln.get_tag('SA') != '':
-   #     if aln.query_name == 'HWI-ST1324:58:D1D2VACXX:6:2212:3144:42486':
-   #         print('SA tag found')
-   #     return False
+    # if aln.has_tag('SA'):
+    # if aln.get_tag('SA') != '':
+    #     if aln.query_name == 'HWI-ST1324:58:D1D2VACXX:6:2212:3144:42486':
+    #         print('SA tag found')
+    #     return False
     if aln.reference_end != pile_up_column_ref_pos:
         return False
     return True
+
+
+def mask_left_over_variants_in_pair(anonymized_read_pair1: AnonymizedRead, anonymized_read_pair2: AnonymizedRead):
+    if anonymized_read_pair1 is not None:
+        if not anonymized_read_pair1.is_supplementary and anonymized_read_pair1.has_left_overs_to_mask:
+            anonymized_read_pair1.mask_or_anonymize_left_over_variants()
+    if anonymized_read_pair2 is not None:
+        if not anonymized_read_pair2.is_supplementary and anonymized_read_pair2.has_left_overs_to_mask:
+            anonymized_read_pair2.mask_or_anonymize_left_over_variants()
 
 
 class CompleteGermlineAnonymizer:
@@ -247,13 +268,18 @@ class CompleteGermlineAnonymizer:
     def anonymize(self, variant_record, tumor_reads_pileup, normal_reads_pileup, ref_genome) -> \
             Generator[Tuple[AnonymizedRead, AnonymizedRead], None, None]:
         called_genomic_variants = {}
-        left_overs_to_mask: Set[AnonymizedRead] = set()
         start0 = timer()
         to_yield_anonymized_reads: Set[str] = set()
-        for dataset_idx, current_pileup in enumerate((tumor_reads_pileup, normal_reads_pileup)):
-            seen_read_alns = set()
-            is_in_normal = dataset_idx == DATASET_IDX_NORMAL
-            for pileup_column in current_pileup:
+        pileup_pair_iter = get_pileup_pair_in_order(tumor_reads_pileup, normal_reads_pileup)
+        seen_read_alns = set()
+        for pileup_pair in pileup_pair_iter:
+            # for dataset_idx, current_pileup in enumerate((tumor_reads_pileup, normal_reads_pileup)):
+            for dataset_idx, pileup_column in enumerate(pileup_pair):
+                if pileup_column is None:
+                    continue
+                # is_in_normal = dataset_idx == DATASET_IDX_NORMAL
+                #     for pileup_column in current_pileup:
+                is_in_normal = dataset_idx == DATASET_IDX_NORMAL
                 start1 = timer()
                 # TODO: Multithread this part
                 classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_alns, ref_genome,
@@ -270,10 +296,10 @@ class CompleteGermlineAnonymizer:
                         to_yield_anonymized_reads.add(aln.query_name)
                 if is_in_normal:
                     pos = pileup_column.reference_pos
-                    variants_in_column: List[CalledGenomicVariant] = called_genomic_variants.get(pos, None)
+                    variants_in_column: List[CalledGenomicVariant] = called_genomic_variants.get(pos)
                     if variants_in_column is not None:
                         start2 = timer()
-                        self.mask_germline_snvs(variants_in_column, variant_record, left_overs_to_mask)
+                        self.mask_germline_snvs(variants_in_column, variant_record)
                         end2 = timer()
                         logging.debug(f"Mask germline snvs time: {end2 - start2}")
                         DEBUG_TOTAL_TIMES['mask_germline_snvs'] += end2 - start2
@@ -281,10 +307,11 @@ class CompleteGermlineAnonymizer:
                     for read_id in to_yield_anonymized_reads:
                         candidate_pair = self.anonymized_reads.get(read_id)
                         if anonymized_read_pair_is_writeable(candidate_pair[PAIR_1_IDX], candidate_pair[PAIR_2_IDX]):
+                            mask_left_over_variants_in_pair(candidate_pair[PAIR_1_IDX], candidate_pair[PAIR_2_IDX])
                             yield candidate_pair
                             self.anonymized_reads.pop(read_id)
                             yielded_reads.add(read_id)
-                    to_yield_anonymized_reads = to_yield_anonymized_reads - yielded_reads
+                    to_yield_anonymized_reads -= yielded_reads
                 end4 = timer()
                 DEBUG_TOTAL_TIMES['mask_germlines'] += end4 - start4
         end0 = timer()
@@ -292,27 +319,16 @@ class CompleteGermlineAnonymizer:
         # Mask leftovers, referring to reads that were updated from their primary alignment,
         # after initializing with their supplementary
         start3 = timer()
-        for anonymized_read in left_overs_to_mask:
-            read_id = anonymized_read.query_name
-            if not anonymized_read.is_supplementary:  # and anonymized_read.has_left_overs_to_mask:
-                anonymized_read.mask_or_anonymize_left_over_variants()
-            else:
-                logging.warning(
-                    f'Leftover found with only supplementary alignment: {anonymized_read.query_name}'
-                    f' Primary mapping may or not be inside of a region to include'
-                )
-            yield self.anonymized_reads[read_id]
-            self.anonymized_reads.pop(read_id)
         end3 = timer()
         logging.debug(f"Mask left over time: {end3 - start3}")
         DEBUG_TOTAL_TIMES['mask_germlines_left_overs_in_window'] += end3 - start3
-        for anonymized_read in self.anonymized_reads.values():
-            yield anonymized_read
+        for read_id, anonymized_read_pair in self.anonymized_reads.items():
+            mask_left_over_variants_in_pair(anonymized_read_pair[PAIR_1_IDX], anonymized_read_pair[PAIR_2_IDX])
+            yield anonymized_read_pair
         self.reset()
         # self.has_anonymized_reads = True
 
-    def mask_germline_snvs(self, variants_in_column, variant_record,
-                           left_overs_to_mask: Set[AnonymizedRead]):
+    def mask_germline_snvs(self, variants_in_column, variant_record):
         variant_to_keep = CalledGenomicVariant.from_variant_record(variant_record)
         for called_variant in variants_in_column:
             if (called_variant.somatic_variation_type == SomaticVariationType.TUMORAL_NORMAL_VARIANT
@@ -324,26 +340,5 @@ class CompleteGermlineAnonymizer:
                         anonymized_read = self.anonymized_reads.get(read_id)[pair]
                         if anonymized_read.is_supplementary:
                             anonymized_read.add_left_over_variant(var_read_pos, called_variant.ref_allele)
-                            left_overs_to_mask.add(anonymized_read)
                             continue
                         anonymized_read.mask_or_modify_base_pair(var_read_pos, called_variant.ref_allele)
-
-    """def get_anonymized_reads(self) -> Tuple[List[AnonymizedRead], List[AnonymizedRead]]:
-        anonymized_reads_by_dataset = ([], [])
-        if not self.has_anonymized_reads:
-            raise ValueError("No reads have been anonymized, call anonymize() first")
-        for read_id, anonymized_read_obj_pair in self.anonymized_reads.items():
-            dataset_records = anonymized_reads_by_dataset[anonymized_read_obj_pair[0].dataset_idx]
-            dataset_records.append(anonymized_read_obj_pair)
-        return anonymized_reads_by_dataset"""
-
-    """def yield_anonymized_reads(self) -> Generator[Tuple[AnonymizedRead, AnonymizedRead], None, None]:
-        Generator that returns the anonymized reads in pairs (Tuple), indexed by their corresponding pair number:
-        0 if pair1, 1 if pair2
-        if not self.has_anonymized_reads:
-            raise ValueError("No reads have been anonymized, call anonymize() first")
-        for read_id, anonymized_read_obj_pair in self.anonymized_reads.items():
-            if len(anonymized_read_obj_pair) != 2:
-                raise ValueError(
-                    f'Unexpected number of anonymized reads {len(anonymized_read_obj_pair)} in read id: {read_id}')
-            yield anonymized_read_obj_pair"""

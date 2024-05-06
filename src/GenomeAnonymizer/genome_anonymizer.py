@@ -33,7 +33,12 @@ def exec_parser():
                                                          'complete_germline: Mask all SNVs in the reads in the variant windows',
                         required=False,
                         default='complete_germline', choices=['complete_germline'])
-    parser.add_argument('-c', '--cpu', help='Number of CPUs available for the execution', type=int, default=1)
+    parser.add_argument('-c', '--cpu', help='Number of CPUs available for the execution', type=int,
+                        required=False,
+                        default=1)
+    parser.add_argument('-v', '--verbose', help='Verbosity of logging', type=int,
+                        required=False,
+                        default=2)
     config = parser.parse_args()
     return config
 
@@ -50,11 +55,13 @@ def join_dir_file(directory, param):
 
 
 def run_anonymizer():
+    config = exec_parser()
+    verbosity = config.verbose*10
+    logging.basicConfig(level=verbosity)
     # logging.basicConfig(level=logging.INFO)
     start1 = timer()
-    logging.basicConfig(level=logging.DEBUG)
+    # logging.basicConfig(level=logging.DEBUG)
     logging.info('Beginning execution of GenomeAnonymizer v 0.0.1')
-    config = exec_parser()
     variants_per_sample = []
     directory = config.directory
     ref_genome = config.reference

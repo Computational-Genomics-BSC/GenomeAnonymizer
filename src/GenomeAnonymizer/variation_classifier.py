@@ -130,8 +130,7 @@ def classify_variation_in_pileup_column(pileup_column: PileupColumn, dataset_idx
     """
     pileups: List[PileupRead] = pileup_column.pileups
     reference_pos = pileup_column.reference_pos
-    ref_base = \
-    ref_genome.fetch(pileup_column.reference_name, pileup_column.reference_pos, pileup_column.reference_pos + 1)[0]
+    ref_base = ref_genome.fetch(pileup_column.reference_name, pileup_column.reference_pos, pileup_column.reference_pos + 1)[0]
     ref_base = ref_base.upper()
     for pileup_read in pileups:
         aln: AlignedSegment = pileup_read.alignment

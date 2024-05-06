@@ -90,24 +90,16 @@ def anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq
             # TODO: Manage anonymized pairs that have a supplementary in another window
             write_pair(indexed_pair_writer_streams, anonymized_read_pair1, anonymized_read_pair2)
         else:
-            check_missing_pair_limits = False
-            pair_not_missing = -1
             if anonymized_read_pair1 is not None:
                 dataset_idx = anonymized_read_pair1.dataset_idx
                 add_or_update_anonymized_read_from_other(to_pair_anonymized_reads,
                                                          anonymized_read_pair1)
                 read_id = anonymized_read_pair1.query_name
-            else:
-                pair_not_missing = PAIR_2_IDX
-                check_missing_pair_limits = True
             if anonymized_read_pair2 is not None:
                 dataset_idx = anonymized_read_pair2.dataset_idx
                 add_or_update_anonymized_read_from_other(to_pair_anonymized_reads,
                                                          anonymized_read_pair2)
                 read_id = anonymized_read_pair2.query_name
-            else:
-                pair_not_missing = PAIR_1_IDX
-                check_missing_pair_limits = True
             # A read_aln pair is present in the collection, but may be the same pair, if it has supplementary alignments in other windows
             updated_anonymized_read_pair = to_pair_anonymized_reads.get(read_id)
             updated_anonymized_read_pair1 = updated_anonymized_read_pair[PAIR_1_IDX]
@@ -120,8 +112,6 @@ def anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq
                 write_pair(indexed_pair_writer_streams, updated_anonymized_read_pair1,
                            updated_anonymized_read_pair2)
                 to_pair_anonymized_reads.pop(read_id)
-            elif check_missing_pair_limits:
-                pass
                 # anonymized_read_pair = updated_anonymized_read_pair[pair_not_missing]
                 # pair_chr
                 # limits_in_chr = fetch_limits_per_chr[seq_name]
