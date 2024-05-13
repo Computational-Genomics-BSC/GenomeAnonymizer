@@ -3,11 +3,13 @@ import sys
 import os
 from argparse import ArgumentParser
 import logging
-from typing import Tuple
-from src.GenomeAnonymizer.anonymizer_methods import CompleteGermlineAnonymizer
-from src.GenomeAnonymizer.short_read_tumor_normal_anonymizer import run_short_read_tumor_normal_anonymizer
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from typing import Tuple, List
+from src.GenomeAnonymizer.anonymizer_methods import CompleteGermlineAnonymizer, Anonymizer
+# from src.GenomeAnonymizer.short_read_tumor_normal_anonymizer import run_short_read_tumor_normal_anonymizer
 from timeit import default_timer as timer
 
+from src.GenomeAnonymizer.short_read_tumor_normal_anonymizer import anonymize_genome
 
 # Anonymizer algorithm options
 COMPLETE_GERMLINE_ANONYMIZER_ALGORITHM = 'complete_germline'
@@ -43,6 +45,33 @@ def exec_parser():
     return config
 
 
+def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[str],
+                                           tumor_normal_samples: List[Tuple[str, str]],
+                                           ref_genome: str, anonymizer: Anonymizer,
+                                           output_filenames: List[Tuple[str, str]], cpus):
+    """
+    Anonymizes genomic sequencing from short read tumor-normal pairs, in the windows from each VCF variant
+    Args:
+        :param vcf_variants_per_sample: The VCF variants around which the sequencing data will be anonymized, for each sample
+        :param tumor_normal_samples: The list of tumor-normal samples containing the reads to be anonymized. Each sample is a
+            tuple containing the tumor and normal bam files in that order
+        :param ref_genome: The reference genome to which the reads were mapped
+        :param anonymizer: The specified anonymizing method
+        :param output_filenames: The output filenames for the anonymized reads, in the same format as the input samples
+        :param cpus: The number of cpus to use for the anonymization of each tumor-normal sample
+    """
+    # TODO: Implement multithreading for each sample pair
+    tasks = []
+    with ProcessPoolExecutor(max_workers=cpus) as executor:
+        processes_by_sample = max(cpus // len(tumor_normal_samples), 1)
+        for vcf_variants, samples, sample_output_files in zip(vcf_variants_per_sample, tumor_normal_samples,
+                                                              output_filenames):
+            tasks.append(executor.submit(anonymize_genome, vcf_variants, samples[0], samples[1], ref_genome, anonymizer,
+                                         sample_output_files[0], sample_output_files[1], processes_by_sample))
+        for task in as_completed(tasks):
+            task.result()
+
+
 def name_output(sample):
     output_suffix = '.anonymized'
     sample_name = re.sub('.bam|.sam|.cram', output_suffix, sample)
@@ -56,7 +85,7 @@ def join_dir_file(directory, param):
 
 def run_anonymizer():
     config = exec_parser()
-    verbosity = config.verbose*10
+    verbosity = config.verbose * 10
     logging.basicConfig(level=verbosity)
     # logging.basicConfig(level=logging.INFO)
     start1 = timer()

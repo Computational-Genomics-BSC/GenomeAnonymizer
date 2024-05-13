@@ -256,15 +256,16 @@ class CompleteGermlineAnonymizer:
         self.anonymized_reads = dict()
         # self.has_anonymized_reads = False
 
-    def anonymize(self, variant_record, tumor_reads_pileup, normal_reads_pileup, ref_genome, TN_counts, idx) -> \
+    def anonymize(self, variant_record, tumor_normal_pileup, ref_genome) -> \
             Generator[Tuple[AnonymizedRead, AnonymizedRead], None, None]:
         called_genomic_variants = {}
         start0 = timer()
         to_yield_anonymized_reads: Dict[str, int] = dict()
-        pileup_pair_iter = get_pileup_pair_in_order(tumor_reads_pileup, normal_reads_pileup)
+        # pileup_pair_iter = get_pileup_pair_in_order(tumor_reads_pileup, normal_reads_pileup)
         seen_read_alns = set()
-        for pileup_pair in pileup_pair_iter:
+        for pileup_pair in tumor_normal_pileup:
             # for dataset_idx, current_pileup in enumerate((tumor_reads_pileup, normal_reads_pileup)):
+            # print(f'{pileup_pair} - len: {len(pileup_pair)}')
             for dataset_idx, pileup_column in enumerate(pileup_pair):
                 if pileup_column is None:
                     continue
@@ -274,7 +275,7 @@ class CompleteGermlineAnonymizer:
                 start1 = timer()
                 # TODO: Multithread this part
                 classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_alns, ref_genome,
-                                                    called_genomic_variants, TN_counts, idx)
+                                                    called_genomic_variants)
                 end1 = timer()
                 # logging.debug(f"Classify variation time: {end1 - start1}")
                 DEBUG_TOTAL_TIMES['classify_variants'] += end1 - start1
@@ -323,11 +324,12 @@ class CompleteGermlineAnonymizer:
         # after initializing with their supplementary
         start3 = timer()
         for read_id, anonymized_read_pair in self.anonymized_reads.items():
+            start3 = timer()
             mask_left_over_variants_in_pair(anonymized_read_pair[PAIR_1_IDX], anonymized_read_pair[PAIR_2_IDX])
+            end3 = timer()
+            DEBUG_TOTAL_TIMES['mask_germlines_left_overs_in_window'] += end3 - start3
             yield anonymized_read_pair
-        end3 = timer()
         # logging.debug(f"Mask left over time: {end3 - start3}")
-        DEBUG_TOTAL_TIMES['mask_germlines_left_overs_in_window'] += end3 - start3
         self.reset()
         # self.has_anonymized_reads = True
 

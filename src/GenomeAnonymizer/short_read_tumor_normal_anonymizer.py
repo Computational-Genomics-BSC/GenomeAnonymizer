@@ -1,19 +1,16 @@
 # @author: Nicolas Gaitan
-import gc
-import gzip
+
 import logging
-import os
-import sys
 from timeit import default_timer as timer
 import psutil
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import List, Tuple, Iterable, Dict
+from typing import List, Dict
 import pysam
 from variant_extractor import VariantExtractor
 from variant_extractor.variants import VariantType
-from src.GenomeAnonymizer.anonymizer_methods import Anonymizer, AnonymizedRead, \
+from src.GenomeAnonymizer.anonymizer_methods import AnonymizedRead, \
     add_anonymized_read_pair_to_collection_from_alignment, \
-    add_or_update_anonymized_read_from_other, anonymized_read_pair_is_writeable
+    add_or_update_anonymized_read_from_other, anonymized_read_pair_is_writeable, Anonymizer
+import pileup_io as pileup_io
 from src.GenomeAnonymizer.variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL, PAIR_1_IDX, PAIR_2_IDX, \
     DEBUG_TOTAL_TIMES
 
@@ -22,7 +19,6 @@ protocol"""
 
 # DEBUG
 process = psutil.Process()
-TN_counts = []
 
 
 def get_windows(variants, ref_genome, window_size=2000):
@@ -68,22 +64,20 @@ def close_paired_streams(indexed_pair_writer_streams):
 # def anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq, ref_genome,
 #                      anonymizer, to_pair_anonymized_reads)
 def anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq, ref_genome,
-                     anonymizer, to_pair_anonymized_reads, mem_debug_writer, idx):
+                     anonymizer, to_pair_anonymized_reads, mem_debug_writer):
     # DEBUG/
     # logging.info(f'Anonymizing window {seq_name}:{window[0]}-{window[1]}')
     # \DEBUG
-    tumor_reads_pileup = tumor_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
-                                          fastafile=ref_genome, min_base_quality=0, max_depth=100000)
-    normal_reads_pileup = normal_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
-                                            fastafile=ref_genome, min_base_quality=0, max_depth=100000)
+    # tumor_reads_pileup = tumor_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
+    #                                       fastafile=ref_genome, min_base_quality=0, max_depth=100000)
+    # normal_reads_pileup = normal_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
+    #                                         fastafile=ref_genome, min_base_quality=0, max_depth=100000)
     start2 = timer()
-    TN_counts.append(0)
-    anonymized_reads_generator = anonymizer.anonymize(window[2], tumor_reads_pileup, normal_reads_pileup, ref_genome,
-                                                      TN_counts, idx)
+    tumor_normal_pileup = pileup_io.iter_pileups(tumor_bam, normal_bam, ref_genome, seq_name=seq_name, start=window[0], stop=window[1])
+    anonymized_reads_generator = anonymizer.anonymize(window[2], tumor_normal_pileup, ref_genome)
     end2 = timer()
     DEBUG_TOTAL_TIMES['anonymize_call'] += end2 - start2
     # Anonymized reads generated per window
-    # TODO: Actually yield the anonymized reads without saving to memory for ever
     indexed_pair_writer_streams = [
         [open(tumor_output_fastq + '.1.fastq', 'a'), open(tumor_output_fastq + '.2.fastq', 'a')],
         [open(normal_output_fastq + '.1.fastq', 'a'), open(normal_output_fastq + '.2.fastq', 'a')]]
@@ -229,9 +223,8 @@ def anonymize_genome(vcf_variant_file: str, tumor_bam_file: str, normal_bam_file
                 #                 ref_genome, anonymizer, to_pair_anonymized_reads)
                 # DEBUG CALL
                 anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
-                                 ref_genome, anonymizer, to_pair_anonymized_reads, mem_debug_writer, idx)
+                                 ref_genome, anonymizer, to_pair_anonymized_reads, mem_debug_writer)
                 end2 = timer()
-                idx += 1
                 # logging.debug(
                 #    f'Time to anonymize reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end2 - start2}')
                 DEBUG_TOTAL_TIMES['anonymize_windows'] += end2 - start2
@@ -265,31 +258,4 @@ def anonymize_genome(vcf_variant_file: str, tumor_bam_file: str, normal_bam_file
     for k, v in DEBUG_TOTAL_TIMES.items():
         logging.debug(f'{k}={v} s')
     logging.info(f'Anonymization complete for samples {tumor_output_fastq} and {normal_output_fastq}')
-    print(TN_counts)
 
-
-def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[str],
-                                           tumor_normal_samples: List[Tuple[str, str]],
-                                           ref_genome: str, anonymizer: Anonymizer,
-                                           output_filenames: List[Tuple[str, str]], cpus):
-    """
-    Anonymizes genomic sequencing from short read tumor-normal pairs, in the windows from each VCF variant
-    Args:
-        :param vcf_variants_per_sample: The VCF variants around which the sequencing data will be anonymized, for each sample
-        :param tumor_normal_samples: The list of tumor-normal samples containing the reads to be anonymized. Each sample is a
-            tuple containing the tumor and normal bam files in that order
-        :param ref_genome: The reference genome to which the reads were mapped
-        :param anonymizer: The specified anonymizing method
-        :param output_filenames: The output filenames for the anonymized reads, in the same format as the input samples
-        :param cpus: The number of cpus to use for the anonymization of each tumor-normal sample
-    """
-    # TODO: Implement multithreading for each sample pair
-    tasks = []
-    with ProcessPoolExecutor(max_workers=cpus) as executor:
-        processes_by_sample = max(cpus // len(tumor_normal_samples), 1)
-        for vcf_variants, samples, sample_output_files in zip(vcf_variants_per_sample, tumor_normal_samples,
-                                                              output_filenames):
-            tasks.append(executor.submit(anonymize_genome, vcf_variants, samples[0], samples[1], ref_genome, anonymizer,
-                                         sample_output_files[0], sample_output_files[1], processes_by_sample))
-        for task in as_completed(tasks):
-            task.result()

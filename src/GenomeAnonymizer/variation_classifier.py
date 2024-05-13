@@ -42,8 +42,8 @@ def get_mismatch_positions_from_md_tag(aln) -> List[Tuple[int, str]]:
     return ref_mismatch_positions
 
 
-def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, ref_genome, called_genomic_variants,
-                   process_snvs_from_md_tag=False, TN_counts=None, idx=None):
+def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, called_genomic_variants,
+                   process_snvs_from_md_tag=False):
     regexp = r"(?<=[a-zA-Z=])(?=[0-9])|(?<=[0-9])(?=[a-zA-Z=])"  # regex to split cigar string
     cigar_indels = {"I", "D"}  # cigar operations to report
     ref_consuming = {'M', 'D', 'N', '=', 'X'}  # stores reference consuming cigar operations
@@ -107,7 +107,7 @@ def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, r
                 while mm_ref_pos < current_cigar_len and mm_pos_idx < len(ref_mismatch_positions):
                     pos_in_read = mm_ref_pos + read_consumed_bases - 1 # -1 CHECK
                     pos_snv = start_ref_pos + mm_ref_pos - 1
-                    process_snv(aln, specific_pair_query_name, pos_snv, pos_in_read, dataset_idx, called_genomic_variants, ref_base, TN_counts, idx)
+                    process_snv(aln, specific_pair_query_name, pos_snv, pos_in_read, dataset_idx, called_genomic_variants, ref_base)
                     mm_pos_idx += 1
                     if mm_pos_idx < len(ref_mismatch_positions):
                         mm_ref_pos = ref_mismatch_positions[mm_pos_idx][0]
@@ -119,7 +119,7 @@ def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, r
 
 
 def process_snv(aln: AlignedSegment, specific_pair_query_name, reference_pos, in_read_position, dataset_idx,
-                called_genomic_variants, ref_base, TN_counts, idx):
+                called_genomic_variants, ref_base):
     seq_name = aln.reference_name
     ignore_bases = {'N'}
     base = aln.query_sequence[in_read_position].upper()
@@ -127,7 +127,6 @@ def process_snv(aln: AlignedSegment, specific_pair_query_name, reference_pos, in
         return
     called_snv = CalledGenomicVariant(seq_name, reference_pos, reference_pos, VariantType.SNV, 1,
                                       allele=base, ref_allele=ref_base)
-    TN_counts[idx] += 1
     if called_snv.pos not in called_genomic_variants:
         called_genomic_variants[called_snv.pos] = []
     snv_pos_list = called_genomic_variants[called_snv.pos]
@@ -150,23 +149,22 @@ def process_snv(aln: AlignedSegment, specific_pair_query_name, reference_pos, in
             if (var_code == SomaticVariationType.NORMAL_SINGLE_READ_VARIANT or
                     var_code == SomaticVariationType.NORMAL_ONLY_VARIANT):
                 called_snv.somatic_variation_type = SomaticVariationType.TUMORAL_NORMAL_VARIANT
-                # TN_counts[idx] += 1
             if var_code == SomaticVariationType.TUMORAL_SINGLE_READ_VARIANT:
                 called_snv.somatic_variation_type = SomaticVariationType.TUMORAL_ONLY_VARIANT
         if dataset_idx == DATASET_IDX_NORMAL:
             if (var_code == SomaticVariationType.TUMORAL_SINGLE_READ_VARIANT or
                     var_code == SomaticVariationType.TUMORAL_ONLY_VARIANT):
                 called_snv.somatic_variation_type = SomaticVariationType.TUMORAL_NORMAL_VARIANT
-                # TN_counts[idx] += 1
             if var_code == SomaticVariationType.NORMAL_SINGLE_READ_VARIANT:
                 called_snv.somatic_variation_type = SomaticVariationType.NORMAL_ONLY_VARIANT
 
 
-def classify_variation_in_pileup_column(pileup_column: PileupColumn, dataset_idx, seen_read_alns, ref_genome: FastaFile,
-                                        called_genomic_variants, TN_counts, idx):
+def classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_alns, ref_genome: FastaFile,
+                                        called_genomic_variants):
     """
     Classify the read variation returning a dictionary with every INDEL and SNV CalledGenomicVariant by coordinate.
     """
+    # print(f'pileup_column: {pileup_column} - len: {len(pileup_column)}')
     pileups: List[PileupRead] = pileup_column.pileups
     reference_pos = pileup_column.reference_pos
     ref_base = ref_genome.fetch(pileup_column.reference_name, pileup_column.reference_pos, pileup_column.reference_pos + 1)[0]
@@ -175,12 +173,12 @@ def classify_variation_in_pileup_column(pileup_column: PileupColumn, dataset_idx
     for pileup_read in pileups:
         aln: AlignedSegment = pileup_read.alignment
         specific_pair_query_name = generate_pair_name(aln)
-        process_snvs_from_md_tag = aln.has_tag('MD')
-        process_snvs_from_md_tag = False
+        # process_snvs_from_md_tag = aln.has_tag('MD')
+        # process_snvs_from_md_tag = False
         if specific_pair_query_name not in seen_read_alns:
             start1 = timer()
-            process_indels(aln, specific_pair_query_name, dataset_idx, ref_genome, called_genomic_variants,
-                           process_snvs_from_md_tag, TN_counts=TN_counts, idx=idx)
+            process_indels(aln, specific_pair_query_name, dataset_idx, called_genomic_variants,
+                           process_snvs_from_md_tag)
             end1 = timer()
             DEBUG_TOTAL_TIMES['process_indels'] += end1 - start1
             seen_read_alns.add(specific_pair_query_name)
@@ -189,6 +187,6 @@ def classify_variation_in_pileup_column(pileup_column: PileupColumn, dataset_idx
             continue
         start2 = timer()
         process_snv(aln, specific_pair_query_name, reference_pos, in_read_position, dataset_idx,
-                    called_genomic_variants,  ref_base, TN_counts, idx)
+                    called_genomic_variants, ref_base)
         end2 = timer()
         DEBUG_TOTAL_TIMES['process_snvs'] += end2 - start2
