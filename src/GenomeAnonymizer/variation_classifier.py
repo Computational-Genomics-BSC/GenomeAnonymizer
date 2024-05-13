@@ -1,12 +1,11 @@
 # @author: Nicolas Gaitan
-
+import logging
 import re
-from typing import List
-
+from typing import List, Tuple
+from timeit import default_timer as timer
 from pysam import PileupColumn, FastaFile, AlignedSegment, PileupRead
 from variant_extractor.variants import VariantType
 from src.GenomeAnonymizer.variants import CalledGenomicVariant, SomaticVariationType
-from timeit import default_timer as timer
 
 # constants
 DATASET_IDX_TUMORAL = 0
@@ -15,12 +14,36 @@ DATASET_IDX_NORMAL = 1
 PAIR_1_IDX = 0
 PAIR_2_IDX = 1
 
+DEBUG_TOTAL_TIMES = {'anonymize_windows': 0, 'anonymize_call': 0, 'anonymize_with_pileup': 0, 'write_pairs': 0,
+                     'unpaired_searches': 0, 'process_indels': 0, 'process_snvs': 0,
+                     'mask_germlines': 0, 'mask_germline_snvs': 0, 'mask_germlines_left_overs_in_window': 0,
+                     'classify_variants': 0}
+
 
 def generate_pair_name(aln):
     return f'{aln.query_name};{PAIR_1_IDX}' if aln.is_read1 else f'{aln.query_name};{PAIR_2_IDX}'
 
 
-def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, ref_genome, called_genomic_variants):
+def get_mismatch_positions_from_md_tag(aln) -> List[Tuple[int, str]]:
+    pattern_md = r'0|\^[A-Z]+|[A-Z]|[0-9]+'
+    md_list = re.findall(pattern_md, aln.get_tag('MD'))
+    ref_mismatch_positions = []
+    md_length = 0
+    for symbol in md_list:
+        if symbol == "0":  # md separator
+            pass  # ignore
+        elif symbol[0] == "^":  # deletions
+            md_length += len(symbol) - 1
+        elif re.match(r'^\d', symbol):  # matches
+            md_length += int(symbol)
+        else:  # mismatches
+            md_length += 1
+            ref_mismatch_positions.append((md_length, symbol))
+    return ref_mismatch_positions
+
+
+def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, ref_genome, called_genomic_variants,
+                   process_snvs_from_md_tag=False, TN_counts=None, idx=None):
     regexp = r"(?<=[a-zA-Z=])(?=[0-9])|(?<=[0-9])(?=[a-zA-Z=])"  # regex to split cigar string
     cigar_indels = {"I", "D"}  # cigar operations to report
     ref_consuming = {'M', 'D', 'N', '=', 'X'}  # stores reference consuming cigar operations
@@ -30,6 +53,9 @@ def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, r
     current_cigar_len = 0
     read_consumed_bases = 0
     seq_name = aln.reference_name
+    if process_snvs_from_md_tag:
+        ref_mismatch_positions = get_mismatch_positions_from_md_tag(aln)
+        mm_pos_idx = 0
     for cigar_list_idx, symbol in enumerate(cigar_list):
         if symbol.isdigit():
             cigar_op = cigar_list[cigar_list_idx + 1]
@@ -73,14 +99,27 @@ def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, r
                             called_indel.somatic_variation_type = SomaticVariationType.NORMAL_ONLY_VARIANT
             if cigar_op in ref_consuming:
                 current_cigar_len += int(symbol)
+            if process_snvs_from_md_tag and cigar_op == 'M':
+                if mm_pos_idx >= len(ref_mismatch_positions) or len(ref_mismatch_positions) == 0:
+                    continue
+                mm_ref_pos = ref_mismatch_positions[mm_pos_idx][0]
+                ref_base = ref_mismatch_positions[mm_pos_idx][1]
+                while mm_ref_pos < current_cigar_len and mm_pos_idx < len(ref_mismatch_positions):
+                    pos_in_read = mm_ref_pos + read_consumed_bases - 1 # -1 CHECK
+                    pos_snv = start_ref_pos + mm_ref_pos - 1
+                    process_snv(aln, specific_pair_query_name, pos_snv, pos_in_read, dataset_idx, called_genomic_variants, ref_base, TN_counts, idx)
+                    mm_pos_idx += 1
+                    if mm_pos_idx < len(ref_mismatch_positions):
+                        mm_ref_pos = ref_mismatch_positions[mm_pos_idx][0]
+                        ref_base = ref_mismatch_positions[mm_pos_idx][1]
             if cigar_op in read_consuming_only:
                 read_consumed_bases += int(symbol)
             if cigar_op == 'D':
                 read_consumed_bases -= int(symbol)
 
 
-def process_snvs(aln: AlignedSegment, specific_pair_query_name, reference_pos, ref_base, in_read_position, dataset_idx,
-                 called_genomic_variants):
+def process_snv(aln: AlignedSegment, specific_pair_query_name, reference_pos, in_read_position, dataset_idx,
+                called_genomic_variants, ref_base, TN_counts, idx):
     seq_name = aln.reference_name
     ignore_bases = {'N'}
     base = aln.query_sequence[in_read_position].upper()
@@ -88,6 +127,7 @@ def process_snvs(aln: AlignedSegment, specific_pair_query_name, reference_pos, r
         return
     called_snv = CalledGenomicVariant(seq_name, reference_pos, reference_pos, VariantType.SNV, 1,
                                       allele=base, ref_allele=ref_base)
+    TN_counts[idx] += 1
     if called_snv.pos not in called_genomic_variants:
         called_genomic_variants[called_snv.pos] = []
     snv_pos_list = called_genomic_variants[called_snv.pos]
@@ -110,18 +150,20 @@ def process_snvs(aln: AlignedSegment, specific_pair_query_name, reference_pos, r
             if (var_code == SomaticVariationType.NORMAL_SINGLE_READ_VARIANT or
                     var_code == SomaticVariationType.NORMAL_ONLY_VARIANT):
                 called_snv.somatic_variation_type = SomaticVariationType.TUMORAL_NORMAL_VARIANT
+                # TN_counts[idx] += 1
             if var_code == SomaticVariationType.TUMORAL_SINGLE_READ_VARIANT:
                 called_snv.somatic_variation_type = SomaticVariationType.TUMORAL_ONLY_VARIANT
         if dataset_idx == DATASET_IDX_NORMAL:
             if (var_code == SomaticVariationType.TUMORAL_SINGLE_READ_VARIANT or
                     var_code == SomaticVariationType.TUMORAL_ONLY_VARIANT):
                 called_snv.somatic_variation_type = SomaticVariationType.TUMORAL_NORMAL_VARIANT
+                # TN_counts[idx] += 1
             if var_code == SomaticVariationType.NORMAL_SINGLE_READ_VARIANT:
                 called_snv.somatic_variation_type = SomaticVariationType.NORMAL_ONLY_VARIANT
 
 
 def classify_variation_in_pileup_column(pileup_column: PileupColumn, dataset_idx, seen_read_alns, ref_genome: FastaFile,
-                                        called_genomic_variants):
+                                        called_genomic_variants, TN_counts, idx):
     """
     Classify the read variation returning a dictionary with every INDEL and SNV CalledGenomicVariant by coordinate.
     """
@@ -129,25 +171,24 @@ def classify_variation_in_pileup_column(pileup_column: PileupColumn, dataset_idx
     reference_pos = pileup_column.reference_pos
     ref_base = ref_genome.fetch(pileup_column.reference_name, pileup_column.reference_pos, pileup_column.reference_pos + 1)[0]
     ref_base = ref_base.upper()
-    # DEBUG
-    # if reference_pos == 903426:
-    #     print(f'REF_BASE at 903426: {ref_base}')
-    # DEBUG
-    # in_read_positions = pileup_column.get_query_positions()
+    process_snvs_from_md_tag = False
     for pileup_read in pileups:
         aln: AlignedSegment = pileup_read.alignment
         specific_pair_query_name = generate_pair_name(aln)
+        process_snvs_from_md_tag = aln.has_tag('MD')
+        process_snvs_from_md_tag = False
         if specific_pair_query_name not in seen_read_alns:
-            # start1 = timer()
-            process_indels(aln, specific_pair_query_name, dataset_idx, ref_genome, called_genomic_variants)
-            # end1 = timer()
-            # print("Time to process indels: " + str(end1 - start1))
+            start1 = timer()
+            process_indels(aln, specific_pair_query_name, dataset_idx, ref_genome, called_genomic_variants,
+                           process_snvs_from_md_tag, TN_counts=TN_counts, idx=idx)
+            end1 = timer()
+            DEBUG_TOTAL_TIMES['process_indels'] += end1 - start1
             seen_read_alns.add(specific_pair_query_name)
-        # start2 = timer()
         in_read_position = pileup_read.query_position
-        if in_read_position is None:
+        if in_read_position is None or process_snvs_from_md_tag:
             continue
-        process_snvs(aln, specific_pair_query_name, reference_pos, ref_base, in_read_position, dataset_idx,
-                     called_genomic_variants)
-        # end2 = timer()
-        # print("Time to process SNVs: " + str(end2 - start2))
+        start2 = timer()
+        process_snv(aln, specific_pair_query_name, reference_pos, in_read_position, dataset_idx,
+                    called_genomic_variants,  ref_base, TN_counts, idx)
+        end2 = timer()
+        DEBUG_TOTAL_TIMES['process_snvs'] += end2 - start2

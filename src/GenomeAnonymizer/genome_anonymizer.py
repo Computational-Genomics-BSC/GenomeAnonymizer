@@ -21,7 +21,6 @@ def exec_parser():
         prog='GenomeAnonymizer',
         description='Anonymization of sequencing data by removing germline variation',
         epilog='')
-    # parser.add_argument('-i', '--input', type=str, help='Input vcf file (.vcf, .vcf.gz)', required=True)
     parser.add_argument('-d', '--directory', type=str, help='Directory in which the tumor-normal sample pairs '
                                                             'and the samples text file are stored', required=True)
     parser.add_argument('-s', '--samples', type=str,
@@ -34,7 +33,12 @@ def exec_parser():
                                                          'complete_germline: Mask all SNVs in the reads in the variant windows',
                         required=False,
                         default='complete_germline', choices=['complete_germline'])
-    parser.add_argument('-c', '--cpu', help='Number of CPUs available for the execution', type=int, default=1)
+    parser.add_argument('-c', '--cpu', help='Number of CPUs available for the execution', type=int,
+                        required=False,
+                        default=1)
+    parser.add_argument('-v', '--verbose', help='Verbosity of logging', type=int,
+                        required=False,
+                        default=2)
     config = parser.parse_args()
     return config
 
@@ -51,11 +55,13 @@ def join_dir_file(directory, param):
 
 
 def run_anonymizer():
+    config = exec_parser()
+    verbosity = config.verbose*10
+    logging.basicConfig(level=verbosity)
     # logging.basicConfig(level=logging.INFO)
     start1 = timer()
-    logging.basicConfig(level=logging.DEBUG)
-    logging.info('Beginning execution')
-    config = exec_parser()
+    # logging.basicConfig(level=logging.DEBUG)
+    logging.info('Beginning execution of GenomeAnonymizer v 0.0.2')
     variants_per_sample = []
     directory = config.directory
     ref_genome = config.reference
@@ -64,9 +70,6 @@ def run_anonymizer():
         logging.error('Anonymizer algorithm %s is not a valid option', anonymizer_algorithm_name)
         sys.exit(1)
     anonymizer_algorithm: CompleteGermlineAnonymizer = CompleteGermlineAnonymizer()  # Default anonymizer algorithm
-    # if anonymizer_algorithm_name == COMPLETE_GERMLINE_ANONYMIZER_ALGORITHM:  # Redundant code to show what should be done for non-default anonymizers
-    #   from anonymizer_methods import CompleteGermlineAnonymizer
-    #   anonymizer_algorithm: CompleteGermlineAnonymizer = CompleteGermlineAnonymizer()
     path_to_samples = join_dir_file(directory, config.samples)
     logging.info('Reading inputs from %s', path_to_samples)
     samples = []
@@ -81,11 +84,9 @@ def run_anonymizer():
                 normal_sample = join_dir_file(directory, sample_files[1])
                 vcf_sample = join_dir_file(directory, sample_files[2])
                 logging.info('Reading sample files %s and %s', tumor_sample, normal_sample)
-                # samples_aln_files = (pysam.AlignmentFile(tumor_sample), pysam.AlignmentFile(normal_sample))
                 samples_aln_files: Tuple[str, str] = (tumor_sample, normal_sample)
                 samples.append(samples_aln_files)
                 logging.info('Reading vcf sample %s', vcf_sample)
-                # variants_per_sample.append(VariantExtractor(vcf_sample))
                 variants_per_sample.append(vcf_sample)
                 tumor_output_prefix = name_output(tumor_sample)
                 normal_output_prefix = name_output(normal_sample)
@@ -101,7 +102,7 @@ def run_anonymizer():
         logging.error(e)
         raise
     end1 = timer()
-    print(f'Total execution time: {end1 - start1} s')
+    logging.debug(f'Total execution time: {end1 - start1} s')
 
 
 if __name__ == "__main__":
