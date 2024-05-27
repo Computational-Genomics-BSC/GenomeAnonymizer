@@ -31,7 +31,7 @@ def decode_base(int_base: int) -> str:
     return chr(int_base)
 
 
-def get_pileup_pair_in_order(pileup1, pileup2) -> Generator[Tuple[PileupColumn, PileupColumn], None, None]:
+"""def get_pileup_pair_in_order(pileup1, pileup2) -> Generator[Tuple[PileupColumn, PileupColumn], None, None]:
     p1: PileupColumn = next(pileup1, None)
     p2: PileupColumn = next(pileup2, None)
     while p1 is not None and p2 is not None:
@@ -44,7 +44,7 @@ def get_pileup_pair_in_order(pileup1, pileup2) -> Generator[Tuple[PileupColumn, 
         else:
             yield p1, p2
             p1 = next(pileup1, None)
-            p2 = next(pileup2, None)
+            p2 = next(pileup2, None)"""
 
 
 class AnonymizedRead:
@@ -256,7 +256,7 @@ class CompleteGermlineAnonymizer:
         self.anonymized_reads = dict()
         # self.has_anonymized_reads = False
 
-    def anonymize(self, variant_record, tumor_normal_pileup, ref_genome) -> \
+    def anonymize(self, validated_source_variant: CalledGenomicVariant, tumor_normal_pileup, ref_genome) -> \
             Generator[Tuple[AnonymizedRead, AnonymizedRead], None, None]:
         called_genomic_variants = {}
         start0 = timer()
@@ -294,7 +294,7 @@ class CompleteGermlineAnonymizer:
                     variants_in_column: List[CalledGenomicVariant] = called_genomic_variants.get(pos)
                     if variants_in_column is not None:
                         start2 = timer()
-                        self.mask_germline_snvs(variants_in_column, variant_record)
+                        self.mask_germline_snvs(variants_in_column, validated_source_variant)
                         end2 = timer()
                         # logging.debug(f"Mask germline snvs time: {end2 - start2}")
                         DEBUG_TOTAL_TIMES['mask_germline_snvs'] += end2 - start2
@@ -333,8 +333,8 @@ class CompleteGermlineAnonymizer:
         self.reset()
         # self.has_anonymized_reads = True
 
-    def mask_germline_snvs(self, variants_in_column, variant_record):
-        variant_to_keep = CalledGenomicVariant.from_variant_record(variant_record)
+    def mask_germline_snvs(self, variants_in_column, variant_to_keep):
+        # variant_to_keep = CalledGenomicVariant.from_variant_record(validated_source_variant)
         for called_variant in variants_in_column:
             if (called_variant.somatic_variation_type == SomaticVariationType.TUMORAL_NORMAL_VARIANT
                     and called_variant != variant_to_keep):

@@ -1,16 +1,25 @@
 # @author: Nicolas Gaitan
-
+import bisect
 import logging
-from timeit import default_timer as timer
+import re
+import shutil
+from collections import namedtuple
+
+import numpy as np
 import psutil
-from typing import List, Dict
+import pileup_io as pileup_io
 import pysam
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from timeit import default_timer as timer
+from typing import List, Dict, Tuple
+
+from pysam import FastaFile
 from variant_extractor import VariantExtractor
-from variant_extractor.variants import VariantType
+from variant_extractor.variants import VariantType, VariantRecord
 from src.GenomeAnonymizer.anonymizer_methods import AnonymizedRead, \
     add_anonymized_read_pair_to_collection_from_alignment, \
     add_or_update_anonymized_read_from_other, anonymized_read_pair_is_writeable, Anonymizer
-import pileup_io as pileup_io
+from src.GenomeAnonymizer.variants import CalledGenomicVariant
 from src.GenomeAnonymizer.variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL, PAIR_1_IDX, PAIR_2_IDX, \
     DEBUG_TOTAL_TIMES
 
@@ -20,29 +29,82 @@ protocol"""
 # DEBUG
 process = psutil.Process()
 
+# Define windows as namedtuples
+Window = namedtuple('Window', 'sequence first last variant')
 
-def get_windows(variants, ref_genome, window_size=2000):
+
+def name_output(sample):
+    output_suffix = '.anonymized'
+    sample_name = re.sub('.bam|.sam|.cram', output_suffix, sample)
+    return sample_name
+
+
+def get_ref_idxs(ref_genome: FastaFile) -> Dict[str, int]:
+    ref_sequences = ref_genome.references
+    n_sequences = len(ref_sequences)
+    return {k: v for (k, v) in zip(ref_sequences, range(n_sequences))}
+
+
+def get_windows(variants, ref_sequences_dict, window_size=2000) -> List[Window]:
+    # The VCF must be sorted by ref genome qualified sequence and numeric coordinates
     half_window = int(window_size / 2)
-    windows = dict()
-    for seq in ref_genome.references:
-        windows[seq] = []
-    for variant in variants:
-        windows_in_seq = windows[variant.contig]
-        if variant.variant_type == VariantType.INV:
-            if variant.pos + half_window > variant.end - half_window:
-                windows_in_seq.append((variant.pos - half_window, variant.end + half_window, variant))
-            else:
-                windows_in_seq.append((variant.pos - half_window, variant.pos + half_window, variant))
-                windows_in_seq.append((variant.end - half_window, variant.end + half_window, variant))
-        elif variant.variant_type == VariantType.TRA:
-            windows_in_seq.append((variant.pos - half_window, variant.pos + half_window, variant))
-            windows_in_seq.append((variant.end - half_window, variant.end + half_window, variant))
-        elif variant.variant_type == VariantType.SNV:
-            windows_in_seq.append((variant.pos - half_window, variant.pos + half_window, variant))
+    windows = list()
+    # seq_idxs_dict = dict()
+    for variant_record in variants:
+        # if variant_record.contig not in seq_idxs_dict:
+        #    seq_idxs_dict[variant_record.contig] = seq_idx
+        #    seq_idx += 1
+        called_variant = CalledGenomicVariant.from_variant_record(variant_record)
+        end = variant_record.end
+        if variant_record.alt_sv_breakend:
+            end_chrom = variant_record.alt_sv_breakend.contig
+            if variant_record.contig != end_chrom:
+                end = variant_record.alt_sv_breakend.pos
         else:
-            windows_in_seq.append((variant.pos - half_window, variant.end + half_window, variant))
-    for seq_name, seq_windows in windows.items():
-        seq_windows.sort(key=lambda x: (x[0], x[1]))
+            end_chrom = variant_record.contig
+        if variant_record.variant_type == VariantType.INV:
+            if variant_record.pos + half_window > variant_record.end - half_window:
+                window = Window(sequence=variant_record.contig, first=variant_record.pos - half_window,
+                                last=variant_record.end + half_window, variant=called_variant)
+                windows.append(window)
+                # windows.append((variant_record.contig, variant_record.pos - half_window, variant_record.end + half_window, variant_record))
+            else:
+                window1 = Window(sequence=variant_record.contig, first=variant_record.pos - half_window,
+                                 last=variant_record.pos + half_window, variant=called_variant)
+                window2 = Window(sequence=variant_record.contig, first=variant_record.end - half_window,
+                                 last=variant_record.end + half_window, variant=called_variant)
+                windows.append(window1)
+                windows.append(window2)
+                # windows.append((variant_record.contig, variant_record.pos - half_window, variant_record.pos + half_window, variant_record))
+                # windows.append((variant_record.contig, variant_record.end - half_window, variant_record.end + half_window, variant_record))
+        elif variant_record.variant_type == VariantType.TRA:
+            window1 = Window(sequence=variant_record.contig, first=variant_record.pos - half_window,
+                             last=variant_record.pos + half_window, variant=called_variant)
+            window2 = Window(sequence=end_chrom, first=end - half_window,
+                             last=end + half_window, variant=called_variant)
+            windows.append(window1)
+            windows.append(window2)
+            # windows.append((variant_record.contig, variant_record.pos - half_window, variant_record.pos + half_window, variant_record))
+            # windows.append((variant_record.contig, variant_record.end - half_window, variant_record.end + half_window, variant_record))
+        elif variant_record.variant_type == VariantType.SNV:
+            window = Window(sequence=variant_record.contig, first=variant_record.pos - half_window,
+                            last=variant_record.pos + half_window, variant=called_variant)
+            windows.append(window)
+            # windows.append((variant_record.contig, variant_record.pos - half_window, variant_record.pos + half_window, variant_record))
+        else:
+            if variant_record.length < 100_000:
+                window = Window(sequence=variant_record.contig, first=variant_record.pos - half_window,
+                                last=variant_record.end + half_window, variant=called_variant)
+                windows.append(window)
+            else:
+                window1 = Window(sequence=variant_record.contig, first=variant_record.pos - half_window,
+                                 last=variant_record.pos + half_window, variant=called_variant)
+                window2 = Window(sequence=end_chrom, first=end - half_window,
+                                 last=end + half_window, variant=called_variant)
+                windows.append(window1)
+                windows.append(window2)
+            # windows.append((variant_record.contig, variant_record.pos - half_window, variant_record.end + half_window, variant_record))
+    windows.sort(key=lambda x: (ref_sequences_dict.get(x.sequence), x.first, x.last))
     return windows
 
 
@@ -61,9 +123,7 @@ def close_paired_streams(indexed_pair_writer_streams):
     indexed_pair_writer_streams = []
 
 
-# def anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq, ref_genome,
-#                      anonymizer, to_pair_anonymized_reads)
-def anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq, ref_genome,
+def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq, ref_genome,
                      anonymizer, to_pair_anonymized_reads, mem_debug_writer):
     # DEBUG/
     # logging.info(f'Anonymizing window {seq_name}:{window[0]}-{window[1]}')
@@ -73,8 +133,10 @@ def anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq
     # normal_reads_pileup = normal_bam.pileup(contig=seq_name, start=window[0], stop=window[1],
     #                                         fastafile=ref_genome, min_base_quality=0, max_depth=100000)
     start2 = timer()
-    tumor_normal_pileup = pileup_io.iter_pileups(tumor_bam, normal_bam, ref_genome, seq_name=seq_name, start=window[0], stop=window[1])
-    anonymized_reads_generator = anonymizer.anonymize(window[2], tumor_normal_pileup, ref_genome)
+    tumor_normal_pileup = pileup_io.iter_pileups(tumor_bam, normal_bam, ref_genome, seq_name=window.sequence,
+                                                 start=window.first,
+                                                 stop=window.last)
+    anonymized_reads_generator = anonymizer.anonymize(window.variant, tumor_normal_pileup, ref_genome)
     end2 = timer()
     DEBUG_TOTAL_TIMES['anonymize_call'] += end2 - start2
     # Anonymized reads generated per window
@@ -123,16 +185,16 @@ def anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq
     close_paired_streams(indexed_pair_writer_streams)
     memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
     mem_debug_writer.write(
-        f'Memory usage after window {seq_name}-{window[0]}-{window[1]}'
+        f'Memory usage after window {window.sequence}-{window.first}-{window.last}'
         f': {memory_usage} MB\n')
     # Reset the anonymizer for the next window
     # anonymizer.reset()
 
 
 def pair_unpaired_or_supplementaries(to_pair_anonymized_reads, tumor_bam_file, normal_bam_file,
-                                     tumor_output_fastq, normal_output_fastq, threads_per_file):
-    with pysam.AlignmentFile(tumor_bam_file) as tumor_reads_file, \
-            pysam.AlignmentFile(normal_bam_file) as normal_reads_file:
+                                     tumor_output_fastq, normal_output_fastq, ref_genome_file, threads_per_file):
+    with pysam.AlignmentFile(tumor_bam_file, reference_filename=ref_genome_file) as tumor_reads_file, \
+            pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_reads_file:
         tumor_reads_stream = tumor_reads_file.fetch(until_eof=True)
         normal_reads_stream = normal_reads_file.fetch(until_eof=True)
         indexed_pair_writer_streams = [
@@ -183,24 +245,25 @@ def write_single_end_reads(to_pair_anonymized_reads, tumor_output_fastq, normal_
                 normal_fastq_writer_single_end.write(f'{fastq_record}\n')
 
 
-def anonymize_genome(vcf_variant_file: str, tumor_bam_file: str, normal_bam_file: str,
+def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_file: str,
                      ref_genome_file: str, anonymizer: Anonymizer, tumor_output_fastq: str,
-                     normal_output_fastq: str, available_threads: int):
+                     normal_output_fastq: str, tumor_bam_to_pair: str, normal_bam_to_pair: str,
+                     available_threads):
     """
     Anonymizes genomic data using the provided VCF variants, normal and tumor BAM files, reference genome,
     classifier, and anonymizer object.
     """
     mem_debug_writer = open(f'{tumor_output_fastq.split("/")[-1]}_{normal_output_fastq.split("/")[-1]}.mem_debug', 'w')
-    vcf_variants = VariantExtractor(vcf_variant_file)
+    # vcf_variants = VariantExtractor(vcf_variant_file)
     threads_per_file = available_threads  # max(available_threads  - 1 // 2, 1)
     # remaining_thread = available_threads - threads_per_file
     # tumor_bam = pysam.AlignmentFile(tumor_bam_file, threads=threads_per_file+remaining_threads)
     # normal_bam = pysam.AlignmentFile(normal_bam_file, threads=threads_per_file)
     ref_genome = pysam.FastaFile(ref_genome_file)
     start1 = timer()
-    windows = get_windows(vcf_variants, ref_genome)
+    # windows = get_windows(vcf_variants, ref_genome)
     end1 = timer()
-    vcf_variants.close()
+    # vcf_variants.close()
     logging.debug(f'Time to get windows: {end1 - start1} s')
     # This collection contains anonymized reads that are unpaired, because their pairs are not present in the same
     # window
@@ -213,21 +276,21 @@ def anonymize_genome(vcf_variant_file: str, tumor_bam_file: str, normal_bam_file
     memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
     mem_debug_writer.write(f'Memory usage before windows: {memory_usage} MB\n')
     idx = 0
-    for seq_name, seq_windows in windows.items():
-        for window in seq_windows:
-            with pysam.AlignmentFile(tumor_bam_file) as tumor_bam, \
-                    pysam.AlignmentFile(normal_bam_file) as normal_bam:
-                # Window is a tuple (start, end, VariantRecord)
-                start2 = timer()
-                # anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
-                #                 ref_genome, anonymizer, to_pair_anonymized_reads)
-                # DEBUG CALL
-                anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
-                                 ref_genome, anonymizer, to_pair_anonymized_reads, mem_debug_writer)
-                end2 = timer()
-                # logging.debug(
-                #    f'Time to anonymize reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end2 - start2}')
-                DEBUG_TOTAL_TIMES['anonymize_windows'] += end2 - start2
+    for window in windows_in_sample:
+        with pysam.AlignmentFile(tumor_bam_file, reference_filename=ref_genome_file) as tumor_bam, \
+                pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_bam:
+            # Window is a tuple (start, end, VariantRecord)
+            start2 = timer()
+            # anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
+            #                 ref_genome, anonymizer, to_pair_anonymized_reads)
+            # DEBUG CALL
+            anonymize_window(window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
+                             ref_genome, anonymizer, to_pair_anonymized_reads, mem_debug_writer)
+            end2 = timer()
+            # logging.debug(
+            #    f'Time to anonymize reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end2 - start2}')
+            DEBUG_TOTAL_TIMES['anonymize_windows'] += end2 - start2
+
     # Deal with any remaining anonymized reads, which have pairs or primary mappings in non-window regions
     memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
     mem_debug_writer.write(
@@ -236,8 +299,8 @@ def anonymize_genome(vcf_variant_file: str, tumor_bam_file: str, normal_bam_file
     logging.info('Searching for remaining unpaired anonymized reads')
     if to_pair_anonymized_reads:
         start3 = timer()
-        pair_unpaired_or_supplementaries(to_pair_anonymized_reads, tumor_bam_file, normal_bam_file,
-                                         tumor_output_fastq, normal_output_fastq, threads_per_file)
+        pair_unpaired_or_supplementaries(to_pair_anonymized_reads, tumor_bam_to_pair, normal_bam_to_pair,
+                                         tumor_output_fastq, normal_output_fastq, ref_genome_file, threads_per_file)
         end3 = timer()
         logging.debug(f'Time to pair unpaired anonymized reads: {end3 - start3}')
         DEBUG_TOTAL_TIMES['unpaired_searches'] += end3 - start3
@@ -259,3 +322,203 @@ def anonymize_genome(vcf_variant_file: str, tumor_bam_file: str, normal_bam_file
         logging.debug(f'{k}={v} s')
     logging.info(f'Anonymization complete for samples {tumor_output_fastq} and {normal_output_fastq}')
 
+
+def generate_subsamples_from_file(input_file, subsample_input_files, window_subsets_per_subsample, ref_genome_file,
+                                  threads_per_file):
+    with pysam.AlignmentFile(input_file, threads=threads_per_file, mode='rb',
+                             reference_filename=ref_genome_file) as sample_file_reader:
+        for subsample_file in subsample_input_files:
+            windows_in_subsample = window_subsets_per_subsample.get(subsample_file)
+            with pysam.AlignmentFile(subsample_file, threads=threads_per_file, mode='wb',
+                                     reference_filename=ref_genome_file,
+                                     header=sample_file_reader.header) as subsample_file_writer:
+                for i, window in enumerate(windows_in_subsample):
+                    window_it = sample_file_reader.fetch(contig=window.sequence, start=window.first,
+                                                         end=window.last)
+                    for read_aln in window_it:
+                        subsample_file_writer.write(read_aln)
+
+
+def divide_samples(inputs: List, ref_genome_file, cpus) -> (List, Dict[str, List[str]]):
+    """
+    Divide samples into smaller samples based on available cpus and sample sizes,
+     and return their output names in a dictionary by divided output names
+    """
+    input_sample_keys = dict()
+    output_sample_keys = dict()
+    window_subsets_per_sample = dict()
+    new_inputs = []
+    sorted_inputs_by_size = []
+    remaining_cpus = cpus - len(inputs)
+    cpus_per_sample = [1] * len(inputs)
+    total_size = 0
+    for sample_windows, sample_t_n_pair, output_t_n_pair in inputs:
+        # Compute samples window total sizes
+        # sample_windows = list(chain.from_iterable(sample_windows_dict.values()))
+        sample_bp_size = np.sum([abs(w.last - w.first) for w in sample_windows])
+        total_size += sample_bp_size
+        sorted_inputs_by_size.append((sample_windows, sample_t_n_pair, output_t_n_pair, sample_bp_size))
+        # As this maintains insertion order, a t_n pair corresponds to the i (tumor) and i+1 (normal) positions
+        input_sample_keys[sample_t_n_pair[DATASET_IDX_TUMORAL]] = []
+        input_sample_keys[sample_t_n_pair[DATASET_IDX_NORMAL]] = []
+        output_sample_keys[output_t_n_pair[DATASET_IDX_TUMORAL]] = []
+        output_sample_keys[output_t_n_pair[DATASET_IDX_NORMAL]] = []
+        # window_subsets_per_sample[sample_t_n_pair[DATASET_IDX_TUMORAL]] = []
+        # window_subsets_per_sample[sample_t_n_pair[DATASET_IDX_NORMAL]] = []
+    # Sort inputs by bp size of all the windows in each sample
+    sorted_inputs_by_size.sort(key=lambda x: x[-1], reverse=True)
+    bp_per_cpu = total_size // remaining_cpus
+    for i, sample_tuple in enumerate(sorted_inputs_by_size):
+        sample_windows, sample_t_n_pair, output_t_n_pair, sample_bp_size = sample_tuple
+        # BPs serve as the tokens to assign cpus, if the remaining cpus cost less than the total possible cpus for
+        # this sample, the remainers are assigned and further samples will only get 1 cpu
+        sample_cpus = min(remaining_cpus, sample_bp_size // bp_per_cpu)
+        cpus_per_sample[i] += sample_cpus
+        remaining_cpus -= sample_cpus
+        if sample_cpus == 0:
+            # Then, sample keys from this sample will have an empty list of subsamples in the output_sample_keys dict
+            new_input = (sample_windows, sample_t_n_pair, output_t_n_pair)
+            new_inputs.append(new_input)
+            break
+        # Begin subsetting process of files
+        sample_cpus = cpus_per_sample[i]
+        n_windows = len(sample_windows)
+        largest_window = max(sample_windows, key=lambda x: abs(x.last - x.first))
+        n_windows_per_subsample = n_windows // sample_cpus
+        compute_largest_window_alone = False
+        largest_window_threshold = 1_000_000
+        if (largest_window.last - largest_window.first) > largest_window_threshold:
+            sample_windows.remove(largest_window)
+            n_windows_per_subsample = len(sample_windows) // (sample_cpus - 1)
+            compute_largest_window_alone = True
+        left_limit = 0
+        # print(f'onw = {n_windows} - nw = {len(sample_windows)} - cpus = {sample_cpus}')
+        last_batch = sample_cpus - 2 if compute_largest_window_alone else sample_cpus - 1
+        windows_to_add = 0
+        for j in range(sample_cpus):
+            if compute_largest_window_alone and j == sample_cpus - 1:
+                # As the last batch of windows contains only the last one if it has a huge length
+                windows_in_subsample = [largest_window]
+                # bisect.insort(windows_in_subsample, largest_window,
+                #              key=lambda x: (ref_sequences_dict.get(x.sequence), x.first, x.last))
+            else:
+                windows_to_add = min(n_windows_per_subsample, n_windows - left_limit)
+                right_limit = left_limit + windows_to_add
+                windows_in_subsample = sample_windows[left_limit::] if j == last_batch else sample_windows[
+                                                                                            left_limit:right_limit]
+            # print(f'j: {j} - last_batch: {last_batch} - ll: {left_limit} - rl: {right_limit} - wn: {windows_to_add}\n'
+            #      f'real_n_windows: {len(windows_in_subsample)}')
+            subsample_t_sample_name = f'{sample_t_n_pair[DATASET_IDX_TUMORAL]}.{j}_temp'
+            subsample_n_sample_name = f'{sample_t_n_pair[DATASET_IDX_NORMAL]}.{j}_temp'
+            subsample_t_output_prefix = f'{output_t_n_pair[DATASET_IDX_TUMORAL]}.{j}_temp'
+            subsample_n_output_prefix = f'{output_t_n_pair[DATASET_IDX_NORMAL]}.{j}_temp'
+            input_sample_keys[sample_t_n_pair[DATASET_IDX_TUMORAL]].append(subsample_t_sample_name)
+            input_sample_keys[sample_t_n_pair[DATASET_IDX_NORMAL]].append(subsample_n_sample_name)
+            output_sample_keys[output_t_n_pair[DATASET_IDX_TUMORAL]].append(subsample_t_output_prefix)
+            output_sample_keys[output_t_n_pair[DATASET_IDX_NORMAL]].append(subsample_n_output_prefix)
+            new_input = (windows_in_subsample, (subsample_t_sample_name, subsample_n_sample_name),
+                         (subsample_t_output_prefix, subsample_n_output_prefix))
+            new_inputs.append(new_input)
+            window_subsets_per_sample[subsample_t_sample_name] = windows_in_subsample
+            window_subsets_per_sample[subsample_n_sample_name] = windows_in_subsample
+            left_limit += windows_to_add
+    threads_by_sample_for_io = max(cpus // len(input_sample_keys), 1)
+    with ProcessPoolExecutor(max_workers=cpus) as executor:
+        tasks = []
+        for input_file, subsample_input_files in input_sample_keys.items():
+            # window_subset = window_subsets_per_sample.get(input_file)
+            if not subsample_input_files:
+                continue
+            tasks.append(executor.submit(generate_subsamples_from_file, input_file, subsample_input_files,
+                                         window_subsets_per_sample, ref_genome_file, threads_by_sample_for_io))
+        for task in as_completed(tasks):
+            task.result()
+    return new_inputs, input_sample_keys, output_sample_keys
+
+
+def join_fastq_output_from_subsamples(final_output_sample, subsample_outputs):
+    with (open(final_output_sample + '.1.fastq', 'wb') as output_file_pair_1,
+          open(final_output_sample + '.2.fastq', 'wb') as output_file_pair_2):
+        for subsample in subsample_outputs:
+            with (open(subsample + '.1.fastq', 'rb') as subsample_1,
+                  open(subsample + '.2.fastq', 'rb') as subsample_2):
+                shutil.copyfileobj(subsample_1, output_file_pair_1)
+                shutil.copyfileobj(subsample_2, output_file_pair_2)
+                # This may not be needed, as the produced files already contain a newline character
+                # output_file_pair_1.write(b'\n')
+                # output_file_pair_2.write(b'\n')
+
+
+def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[str],
+                                           tumor_normal_samples: List[Tuple[str, str]],
+                                           ref_genome_file: str, anonymizer: Anonymizer,
+                                           output_filenames: List[Tuple[str, str]], cpus,
+                                           enhance_parallelization):
+    """
+    Anonymizes genomic sequencing from short read tumor-normal pairs, in the windows from each VCF variant
+    Args:
+        :param vcf_variants_per_sample: The VCF variants around which the sequencing data will be anonymized, for each sample
+        :param tumor_normal_samples: The list of tumor-normal samples containing the reads to be anonymized. Each sample is a
+            tuple containing the tumor and normal bam files in that order
+        :param ref_genome_file: The reference genome to which the reads were mapped
+        :param anonymizer: The specified anonymizing method
+        :param output_filenames: The output filenames for the anonymized reads, in the same format as the input samples
+        :param cpus: The number of cpus to use for the anonymization of each tumor-normal sample
+        :param enhance_parallelization: Divide samples by their total content in bp to maximize the cpu usage
+    """
+    # TODO: Implement multithreading for each sample pair
+    tasks = []
+    inputs_per_sample = []
+    ref_genome = pysam.FastaFile(ref_genome_file)
+    ref_idx_sequences = get_ref_idxs(ref_genome)
+    ref_genome.close()
+    for sample_vcf_variants, sample_pairs, sample_pair_outputs in zip(vcf_variants_per_sample, tumor_normal_samples,
+                                                                      output_filenames):
+        vars_extractor = VariantExtractor(sample_vcf_variants)
+        windows_in_sample = get_windows(vars_extractor, ref_idx_sequences)
+        inputs_per_sample.append((windows_in_sample, sample_pairs, sample_pair_outputs))
+        vars_extractor.close()
+    extra_processors = cpus - len(tumor_normal_samples)
+    print(f'# extra_processors = {extra_processors}')
+    # enhance_parallelization = extra_processors > 1
+    if enhance_parallelization:
+        inputs_per_sample, input_sample_keys, output_sample_keys = divide_samples(inputs_per_sample, ref_idx_sequences,
+                                                                                  ref_genome_file, cpus)
+        inv_input_sample = dict()
+        for (k, v) in input_sample_keys.items():
+            if v:
+                inv_input_sample[v] = k
+            else:
+                inv_input_sample[k] = k
+        # DEBUG
+        for input_sample, samples in input_sample_keys.items():
+            print(f'# input_sample = {input_sample}')
+            print(f'# input_subsamples: {samples}')
+        # DEBUG
+        # print(f'# output sample keys: {output_sample_keys}')
+    # Test up until here
+    # exit()
+    with ProcessPoolExecutor(max_workers=cpus) as executor:
+        processes_by_sample = 1 if cpus <= len(inputs_per_sample) or enhance_parallelization else cpus // len(
+            inputs_per_sample)
+        for windows_in_sample, samples, sample_output_files in inputs_per_sample:
+            # TODO: Implement joining the result fastq files per original samples
+            original_samples = samples
+            if enhance_parallelization:
+                original_samples = (inv_input_sample[samples[DATASET_IDX_TUMORAL]],
+                                    inv_input_sample[samples[DATASET_IDX_NORMAL]])
+            tasks.append(executor.submit(anonymize_genome,
+                                         windows_in_sample, samples[DATASET_IDX_TUMORAL], samples[DATASET_IDX_NORMAL],
+                                         ref_genome_file, anonymizer,
+                                         sample_output_files[DATASET_IDX_TUMORAL],
+                                         sample_output_files[DATASET_IDX_NORMAL],
+                                         original_samples[DATASET_IDX_TUMORAL], original_samples[DATASET_IDX_NORMAL],
+                                         processes_by_sample))
+        for task in as_completed(tasks):
+            task.result()
+        if enhance_parallelization:
+            tasks = []
+            for final_output_sample, subsample_outputs in output_sample_keys.items():
+                tasks.append(executor.submit(join_fastq_output_from_subsamples, final_output_sample, subsample_outputs))
+            for task in as_completed(tasks):
+                task.result()
