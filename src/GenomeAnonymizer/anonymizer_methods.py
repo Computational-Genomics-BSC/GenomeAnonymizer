@@ -59,8 +59,22 @@ class AnonymizedRead:
         self.set_original_sequence(read_alignment.query_sequence)
         self.set_original_qualities(read_alignment.query_qualities)
         self.dataset_idx = dataset_idx
-        # If AnonymizedReads are initialized correctly, this only happens once if a supp. begins before the primary
+        # An AnonymizedRead is_supplementary, if the read has a supp. alignment and the primary mapping has not been processed
         self.is_supplementary = read_alignment.is_supplementary
+        self.has_supplementary = read_alignment.has_tag('SA')
+        self.supplementaries_recorded = 0
+        self.n_supplementaries = 0
+        if self.has_supplementary:
+            supplementaries = read_alignment.get_tag('SA').split(';')
+            self.n_supplementaries = len(supplementaries)-1
+            if self.is_supplementary:
+                self.record_supplementary_aln()
+        # DEBUG/
+        # if self.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
+        #    logging.info(f'# n_supplementaries={self.n_supplementaries}'
+        #                 f' supplementaries_recorded={self.supplementaries_recorded}')
+        # \DEBUG
+        # self.supplementary_recorded = self.is_supplementary and self.has_supplementary
         # Left over variants that were found in the suppl. but the primary mapping was not found yet
         self.left_over_variants_to_mask: List[Tuple[int, int]] = []
         self.has_left_overs_to_mask = False
@@ -70,6 +84,23 @@ class AnonymizedRead:
             return PAIR_1_IDX
         if self.is_read2:
             return PAIR_2_IDX
+
+    def anonymized_read_is_complete(self) -> bool:
+        if self.is_supplementary:
+            return False
+        if self.has_supplementary:
+            # DEBUG/
+            # assert (self.supplementaries_recorded <= self.n_supplementaries,
+            #         f'Recorded supplementary alignments: {self.supplementaries_recorded}'
+            #         f' cannot be more than the total: {self.n_supplementaries}'
+            #         f' supplementary alignments.')
+            # \DEBUG
+            if self.supplementaries_recorded < self.n_supplementaries:
+                return False
+        return True
+
+    def record_supplementary_aln(self):
+        self.supplementaries_recorded += 1
 
     def update_from_primary_mapping(self, aln: pysam.AlignedSegment):
         if aln.is_supplementary:
@@ -201,39 +232,54 @@ def add_anonymized_read_pair_to_collection_from_alignment(anonymized_reads: Dict
         # and the new_anonymized_read does not come from a primary mapping
         if not aln.is_supplementary and new_anonymized_read.is_supplementary:
             new_anonymized_read.update_from_primary_mapping(aln)
+            # new_anonymized_read.supplementary_recorded = True
+        if aln.is_supplementary:
+            new_anonymized_read.record_supplementary_aln()
+        # DEBUG/
+        # if aln.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
+        #     logging.info(f'# n_supplementaries={new_anonymized_read.n_supplementaries}'
+        #                  f' supplementaries_recorded={new_anonymized_read.supplementaries_recorded}')
+        # \DEBUG
 
 
 def add_or_update_anonymized_read_from_other(anonymized_reads: Dict[str, List[AnonymizedRead]],
                                              anonymized_read: AnonymizedRead):
     if anonymized_read.query_name not in anonymized_reads:
         anonymized_reads[anonymized_read.query_name] = [None, None]
-        paired_anonymized_read_list = anonymized_reads[anonymized_read.query_name]
+        paired_anonymized_read_list = anonymized_reads.get(anonymized_read.query_name)
         pair_idx = anonymized_read.get_pair_idx()
         paired_anonymized_read_list[pair_idx] = anonymized_read
     else:
-        paired_anonymized_read_list = anonymized_reads[anonymized_read.query_name]
+        paired_anonymized_read_list = anonymized_reads.get(anonymized_read.query_name)
         pair_idx = anonymized_read.get_pair_idx()
         if paired_anonymized_read_list[pair_idx] is None:
             paired_anonymized_read_list[pair_idx] = anonymized_read
             return
         saved_anonymized_read = paired_anonymized_read_list[pair_idx]
+        # Saved anonymized read is supplementary and the new one is a primary mapping
         if saved_anonymized_read.is_supplementary and not anonymized_read.is_supplementary:
             anonymized_read.left_over_variants_to_mask.extend(saved_anonymized_read.left_over_variants_to_mask)
             if len(anonymized_read.left_over_variants_to_mask) > 0:
                 anonymized_read.has_left_overs_to_mask = True
             paired_anonymized_read_list[pair_idx] = anonymized_read
             return
+        # In any case, update leftover bases to mask from the new anonymized read
         if anonymized_read.has_left_overs_to_mask:
             saved_anonymized_read.left_over_variants_to_mask.extend(anonymized_read.left_over_variants_to_mask)
             if len(saved_anonymized_read.left_over_variants_to_mask) > 0:
                 saved_anonymized_read.has_left_overs_to_mask = True
+        # If the new anonymized read is supplementary update the supp. record
+        if anonymized_read.is_supplementary:
+            saved_anonymized_read.record_supplementary_aln()
 
 
 def anonymized_read_pair_is_writeable(anonymized_read_pair1: AnonymizedRead,
                                       anonymized_read_pair2: AnonymizedRead) -> bool:
     if anonymized_read_pair1 is None or anonymized_read_pair2 is None:
         return False
-    if anonymized_read_pair1.is_supplementary or anonymized_read_pair2.is_supplementary:
+    # if anonymized_read_pair1.is_supplementary or anonymized_read_pair2.is_supplementary:
+    #     return False
+    if not anonymized_read_pair1.anonymized_read_is_complete() or not anonymized_read_pair2.anonymized_read_is_complete():
         return False
     return True
 
@@ -328,6 +374,12 @@ class CompleteGermlineAnonymizer:
             mask_left_over_variants_in_pair(anonymized_read_pair[PAIR_1_IDX], anonymized_read_pair[PAIR_2_IDX])
             end3 = timer()
             DEBUG_TOTAL_TIMES['mask_germlines_left_overs_in_window'] += end3 - start3
+            # DEBUG/
+            # available_pair = anonymized_read_pair[PAIR_1_IDX] if anonymized_read_pair[PAIR_1_IDX] is not None else \
+            # anonymized_read_pair[PAIR_2_IDX]
+            # if available_pair.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
+            #     logging.info(f'# Tracked read is about to be yielded to outside dict')
+            # \DEBUG
             yield anonymized_read_pair
         # logging.debug(f"Mask left over time: {end3 - start3}")
         self.reset()

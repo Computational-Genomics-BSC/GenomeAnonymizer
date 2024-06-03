@@ -103,7 +103,6 @@ def get_windows(variants, ref_sequences_dict, window_size=2000) -> List[Window]:
                                  last=end + half_window, variant=called_variant)
                 windows.append(window1)
                 windows.append(window2)
-            # windows.append((variant_record.contig, variant_record.pos - half_window, variant_record.end + half_window, variant_record))
     windows.sort(key=lambda x: (ref_sequences_dict.get(x.sequence), x.first, x.last))
     return windows
 
@@ -151,24 +150,47 @@ def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, 
         anonymized_read_pair1 = anonymized_read_pair[PAIR_1_IDX]
         anonymized_read_pair2 = anonymized_read_pair[PAIR_2_IDX]
         # gc.collect(2)
+        # TODO: Manage anonymized pairs that have a supplementary in another window
+        # TODO: Fix missing mappings with pair in another chr
         if anonymized_read_pair_is_writeable(anonymized_read_pair1, anonymized_read_pair2):
-            # TODO: Manage anonymized pairs that have a supplementary in another window
             write_pair(indexed_pair_writer_streams, anonymized_read_pair1, anonymized_read_pair2)
         else:
+            # DEBUG/
+            # available_pair = anonymized_read_pair[PAIR_1_IDX] if anonymized_read_pair[PAIR_1_IDX] is not None else \
+            #     anonymized_read_pair[PAIR_2_IDX]
+            # if available_pair.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
+            #     logging.info(f'# Tracked read is outside')
+            # \DEBUG
             if anonymized_read_pair1 is not None:
                 dataset_idx = anonymized_read_pair1.dataset_idx
                 add_or_update_anonymized_read_from_other(to_pair_anonymized_reads,
                                                          anonymized_read_pair1)
                 read_id = anonymized_read_pair1.query_name
+                # DEBUG/
+                # if available_pair.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
+                #     logging.info(f'# Tracked read is pair1')
+                # \DEBUG
             if anonymized_read_pair2 is not None:
                 dataset_idx = anonymized_read_pair2.dataset_idx
                 add_or_update_anonymized_read_from_other(to_pair_anonymized_reads,
                                                          anonymized_read_pair2)
                 read_id = anonymized_read_pair2.query_name
+                # DEBUG/
+                # if available_pair.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
+                #     logging.info(f'# Tracked read is pair2')
+                # \DEBUG
             # A read_aln pair is present in the collection, but may be the same pair, if it has supplementary alignments in other windows
             updated_anonymized_read_pair = to_pair_anonymized_reads.get(read_id)
             updated_anonymized_read_pair1 = updated_anonymized_read_pair[PAIR_1_IDX]
             updated_anonymized_read_pair2 = updated_anonymized_read_pair[PAIR_2_IDX]
+            # DEBUG/
+            # if available_pair.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
+            #     logging.info(f'# Tracked read is being tested')
+            #     if anonymized_read_pair_is_writeable(updated_anonymized_read_pair1, updated_anonymized_read_pair2):
+            #         logging.info(f'# Tracked read is writable')
+            #     else:
+            #         logging.info(f'# Tracked read is not writable')
+            # \DEBUG
             if anonymized_read_pair_is_writeable(updated_anonymized_read_pair1, updated_anonymized_read_pair2):
                 if updated_anonymized_read_pair1.has_left_overs_to_mask:
                     updated_anonymized_read_pair1.mask_or_anonymize_left_over_variants()
