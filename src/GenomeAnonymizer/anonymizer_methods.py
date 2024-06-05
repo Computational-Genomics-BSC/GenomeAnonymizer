@@ -47,17 +47,22 @@ def decode_base(int_base: int) -> str:
             p2 = next(pileup2, None)"""
 
 
+def generate_anonymized_read(name, sequence, quality):
+    return f'@{name}\n{sequence}\n+\n{quality}\n'
+
+
 class AnonymizedRead:
     def __init__(self, read_alignment: pysam.AlignedSegment, dataset_idx: int):
         self.anonymized_sequence_array: np.ndarray = []
-        self.anonymized_qualities_array: np.ndarray = []
+        self.anonymized_qualities_array = []
         self.query_name = read_alignment.query_name
         self.is_read1 = read_alignment.is_read1
         self.is_read2 = read_alignment.is_read2
         self.is_reverse = read_alignment.is_reverse
         # self.read_alignment = read_alignment
         self.set_original_sequence(read_alignment.query_sequence)
-        self.set_original_qualities(read_alignment.query_qualities)
+        self.set_original_qualities(read_alignment.get_forward_qualities())
+        # print(read_alignment.get_forward_qualities())
         self.dataset_idx = dataset_idx
         # An AnonymizedRead is_supplementary, if the read has a supp. alignment and the primary mapping has not been processed
         self.is_supplementary = read_alignment.is_supplementary
@@ -108,7 +113,7 @@ class AnonymizedRead:
                              "The update should always be called only if the primary mapping appears")
         # self.read_alignment = aln
         self.set_original_sequence(aln.query_sequence)
-        self.set_original_qualities(aln.query_qualities)
+        self.set_original_qualities(aln.get_forward_qualities())
         self.is_supplementary = False
 
     def set_original_sequence(self, original_sequence: str):
@@ -117,16 +122,16 @@ class AnonymizedRead:
                                                                    dtype=np.uint8)
 
     def set_original_qualities(self, original_qualities):
-        # self.anonymized_qualities_array = list(original_qualities)
-        self.anonymized_qualities_array: np.ndarray = np.frombuffer(original_qualities,
-                                                                    dtype=np.uint8)
+        self.anonymized_qualities_array = original_qualities
+        # self.anonymized_qualities_array: np.ndarray = np.frombuffer(original_qualities,
+        #                                                             dtype=np.uint8)
 
     def mask_or_modify_base_pair(self, pos_in_read: int, new_base: str, modify_qualities: bool = False,
                                  new_quality: int = 0):
         # self.anonymized_sequence_array[pos_in_read] = encode_base(new_base)
         np.put(self.anonymized_sequence_array, pos_in_read, encode_base(new_base), mode='raise')
         if modify_qualities:
-            np.put(self.anonymized_qualities_array, pos_in_read, new_quality, mode='raise')
+            self.anonymized_qualities_array[pos_in_read] = new_quality
 
     def reverse_complement(self):
         # complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N'}
@@ -134,9 +139,9 @@ class AnonymizedRead:
         self.anonymized_sequence_array = np.flip(np.vectorize(reverses.get)(self.anonymized_sequence_array))
         # self.anonymized_sequence_array = [encode_base(complement[decode_base(base)]) for base in
         #                                  reversed(self.anonymized_sequence_array)]
-        self.anonymized_qualities_array = np.flip(self.anonymized_qualities_array)
+        self.anonymized_qualities_array = reversed(self.anonymized_qualities_array)
 
-    def get_anonymized_fastq_record(self) -> pysam.FastxRecord:
+    def get_anonymized_fastq_record(self) -> str:
         if self.is_reverse:
             self.reverse_complement()
         # anonymized_read_seq = ''.join(map(lambda x: decode_base(x), self.anonymized_sequence_array))
@@ -150,13 +155,15 @@ class AnonymizedRead:
         #                                            separator='',
         #                                            max_line_width=sys.maxsize).strip('[]')
         anonimized_read_qual: str = ''.join([chr(x + 33) for x in self.anonymized_qualities_array])
+        # anonimized_read_qual: str = ''.join([chr(x) for x in self.anonymized_qualities_array])
         # if len(anonymized_read_seq) != len(self.original_sequence):
         #    raise ValueError("Anonymized read length does not match original read length")
         # if len(anonimized_read_qual) != len(self.original_qualities):
         #    raise ValueError("Anonymized qualities length does not match original qualities length")
         read_pair_name = f'{self.query_name}/{PAIR_1_IDX + 1}' if self.is_read1 else f'{self.query_name}/{PAIR_2_IDX + 1}'
-        anonymized_read: pysam.FastxRecord = pysam.FastxRecord(name=read_pair_name, sequence=anonymized_read_seq,
-                                                               quality=anonimized_read_qual)
+        # anonymized_read: pysam.FastxRecord = pysam.FastxRecord(name=read_pair_name, sequence=anonymized_read_seq,
+        #                                                        quality=anonimized_read_qual)
+        anonymized_read = generate_anonymized_read(name=read_pair_name, sequence=anonymized_read_seq, quality=anonimized_read_qual)
         return anonymized_read
 
     def add_left_over_variant(self, var_pos_in_read, new_base):

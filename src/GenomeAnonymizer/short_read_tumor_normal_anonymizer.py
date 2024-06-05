@@ -501,7 +501,7 @@ def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[str],
         inputs_per_sample.append((windows_in_sample, sample_pairs, sample_pair_outputs))
         vars_extractor.close()
     extra_processors = cpus - len(tumor_normal_samples)
-    print(f'# extra_processors = {extra_processors}')
+    logging.debug(f'# extra_processors = {extra_processors}')
     # enhance_parallelization = extra_processors > 1
     if enhance_parallelization:
         inputs_per_sample, input_sample_keys, output_sample_keys = divide_samples(inputs_per_sample, ref_idx_sequences,
