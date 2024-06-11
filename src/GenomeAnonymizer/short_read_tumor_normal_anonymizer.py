@@ -1,5 +1,4 @@
 # @author: Nicolas Gaitan
-import bisect
 import logging
 import re
 import shutil
@@ -107,7 +106,26 @@ def get_windows(variants, ref_sequences_dict, window_size=2000) -> List[Window]:
     return windows
 
 
-def write_pair(indexed_writer_streams, anonymized_read_pair1, anonymized_read_pair2):
+def write_pair(indexed_writer_streams, anonymized_read_pair1, anonymized_read_pair2, written_read_ids=None):
+    if written_read_ids is not None:
+        # If this method is called, the AnonymizedRead pair must be writable (pairs are not None, and are complete)
+        read_id = anonymized_read_pair1.query_name
+        # DEBUG/
+        # if read_id == 'HWI-ST898:327:C192HACXX:7:1305:14538:65422':
+        #     logging.info(f'# assessing writing read')
+        # DEBUG/
+        if read_id in written_read_ids:
+            # DEBUG/
+            # if read_id == 'HWI-ST898:327:C192HACXX:7:1305:14538:65422':
+            #     logging.info(f'# read in set')
+            # DEBUG/
+            return
+        else:
+            # DEBUG/
+            # if read_id == 'HWI-ST898:327:C192HACXX:7:1305:14538:65422':
+            #     logging.info(f'# read not in set')
+            # DEBUG/
+            written_read_ids.add(read_id)
     fastq_record_pair1 = str(anonymized_read_pair1.get_anonymized_fastq_record())
     fastq_record_pair2 = str(anonymized_read_pair2.get_anonymized_fastq_record())
     dataset_idx = anonymized_read_pair1.dataset_idx
@@ -123,7 +141,7 @@ def close_paired_streams(indexed_pair_writer_streams):
 
 
 def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq, ref_genome,
-                     anonymizer, to_pair_anonymized_reads, mem_debug_writer):
+                     anonymizer, to_pair_anonymized_reads, written_read_ids, mem_debug_writer):
     # DEBUG/
     # logging.info(f'Anonymizing window {seq_name}:{window[0]}-{window[1]}')
     # \DEBUG
@@ -153,7 +171,8 @@ def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, 
         # TODO: Manage anonymized pairs that have a supplementary in another window
         # TODO: Fix missing mappings with pair in another chr
         if anonymized_read_pair_is_writeable(anonymized_read_pair1, anonymized_read_pair2):
-            write_pair(indexed_pair_writer_streams, anonymized_read_pair1, anonymized_read_pair2)
+            write_pair(indexed_pair_writer_streams, anonymized_read_pair1, anonymized_read_pair2,
+                       written_read_ids=written_read_ids)
         else:
             # DEBUG/
             # available_pair = anonymized_read_pair[PAIR_1_IDX] if anonymized_read_pair[PAIR_1_IDX] is not None else \
@@ -197,7 +216,7 @@ def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, 
                 if updated_anonymized_read_pair2.has_left_overs_to_mask:
                     updated_anonymized_read_pair2.mask_or_anonymize_left_over_variants()
                 write_pair(indexed_pair_writer_streams, updated_anonymized_read_pair1,
-                           updated_anonymized_read_pair2)
+                           updated_anonymized_read_pair2, written_read_ids=written_read_ids)
                 to_pair_anonymized_reads.pop(read_id)
 
     end3 = timer()
@@ -214,7 +233,8 @@ def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, 
 
 
 def pair_unpaired_or_supplementaries(to_pair_anonymized_reads, tumor_bam_file, normal_bam_file,
-                                     tumor_output_fastq, normal_output_fastq, ref_genome_file, threads_per_file):
+                                     tumor_output_fastq, normal_output_fastq, ref_genome_file,
+                                     written_read_ids, threads_per_file):
     with pysam.AlignmentFile(tumor_bam_file, reference_filename=ref_genome_file) as tumor_reads_file, \
             pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_reads_file:
         tumor_reads_stream = tumor_reads_file.fetch(until_eof=True)
@@ -238,7 +258,7 @@ def pair_unpaired_or_supplementaries(to_pair_anonymized_reads, tumor_bam_file, n
                             updated_anonymized_read_pair2.mask_or_anonymize_left_over_variants()
                         start4 = timer()
                         write_pair(indexed_pair_writer_streams, updated_anonymized_read_pair1,
-                                   updated_anonymized_read_pair2)
+                                   updated_anonymized_read_pair2, written_read_ids)
                         end4 = timer()
                         DEBUG_TOTAL_TIMES['write_pairs'] += end4 - start4
                         to_pair_anonymized_reads.pop(read_id)
@@ -297,8 +317,12 @@ def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_fi
     open(normal_output_fastq + '.2.fastq', 'w').close()
     memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
     mem_debug_writer.write(f'Memory usage before windows: {memory_usage} MB\n')
-    idx = 0
+    written_read_ids = set()
+    # current_sequence = ''
     for window in windows_in_sample:
+        # if current_sequence != window.sequence:
+        #     written_read_ids.clear()
+        # current_sequence = window.sequence
         with pysam.AlignmentFile(tumor_bam_file, reference_filename=ref_genome_file) as tumor_bam, \
                 pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_bam:
             # Window is a tuple (start, end, VariantRecord)
@@ -307,7 +331,7 @@ def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_fi
             #                 ref_genome, anonymizer, to_pair_anonymized_reads)
             # DEBUG CALL
             anonymize_window(window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
-                             ref_genome, anonymizer, to_pair_anonymized_reads, mem_debug_writer)
+                             ref_genome, anonymizer, to_pair_anonymized_reads, written_read_ids, mem_debug_writer)
             end2 = timer()
             # logging.debug(
             #    f'Time to anonymize reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end2 - start2}')
@@ -318,11 +342,12 @@ def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_fi
     mem_debug_writer.write(
         f'Memory usage after windows: {memory_usage} MB\n')
     ref_genome.close()
-    logging.info('Searching for remaining unpaired anonymized reads')
     if to_pair_anonymized_reads:
+        logging.info('Searching for remaining unpaired anonymized reads')
         start3 = timer()
         pair_unpaired_or_supplementaries(to_pair_anonymized_reads, tumor_bam_to_pair, normal_bam_to_pair,
-                                         tumor_output_fastq, normal_output_fastq, ref_genome_file, threads_per_file)
+                                         tumor_output_fastq, normal_output_fastq, ref_genome_file, written_read_ids, threads_per_file)
+        # written_read_ids, threads_per_file)
         end3 = timer()
         logging.debug(f'Time to pair unpaired anonymized reads: {end3 - start3}')
         DEBUG_TOTAL_TIMES['unpaired_searches'] += end3 - start3
@@ -330,6 +355,19 @@ def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_fi
         memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
         mem_debug_writer.write(
             f'Memory usage after pairing leftover reads: {memory_usage} MB\n')
+        # written_remaining_reads = list()
+        # for read_id, _ in to_pair_anonymized_reads:
+        #     if read_id in written_read_ids:
+        #         written_remaining_reads.append(read_id)
+        # for read_id in written_remaining_reads:
+        #     to_pair_anonymized_reads.pop(read_id)
+        # Remove all reads that are repeated due to nearby windows
+        for k in written_read_ids:
+            removed_id = to_pair_anonymized_reads.pop(k, '')
+            if removed_id != '':
+                logging.warning(f'Unexpected event: read {removed_id} was removed from remaining reads after '
+                                f'being written, this may happen because of nearby windows')
+        # [to_pair_anonymized_reads.pop(k, '') for k in written_read_ids]
         if to_pair_anonymized_reads:
             start4 = timer()
             write_single_end_reads(to_pair_anonymized_reads, tumor_output_fastq, normal_output_fastq)
@@ -498,6 +536,11 @@ def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[str],
                                                                       output_filenames):
         vars_extractor = VariantExtractor(sample_vcf_variants)
         windows_in_sample = get_windows(vars_extractor, ref_idx_sequences)
+        # DEBUG/
+        # if sample_pairs[0] == 'input_PCAWG_0/mosaic_genome_PCAWG_0_T.bam_0a3dd00df8fa7d14d1df99450759c11a.bam':
+        #    for window in windows_in_sample:
+        #         logging.debug(str(window))
+        # \DEBUG
         inputs_per_sample.append((windows_in_sample, sample_pairs, sample_pair_outputs))
         vars_extractor.close()
     extra_processors = cpus - len(tumor_normal_samples)

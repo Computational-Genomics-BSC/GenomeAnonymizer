@@ -48,7 +48,11 @@ def decode_base(int_base: int) -> str:
 
 
 def generate_anonymized_read(name, sequence, quality):
-    return f'@{name}\n{sequence}\n+\n{quality}\n'
+    return f'@{name}\n{sequence}\n+\n{quality}'
+
+
+def get_supplementary_hash_from_aln(aln: pysam.AlignedSegment):
+    return f'{aln.reference_name};{aln.reference_start};{aln.cigarstring};{aln.query_sequence}'
 
 
 class AnonymizedRead:
@@ -67,17 +71,17 @@ class AnonymizedRead:
         # An AnonymizedRead is_supplementary, if the read has a supp. alignment and the primary mapping has not been processed
         self.is_supplementary = read_alignment.is_supplementary
         self.has_supplementary = read_alignment.has_tag('SA')
-        self.supplementaries_recorded = 0
+        self.supplementary_hashes = set()
         self.n_supplementaries = 0
         if self.has_supplementary:
-            supplementaries = read_alignment.get_tag('SA').split(';')
-            self.n_supplementaries = len(supplementaries)-1
+            supplementaries = read_alignment.get_tag('SA').rstrip(';').split(';')
+            self.n_supplementaries = len(supplementaries) - 1
             if self.is_supplementary:
-                self.record_supplementary_aln()
+                self.record_supplementary_aln(get_supplementary_hash_from_aln(read_alignment))
         # DEBUG/
-        # if self.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
-        #    logging.info(f'# n_supplementaries={self.n_supplementaries}'
-        #                 f' supplementaries_recorded={self.supplementaries_recorded}')
+        # if self.query_name == 'HWI-ST1133:217:D1D4WACXX:2:1204:12012:86477':
+        #     logging.info(f'# n_supplementaries={self.n_supplementaries}'
+        #                  f' supplementaries_recorded={len(self.supplementary_hashes)}')
         # \DEBUG
         # self.supplementary_recorded = self.is_supplementary and self.has_supplementary
         # Left over variants that were found in the suppl. but the primary mapping was not found yet
@@ -100,12 +104,12 @@ class AnonymizedRead:
             #         f' cannot be more than the total: {self.n_supplementaries}'
             #         f' supplementary alignments.')
             # \DEBUG
-            if self.supplementaries_recorded < self.n_supplementaries:
+            if len(self.supplementary_hashes) < self.n_supplementaries:
                 return False
         return True
 
-    def record_supplementary_aln(self):
-        self.supplementaries_recorded += 1
+    def record_supplementary_aln(self, supplementary_hash: str):
+        self.supplementary_hashes.add(supplementary_hash)
 
     def update_from_primary_mapping(self, aln: pysam.AlignedSegment):
         if aln.is_supplementary:
@@ -163,7 +167,8 @@ class AnonymizedRead:
         read_pair_name = f'{self.query_name}/{PAIR_1_IDX + 1}' if self.is_read1 else f'{self.query_name}/{PAIR_2_IDX + 1}'
         # anonymized_read: pysam.FastxRecord = pysam.FastxRecord(name=read_pair_name, sequence=anonymized_read_seq,
         #                                                        quality=anonimized_read_qual)
-        anonymized_read = generate_anonymized_read(name=read_pair_name, sequence=anonymized_read_seq, quality=anonimized_read_qual)
+        anonymized_read = generate_anonymized_read(name=read_pair_name, sequence=anonymized_read_seq,
+                                                   quality=anonimized_read_qual)
         return anonymized_read
 
     def add_left_over_variant(self, var_pos_in_read, new_base):
@@ -241,11 +246,12 @@ def add_anonymized_read_pair_to_collection_from_alignment(anonymized_reads: Dict
             new_anonymized_read.update_from_primary_mapping(aln)
             # new_anonymized_read.supplementary_recorded = True
         if aln.is_supplementary:
-            new_anonymized_read.record_supplementary_aln()
+            new_anonymized_read.record_supplementary_aln(get_supplementary_hash_from_aln(aln))
         # DEBUG/
-        # if aln.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
-        #     logging.info(f'# n_supplementaries={new_anonymized_read.n_supplementaries}'
-        #                  f' supplementaries_recorded={new_anonymized_read.supplementaries_recorded}')
+        # if aln.query_name == 'HWI-ST1133:217:D1D4WACXX:2:1204:12012:86477':
+        #     logging.info(f'# from aln - n_supplementaries={new_anonymized_read.n_supplementaries}'
+        #                  f' supplementaries_recorded={len(new_anonymized_read.supplementary_hashes)}'
+        #                  f' cigar={aln.cigarstring}')
         # \DEBUG
 
 
@@ -277,11 +283,27 @@ def add_or_update_anonymized_read_from_other(anonymized_reads: Dict[str, List[An
                 saved_anonymized_read.has_left_overs_to_mask = True
         # If the new anonymized read is supplementary update the supp. record
         if anonymized_read.is_supplementary:
-            saved_anonymized_read.record_supplementary_aln()
+            for suppl_hash in anonymized_read.supplementary_hashes:
+                saved_anonymized_read.record_supplementary_aln(suppl_hash)
+        # DEBUG/
+        # if anonymized_read.query_name == 'HWI-ST1133:217:D1D4WACXX:2:1204:12012:86477':
+        #     logging.info(f'# from anon_read - n_supplementaries={anonymized_read.n_supplementaries}'
+        #                  f' supplementaries_recorded={len(anonymized_read.supplementary_hashes)}')
+        # \DEBUG
 
 
 def anonymized_read_pair_is_writeable(anonymized_read_pair1: AnonymizedRead,
                                       anonymized_read_pair2: AnonymizedRead) -> bool:
+    # DEBUG/
+    # available_pair = anonymized_read_pair1 if anonymized_read_pair1 is not None else \
+    #     anonymized_read_pair2
+    # if available_pair.query_name == 'HWI-ST0738:314:D1E5KACXX:5:1204:15477:168431':
+    #     logging.info(f'# Tracked read assessing if writeable\n'
+    #                  f'pair1 is None: {anonymized_read_pair1 is None}\n'
+    #                  f'pair2 is None: {anonymized_read_pair2 is None}\n'
+    #                  f'pair1 is complete: {anonymized_read_pair1.anonymized_read_is_complete()}\n'
+    #                  f'pair2 is complete: {anonymized_read_pair2.anonymized_read_is_complete()}')
+    # \DEBUG
     if anonymized_read_pair1 is None or anonymized_read_pair2 is None:
         return False
     # if anonymized_read_pair1.is_supplementary or anonymized_read_pair2.is_supplementary:
@@ -358,6 +380,13 @@ class CompleteGermlineAnonymizer:
                         if is_candidate_to_yield and anonymized_read_pair_is_writeable(candidate_pair[PAIR_1_IDX],
                                                                                        candidate_pair[PAIR_2_IDX]):
                             mask_left_over_variants_in_pair(candidate_pair[PAIR_1_IDX], candidate_pair[PAIR_2_IDX])
+                            # DEBUG/
+                            # available_pair = candidate_pair[PAIR_1_IDX] if candidate_pair[
+                            #                                                          PAIR_1_IDX] is not None else \
+                            #     candidate_pair[PAIR_2_IDX]
+                            # if available_pair.query_name == 'HWI-ST0738:314:D1E5KACXX:5:1204:15477:168431':
+                            #     logging.info(f'# Tracked read is about to be yielded in stream')
+                            # \DEBUG
                             yield candidate_pair
                             self.anonymized_reads.pop(read_id)
                             new_yielded_reads.add(read_id)
@@ -383,9 +412,9 @@ class CompleteGermlineAnonymizer:
             DEBUG_TOTAL_TIMES['mask_germlines_left_overs_in_window'] += end3 - start3
             # DEBUG/
             # available_pair = anonymized_read_pair[PAIR_1_IDX] if anonymized_read_pair[PAIR_1_IDX] is not None else \
-            # anonymized_read_pair[PAIR_2_IDX]
-            # if available_pair.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
-            #     logging.info(f'# Tracked read is about to be yielded to outside dict')
+            #     anonymized_read_pair[PAIR_2_IDX]
+            # if available_pair.query_name == 'HWI-ST0738:314:D1E5KACXX:5:1204:15477:168431':
+            #     logging.info(f'# Tracked read is about to be yielded from leftovers')
             # \DEBUG
             yield anonymized_read_pair
         # logging.debug(f"Mask left over time: {end3 - start3}")
