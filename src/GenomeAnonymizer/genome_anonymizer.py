@@ -34,8 +34,13 @@ def exec_parser():
     parser.add_argument('-c', '--cpu', help='Number of CPUs available for the execution', type=int,
                         required=False,
                         default=1)
-    parser.add_argument('-emp', '--enhanced_multiprocessing', type=str,
-                        help='Further divide each sample to improve execution time, assigning one core per divided input file',
+    parser.add_argument('--record_statistics', type=str,
+                        help='Record statistics about the number of anonymized variants by region and type',
+                        action=BooleanOptionalAction,
+                        )
+    parser.add_argument('--enhanced_multiprocessing', type=str,
+                        help='Further divide each sample to improve execution time, '
+                             'assigning one core per divided input file (Experimental)',
                         action=BooleanOptionalAction,
                         )
     parser.add_argument('-v', '--verbose', help='Verbosity of logging', type=int,
@@ -98,7 +103,8 @@ def run_anonymizer():
                 logging.warning('Cannot run with enhanced multiprocessing, turning back to normal execution'
                                 'You may cancel and run with more available cores')
         run_short_read_tumor_normal_anonymizer(variants_per_sample, samples, ref_genome, anonymizer_algorithm,
-                                               output_samples, config.cpu, enhance_multiprocessing)
+                                               output_samples, config.record_statistics,
+                                               config.cpu, enhance_multiprocessing)
         logging.info('Finished execution of GenomeAnonymizer successfully')
     except Exception as e:
         logging.error(e)

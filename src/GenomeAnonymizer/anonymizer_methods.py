@@ -1,7 +1,7 @@
 # @author: Nicolas Gaitan
 import logging
 import sys
-from typing import Protocol, Dict, List, Tuple, Generator, Set, Union
+from typing import Protocol, Dict, List, Tuple, Generator, Set, Union, NamedTuple
 import itertools as it
 import numpy as np
 import psutil
@@ -331,8 +331,8 @@ class CompleteGermlineAnonymizer:
         self.anonymized_reads = dict()
         # self.has_anonymized_reads = False
 
-    def anonymize(self, validated_source_variant: CalledGenomicVariant, tumor_normal_pileup, ref_genome) -> \
-            Generator[Tuple[AnonymizedRead, AnonymizedRead], None, None]:
+    def anonymize(self, validated_source_variant: CalledGenomicVariant, tumor_normal_pileup, ref_genome,
+                  stats_recorder=None) -> Generator[Tuple[AnonymizedRead, AnonymizedRead], None, None]:
         called_genomic_variants = {}
         start0 = timer()
         to_yield_anonymized_reads: Dict[str, int] = dict()
@@ -369,7 +369,7 @@ class CompleteGermlineAnonymizer:
                     variants_in_column: List[CalledGenomicVariant] = called_genomic_variants.get(pos)
                     if variants_in_column is not None:
                         start2 = timer()
-                        self.mask_germline_snvs(variants_in_column, validated_source_variant)
+                        self.mask_germline_snvs(variants_in_column, validated_source_variant, stats_recorder=stats_recorder)
                         end2 = timer()
                         # logging.debug(f"Mask germline snvs time: {end2 - start2}")
                         DEBUG_TOTAL_TIMES['mask_germline_snvs'] += end2 - start2
@@ -421,7 +421,7 @@ class CompleteGermlineAnonymizer:
         self.reset()
         # self.has_anonymized_reads = True
 
-    def mask_germline_snvs(self, variants_in_column, variant_to_keep):
+    def mask_germline_snvs(self, variants_in_column, variant_to_keep, stats_recorder=None):
         # variant_to_keep = CalledGenomicVariant.from_variant_record(validated_source_variant)
         for called_variant in variants_in_column:
             if (called_variant.somatic_variation_type == SomaticVariationType.TUMORAL_NORMAL_VARIANT
@@ -435,3 +435,5 @@ class CompleteGermlineAnonymizer:
                             anonymized_read.add_left_over_variant(var_read_pos, called_variant.ref_allele)
                             continue
                         anonymized_read.mask_or_modify_base_pair(var_read_pos, called_variant.ref_allele)
+                # 11/06/24: For now, only SNVs are anonymized, but indels are also counted
+                stats_recorder.count_variant(called_variant)

@@ -1,9 +1,11 @@
 # @author: Nicolas Gaitan
+import itertools
 import logging
 import re
 import shutil
 from collections import namedtuple
 
+import numpy
 import numpy as np
 import psutil
 import pileup_io as pileup_io
@@ -140,8 +142,70 @@ def close_paired_streams(indexed_pair_writer_streams):
     indexed_pair_writer_streams = []
 
 
+class AnonymizedVariantsStatistics:
+    def __init__(self, file_output: str):
+        self.file_output = file_output
+        # self.window_names = set()
+        # self.total_counts_by_variant_type = []*len(VariantType)
+        self.window_var_counts = dict()
+        self.current_window = ''
+        # self.n_windows = 0
+
+    def add_window(self, window: Window):
+        window_str = ','.join(map(str, (window.sequence, window.first, window.last, window.variant)))
+        # window_str = ','.join(map(str, []))
+        # self.window_names.add(window_str)
+        self.window_var_counts[window_str] = [0]*len(VariantType)
+        # Set the new window to actively compute variant statistics
+        self.set_current_window(window_str)
+        # self.n_windows += 1
+
+    def count_variant(self, called_variant: CalledGenomicVariant):
+        variant_type_enum = called_variant.variant_type
+        var_type_idx = variant_type_enum.value - 1
+        # logging.debug(f'{variant_type_enum}: {variant_type_enum.name}: {var_type_idx}')
+        window_counts_by_type = self.window_var_counts.get(self.current_window)
+        window_counts_by_type[var_type_idx] += 1
+        # self.total_counts_by_variant_type[var_type_idx] += 1
+
+    def set_current_window(self, window_str):
+        self.current_window = window_str
+
+    def write_statistics(self):
+        var_counts_by_type = [[] for _ in range(len(VariantType))]
+        stats = ['total_counts', 'average_counts', 'median_counts', 'max_counts', 'min_counts']
+        with open(self.file_output, 'w') as statistics_file:
+            # Variant types follow the order from their enum creation on VariantExtractor,
+            # following then idxs from 0 to n types
+            statistics_file.write('\t'.join(['#SEQ', '#FIRST', '#LAST', '#SNV', '#DEL', '#INS', '#DUP',
+                                             '#INV', '#CNV', '#TRA', '#SGL']) + '\n')
+            for window_info_key, window_counts_by_type in self.window_var_counts.items():
+                window_fields = window_info_key.split(',')[:-1]
+                statistics_file.write('\t'.join(map(str, itertools.chain(window_fields, window_counts_by_type))) + '\n')
+                for var_type_idx, window_var_type_count in enumerate(window_counts_by_type):
+                    var_counts_by_type[var_type_idx].append(window_var_type_count)
+            var_types_header = '\t'.join(['#SNV', '#DEL', '#INS', '#DUP', '#INV', '#CNV', '#TRA', '#SGL']) + '\n'
+            statistics_file.write('### Overall statistics:\n')
+            statistics_file.write(var_types_header)
+            arrays_by_type = [numpy.array(var_counts, dtype=numpy.int64) for var_counts in var_counts_by_type]
+            for stat in stats:
+                statistics_file.write(f'{stat}\t')
+                if stat == 'total_counts':
+                    stat_by_type = [np.sum(arr) for arr in arrays_by_type]
+                if stat == 'average_counts':
+                    stat_by_type = [arr.mean() for arr in arrays_by_type]
+                if stat == 'median_counts':
+                    stat_by_type = [np.median(arr) for arr in arrays_by_type]
+                if stat == 'max_counts':
+                    stat_by_type = [arr.max() for arr in arrays_by_type]
+                if stat == 'min_counts':
+                    stat_by_type = [arr.min() for arr in arrays_by_type]
+                statistics_file.write('\t'.join(map(str, stat_by_type)) + '\n')
+                # f'counts: {self.total_counts_by_variant_type[variant_type.value]}')
+
+
 def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq, ref_genome,
-                     anonymizer, to_pair_anonymized_reads, written_read_ids, mem_debug_writer):
+                     anonymizer, to_pair_anonymized_reads, written_read_ids, mem_debug_writer, stats_recorder=None):
     # DEBUG/
     # logging.info(f'Anonymizing window {seq_name}:{window[0]}-{window[1]}')
     # \DEBUG
@@ -153,7 +217,8 @@ def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, 
     tumor_normal_pileup = pileup_io.iter_pileups(tumor_bam, normal_bam, ref_genome, seq_name=window.sequence,
                                                  start=window.first,
                                                  stop=window.last)
-    anonymized_reads_generator = anonymizer.anonymize(window.variant, tumor_normal_pileup, ref_genome)
+    anonymized_reads_generator = anonymizer.anonymize(window.variant, tumor_normal_pileup, ref_genome,
+                                                      stats_recorder=stats_recorder)
     end2 = timer()
     DEBUG_TOTAL_TIMES['anonymize_call'] += end2 - start2
     # Anonymized reads generated per window
@@ -290,7 +355,7 @@ def write_single_end_reads(to_pair_anonymized_reads, tumor_output_fastq, normal_
 def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_file: str,
                      ref_genome_file: str, anonymizer: Anonymizer, tumor_output_fastq: str,
                      normal_output_fastq: str, tumor_bam_to_pair: str, normal_bam_to_pair: str,
-                     available_threads):
+                     record_statistics: bool, available_threads):
     """
     Anonymizes genomic data using the provided VCF variants, normal and tumor BAM files, reference genome,
     classifier, and anonymizer object.
@@ -301,6 +366,9 @@ def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_fi
     # remaining_thread = available_threads - threads_per_file
     # tumor_bam = pysam.AlignmentFile(tumor_bam_file, threads=threads_per_file+remaining_threads)
     # normal_bam = pysam.AlignmentFile(normal_bam_file, threads=threads_per_file)
+    recorder = None
+    if record_statistics:
+        recorder = AnonymizedVariantsStatistics(f'{normal_bam_file}.statistics.txt')
     ref_genome = pysam.FastaFile(ref_genome_file)
     start1 = timer()
     # windows = get_windows(vcf_variants, ref_genome)
@@ -327,11 +395,14 @@ def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_fi
                 pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_bam:
             # Window is a tuple (start, end, VariantRecord)
             start2 = timer()
-            # anonymize_window(seq_name, window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
-            #                 ref_genome, anonymizer, to_pair_anonymized_reads)
-            # DEBUG CALL
+            if record_statistics:
+                recorder.add_window(window)
             anonymize_window(window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
-                             ref_genome, anonymizer, to_pair_anonymized_reads, written_read_ids, mem_debug_writer)
+                             ref_genome, anonymizer, to_pair_anonymized_reads, written_read_ids, mem_debug_writer,
+                             stats_recorder=recorder)
+            # else:
+            #     anonymize_window(window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
+            #                      ref_genome, anonymizer, to_pair_anonymized_reads, written_read_ids, mem_debug_writer)
             end2 = timer()
             # logging.debug(
             #    f'Time to anonymize reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end2 - start2}')
@@ -346,7 +417,8 @@ def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_fi
         logging.info('Searching for remaining unpaired anonymized reads')
         start3 = timer()
         pair_unpaired_or_supplementaries(to_pair_anonymized_reads, tumor_bam_to_pair, normal_bam_to_pair,
-                                         tumor_output_fastq, normal_output_fastq, ref_genome_file, written_read_ids, threads_per_file)
+                                         tumor_output_fastq, normal_output_fastq, ref_genome_file, written_read_ids,
+                                         threads_per_file)
         # written_read_ids, threads_per_file)
         end3 = timer()
         logging.debug(f'Time to pair unpaired anonymized reads: {end3 - start3}')
@@ -381,6 +453,10 @@ def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_fi
     for k, v in DEBUG_TOTAL_TIMES.items():
         logging.debug(f'{k}={v} s')
     logging.info(f'Anonymization complete for samples {tumor_output_fastq} and {normal_output_fastq}')
+    if record_statistics:
+        logging.info(f'Writing anonymized variant statistics to: {recorder.file_output}')
+        recorder.write_statistics()
+        logging.info(f'Statistics wrote for sample: {recorder.file_output}')
 
 
 def generate_subsamples_from_file(input_file, subsample_input_files, window_subsets_per_subsample, ref_genome_file,
@@ -512,8 +588,8 @@ def join_fastq_output_from_subsamples(final_output_sample, subsample_outputs):
 def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[str],
                                            tumor_normal_samples: List[Tuple[str, str]],
                                            ref_genome_file: str, anonymizer: Anonymizer,
-                                           output_filenames: List[Tuple[str, str]], cpus,
-                                           enhance_parallelization):
+                                           output_filenames: List[Tuple[str, str]], record_statistics: bool,
+                                           cpus: int, enhance_parallelization: bool):
     """
     Anonymizes genomic sequencing from short read tumor-normal pairs, in the windows from each VCF variant
     Args:
@@ -523,6 +599,7 @@ def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[str],
         :param ref_genome_file: The reference genome to which the reads were mapped
         :param anonymizer: The specified anonymizing method
         :param output_filenames: The output filenames for the anonymized reads, in the same format as the input samples
+        :param record_statistics: If true, record statistics about anonymized variants per window and type
         :param cpus: The number of cpus to use for the anonymization of each tumor-normal sample
         :param enhance_parallelization: Divide samples by their total content in bp to maximize the cpu usage
     """
@@ -578,7 +655,7 @@ def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[str],
                                          sample_output_files[DATASET_IDX_TUMORAL],
                                          sample_output_files[DATASET_IDX_NORMAL],
                                          original_samples[DATASET_IDX_TUMORAL], original_samples[DATASET_IDX_NORMAL],
-                                         processes_by_sample))
+                                         record_statistics, processes_by_sample))
         for task in as_completed(tasks):
             task.result()
         if enhance_parallelization:
