@@ -42,7 +42,7 @@ def get_mismatch_positions_from_md_tag(aln) -> List[Tuple[int, str]]:
     return ref_mismatch_positions
 
 
-def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, called_genomic_variants,
+def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, called_genomic_variants, ref_genome,
                    process_snvs_from_md_tag=False):
     regexp = r"(?<=[a-zA-Z=])(?=[0-9])|(?<=[0-9])(?=[a-zA-Z=])"  # regex to split cigar string
     cigar_indels = {"I", "D"}  # cigar operations to report
@@ -53,6 +53,7 @@ def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, c
     current_cigar_len = 0
     read_consumed_bases = 0
     seq_name = aln.reference_name
+    read_sequence = aln.query_sequence
     if process_snvs_from_md_tag:
         ref_mismatch_positions = get_mismatch_positions_from_md_tag(aln)
         mm_pos_idx = 0
@@ -64,9 +65,12 @@ def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, c
                 in_read_pos = current_cigar_len + read_consumed_bases
                 length = int(symbol)
                 var_type = VariantType.INS if cigar_op == 'I' else VariantType.DEL
-                end = pos + 1 if var_type == VariantType.INS else pos + length
                 # TODO: Fix alleles for indel masking
-                called_indel = CalledGenomicVariant(seq_name, pos, end, var_type, length, "", "")
+                end = pos + 1 if var_type == VariantType.INS else pos + length - 1
+                in_read_end = in_read_pos + length - 1 if var_type == VariantType.INS else in_read_pos + 1
+                alt_sequence = read_sequence[in_read_pos:in_read_end + 1]
+                ref_sequence = ref_genome.fetch(seq_name, pos, end + 1).upper()
+                called_indel = CalledGenomicVariant(seq_name, pos, end, var_type, length, allele=alt_sequence, ref_allele=ref_sequence)
                 if called_indel.pos not in called_genomic_variants:
                     called_genomic_variants[called_indel.pos] = []
                 indel_pos_list = called_genomic_variants[called_indel.pos]
@@ -105,9 +109,10 @@ def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, c
                 mm_ref_pos = ref_mismatch_positions[mm_pos_idx][0]
                 ref_base = ref_mismatch_positions[mm_pos_idx][1]
                 while mm_ref_pos < current_cigar_len and mm_pos_idx < len(ref_mismatch_positions):
-                    pos_in_read = mm_ref_pos + read_consumed_bases - 1 # -1 CHECK
+                    pos_in_read = mm_ref_pos + read_consumed_bases - 1  # -1 CHECK
                     pos_snv = start_ref_pos + mm_ref_pos - 1
-                    process_snv(aln, specific_pair_query_name, pos_snv, pos_in_read, dataset_idx, called_genomic_variants, ref_base)
+                    process_snv(aln, specific_pair_query_name, pos_snv, pos_in_read, dataset_idx,
+                                called_genomic_variants, ref_base)
                     mm_pos_idx += 1
                     if mm_pos_idx < len(ref_mismatch_positions):
                         mm_ref_pos = ref_mismatch_positions[mm_pos_idx][0]
@@ -167,7 +172,7 @@ def classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_al
     # print(f'pileup_column: {pileup_column} - len: {len(pileup_column)}')
     pileups: List[PileupRead] = pileup_column.pileups
     reference_pos = pileup_column.reference_pos
-    ref_base = ref_genome.fetch(pileup_column.reference_name, pileup_column.reference_pos, pileup_column.reference_pos + 1)[0]
+    ref_base = ref_genome.fetch(pileup_column.reference_name, reference_pos, reference_pos + 1)[0]
     ref_base = ref_base.upper()
     process_snvs_from_md_tag = False
     for pileup_read in pileups:
@@ -177,7 +182,7 @@ def classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_al
         # process_snvs_from_md_tag = False
         if specific_pair_query_name not in seen_read_alns:
             start1 = timer()
-            process_indels(aln, specific_pair_query_name, dataset_idx, called_genomic_variants,
+            process_indels(aln, specific_pair_query_name, dataset_idx, called_genomic_variants, ref_genome,
                            process_snvs_from_md_tag)
             end1 = timer()
             DEBUG_TOTAL_TIMES['process_indels'] += end1 - start1

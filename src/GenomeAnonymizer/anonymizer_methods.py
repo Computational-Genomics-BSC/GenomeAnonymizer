@@ -18,17 +18,36 @@ from src.GenomeAnonymizer.variation_classifier import classify_variation_in_pile
 process = psutil.Process()
 # \DEBUG
 
-#  = {'A': 0, 'C': 1, 'G': 2, 'T': 3, 'N': 4}
-reverses = {ord('A'): ord('T'), ord('C'): ord('G'), ord('G'): ord('C'), ord('T'): ord('A'), ord('N'): ord('N')}
+
+# reverses = {ord('A'): ord('T'), ord('C'): ord('G'), ord('G'): ord('C'), ord('T'): ord('A'), ord('N'): ord('N')}
+complements = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N'}
+BASE_TO_INT = {'A': 0, 'C': 1, 'G': 2, 'T': 3, 'N': 4}
 INT_TO_BASE = {0: 'A', 1: 'C', 2: 'G', 3: 'T', 4: 'N'}
 
 
-def encode_base(base: str):
-    return bytearray(base.encode())[0]
+# def encode_base(base: str):
+#     return bytearray(base.encode())[0]
+def encode_base(base: str) -> int:
+    return BASE_TO_INT[base]
 
 
+# def decode_base(int_base: int) -> str:
+#     return chr(int_base)
 def decode_base(int_base: int) -> str:
-    return chr(int_base)
+    return INT_TO_BASE[int_base]
+
+
+def get_numeric_complement(fw_base: int) -> int:
+    rs_compl: str = complements[decode_base(fw_base)]
+    return encode_base(rs_compl)
+
+
+def generate_anonymized_read(name, sequence, quality):
+    return f'@{name}\n{sequence}\n+\n{quality}'
+
+
+def get_supplementary_hash_from_aln(aln: pysam.AlignedSegment):
+    return f'{aln.reference_name};{aln.reference_start};{aln.cigarstring};{aln.query_sequence}'
 
 
 """def get_pileup_pair_in_order(pileup1, pileup2) -> Generator[Tuple[PileupColumn, PileupColumn], None, None]:
@@ -47,18 +66,11 @@ def decode_base(int_base: int) -> str:
             p2 = next(pileup2, None)"""
 
 
-def generate_anonymized_read(name, sequence, quality):
-    return f'@{name}\n{sequence}\n+\n{quality}'
-
-
-def get_supplementary_hash_from_aln(aln: pysam.AlignedSegment):
-    return f'{aln.reference_name};{aln.reference_start};{aln.cigarstring};{aln.query_sequence}'
-
-
 class AnonymizedRead:
     def __init__(self, read_alignment: pysam.AlignedSegment, dataset_idx: int):
-        self.anonymized_sequence_array: np.ndarray = []
-        self.anonymized_qualities_array = []
+        # self.anonymized_sequence_array: np.ndarray = []
+        self.anonymized_sequence_array: list[int] = []
+        self.anonymized_qualities_array: list[int] = []
         self.query_name = read_alignment.query_name
         self.is_read1 = read_alignment.is_read1
         self.is_read2 = read_alignment.is_read2
@@ -85,7 +97,7 @@ class AnonymizedRead:
         # \DEBUG
         # self.supplementary_recorded = self.is_supplementary and self.has_supplementary
         # Left over variants that were found in the suppl. but the primary mapping was not found yet
-        self.left_over_variants_to_mask: List[Tuple[int, int]] = []
+        self.left_over_variants_to_mask: List[Tuple[int, CalledGenomicVariant]] = []
         self.has_left_overs_to_mask = False
 
     def get_pair_idx(self):
@@ -121,9 +133,9 @@ class AnonymizedRead:
         self.is_supplementary = False
 
     def set_original_sequence(self, original_sequence: str):
-        # self.anonymized_sequence_array: List[int] = [encode_base(base) for base in original_sequence]
-        self.anonymized_sequence_array: np.ndarray = np.frombuffer(bytearray(original_sequence.encode()),
-                                                                   dtype=np.uint8)
+        self.anonymized_sequence_array: List[int] = [encode_base(base) for base in original_sequence]
+        # self.anonymized_sequence_array: np.ndarray = np.frombuffer(bytearray(original_sequence.encode()),
+        #                                                            dtype=np.uint8)
 
     def set_original_qualities(self, original_qualities):
         self.anonymized_qualities_array = original_qualities
@@ -132,27 +144,41 @@ class AnonymizedRead:
 
     def mask_or_modify_base_pair(self, pos_in_read: int, new_base: str, modify_qualities: bool = False,
                                  new_quality: int = 0):
-        # self.anonymized_sequence_array[pos_in_read] = encode_base(new_base)
-        np.put(self.anonymized_sequence_array, pos_in_read, encode_base(new_base), mode='raise')
+        self.anonymized_sequence_array[pos_in_read] = encode_base(new_base)
+        # np.put(self.anonymized_sequence_array, pos_in_read, encode_base(new_base), mode='raise')
         if modify_qualities:
             self.anonymized_qualities_array[pos_in_read] = new_quality
+
+    def mask_or_modify_indel(self, var_pos_in_read, variant):
+        original_sequence = self.anonymized_sequence_array
+        if variant.variant_type == VariantType.INS:
+            # Deletes the insertion event
+            new_sequence: list[int] = original_sequence[0:var_pos_in_read] + original_sequence[var_pos_in_read + variant.length:]
+        elif variant.variant_type == VariantType.DEL:
+            # Adds the deleted reference bases
+            new_sequence: list[int] = original_sequence[0:var_pos_in_read] + [encode_base(base) for base in variant.ref_allele] + original_sequence[variant.end:]
+        else:
+            # Placeholder for SVs
+            new_sequence = original_sequence
+        self.anonymized_sequence_array = new_sequence
 
     def reverse_complement(self):
         # complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N'}
         # complement = {0: 3, 1: 2, 2: 1, 3: 0, 4: 4}
-        self.anonymized_sequence_array = np.flip(np.vectorize(reverses.get)(self.anonymized_sequence_array))
-        # self.anonymized_sequence_array = [encode_base(complement[decode_base(base)]) for base in
-        #                                  reversed(self.anonymized_sequence_array)]
+        # self.anonymized_sequence_array = np.flip(np.vectorize(reverses.get)(self.anonymized_sequence_array))
+        self.anonymized_sequence_array = [get_numeric_complement(base) for base in
+                                          reversed(self.anonymized_sequence_array)]
         self.anonymized_qualities_array = reversed(self.anonymized_qualities_array)
 
     def get_anonymized_fastq_record(self) -> str:
         if self.is_reverse:
             self.reverse_complement()
-        # anonymized_read_seq = ''.join(map(lambda x: decode_base(x), self.anonymized_sequence_array))
-        anonymized_read_seq: str = np.array2string(self.anonymized_sequence_array,
-                                                   formatter={'int': lambda x: decode_base(x)},
-                                                   separator='',
-                                                   max_line_width=sys.maxsize).strip('[]')
+        read_pair_name = f'{self.query_name}/{PAIR_1_IDX + 1}' if self.is_read1 else f'{self.query_name}/{PAIR_2_IDX + 1}'
+        anonymized_read_seq = ''.join(map(lambda x: decode_base(x), self.anonymized_sequence_array))
+        # anonymized_read_seq: str = np.array2string(self.anonymized_sequence_array,
+        #                                            formatter={'int': lambda x: decode_base(x)},
+        #                                            separator='',
+        #                                            max_line_width=sys.maxsize).strip('[]')
         # anonimized_read_qual: str = ''.join(map(lambda x: chr(x + 33), self.anonymized_qualities_array))
         # anonimized_read_qual: str = np.array2string(self.anonymized_qualities_array,
         #                                            formatter={'int': lambda x: chr(x + 33)},
@@ -164,19 +190,19 @@ class AnonymizedRead:
         #    raise ValueError("Anonymized read length does not match original read length")
         # if len(anonimized_read_qual) != len(self.original_qualities):
         #    raise ValueError("Anonymized qualities length does not match original qualities length")
-        read_pair_name = f'{self.query_name}/{PAIR_1_IDX + 1}' if self.is_read1 else f'{self.query_name}/{PAIR_2_IDX + 1}'
         # anonymized_read: pysam.FastxRecord = pysam.FastxRecord(name=read_pair_name, sequence=anonymized_read_seq,
         #                                                        quality=anonimized_read_qual)
         anonymized_read = generate_anonymized_read(name=read_pair_name, sequence=anonymized_read_seq,
                                                    quality=anonimized_read_qual)
         return anonymized_read
 
-    def add_left_over_variant(self, var_pos_in_read, new_base):
+    def add_left_over_variant(self, var_pos_in_read: int, variant: CalledGenomicVariant):
         if not self.is_supplementary:
-            raise ValueError(
-                f'Trying to add left over variant to AnonymizedRead {self.query_name} containing a primary mapping'
-                f'\n all variants can be masked already')
-        self.left_over_variants_to_mask.append((var_pos_in_read, ord(new_base)))
+            if variant.variant_type == VariantType.SNV:
+                raise ValueError(
+                    f'Trying to add left over SNV variant to AnonymizedRead {self.query_name} containing a primary mapping'
+                    f'\n all SNVs can be masked already')
+        self.left_over_variants_to_mask.append((var_pos_in_read, variant))
         self.has_left_overs_to_mask = True
 
     def mask_or_anonymize_left_over_variants(self):
@@ -186,8 +212,12 @@ class AnonymizedRead:
         if not self.has_left_overs_to_mask or len(self.left_over_variants_to_mask) == 0:
             logging.warning(
                 f'Trying to mask left over variants in AnonymizedRead {self.query_name} with no left over variants to mask')
-        for var_pos_in_read, new_base in self.left_over_variants_to_mask:
-            self.mask_or_modify_base_pair(var_pos_in_read, decode_base(new_base))
+        for var_pos_in_read, variant in self.left_over_variants_to_mask:
+            if variant.variant_type == VariantType.SNV:
+                self.mask_or_modify_base_pair(var_pos_in_read, variant.allele)
+            if variant.variant_type == VariantType.DEL or variant.variant_type == VariantType.INS:
+                # TODO: Implement masking to reference for indels
+                self.mask_or_modify_indel(var_pos_in_read, variant)
         self.has_left_overs_to_mask = False
 
     def __hash__(self):
@@ -369,7 +399,8 @@ class CompleteGermlineAnonymizer:
                     variants_in_column: List[CalledGenomicVariant] = called_genomic_variants.get(pos)
                     if variants_in_column is not None:
                         start2 = timer()
-                        self.mask_germline_snvs(variants_in_column, validated_source_variant, stats_recorder=stats_recorder)
+                        self.mask_germline_snvs(variants_in_column, validated_source_variant,
+                                                stats_recorder=stats_recorder)
                         end2 = timer()
                         # logging.debug(f"Mask germline snvs time: {end2 - start2}")
                         DEBUG_TOTAL_TIMES['mask_germline_snvs'] += end2 - start2
@@ -421,19 +452,17 @@ class CompleteGermlineAnonymizer:
         self.reset()
         # self.has_anonymized_reads = True
 
-    def mask_germline_snvs(self, variants_in_column, variant_to_keep, stats_recorder=None):
-        # variant_to_keep = CalledGenomicVariant.from_variant_record(validated_source_variant)
+    def mask_germline_snvs(self, variants_in_column: List[CalledGenomicVariant], variant_to_keep, stats_recorder=None):
+        """Mask all germline SNVs and save the information from incomplete pairs and other variants to mask after"""
         for called_variant in variants_in_column:
             if (called_variant.somatic_variation_type == SomaticVariationType.TUMORAL_NORMAL_VARIANT
                     and called_variant != variant_to_keep):
-                # TODO: mask indels
-                if called_variant.variant_type == VariantType.SNV:
-                    for specific_read_id, var_read_pos in called_variant.supporting_reads.items():
-                        read_id, pair = decode_specific_read_pair_name(specific_read_id)
-                        anonymized_read = self.anonymized_reads.get(read_id)[pair]
-                        if anonymized_read.is_supplementary:
-                            anonymized_read.add_left_over_variant(var_read_pos, called_variant.ref_allele)
-                            continue
-                        anonymized_read.mask_or_modify_base_pair(var_read_pos, called_variant.ref_allele)
+                for specific_read_id, var_read_pos in called_variant.supporting_reads.items():
+                    read_id, pair = decode_specific_read_pair_name(specific_read_id)
+                    anonymized_read = self.anonymized_reads.get(read_id)[pair]
+                    if anonymized_read.is_supplementary or called_variant.variant_type != VariantType.SNV:
+                        anonymized_read.add_left_over_variant(var_read_pos, called_variant)
+                        continue
+                    anonymized_read.mask_or_modify_base_pair(var_read_pos, called_variant.ref_allele)
                 # 11/06/24: For now, only SNVs are anonymized, but indels are also counted
                 stats_recorder.count_variant(called_variant)
