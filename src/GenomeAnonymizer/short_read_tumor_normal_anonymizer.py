@@ -3,7 +3,7 @@ import itertools
 import logging
 import re
 import shutil
-from collections import namedtuple
+from dataclasses import dataclass
 
 import numpy
 import numpy as np
@@ -30,8 +30,22 @@ protocol"""
 # DEBUG
 process = psutil.Process()
 
+
 # Define windows as namedtuples
-Window = namedtuple('Window', 'sequence first last variant')
+# Window = namedtuple('Window', 'sequence first last variant')
+
+@dataclass
+class Window:
+    sequence: str
+    first: int
+    last: int
+    variant: CalledGenomicVariant = None
+
+    def __str__(self):
+        if self.variant is None:
+            return ','.join(map(str, (self.sequence, self.first, self.last)))
+        else:
+            return ','.join(map(str, (self.sequence, self.first, self.last, self.variant)))
 
 
 def name_output(sample):
@@ -152,10 +166,11 @@ class AnonymizedVariantsStatistics:
         # self.n_windows = 0
 
     def add_window(self, window: Window):
-        window_str = ','.join(map(str, (window.sequence, window.first, window.last, window.variant)))
+        # window_str = ','.join(map(str, (window.sequence, window.first, window.last, window.variant)))
+        window_str = str(window)
         # window_str = ','.join(map(str, []))
         # self.window_names.add(window_str)
-        self.window_var_counts[window_str] = [0]*len(VariantType)
+        self.window_var_counts[window_str] = [0] * len(VariantType)
         # Set the new window to actively compute variant statistics
         self.set_current_window(window_str)
         # self.n_windows += 1
@@ -189,7 +204,7 @@ class AnonymizedVariantsStatistics:
             statistics_file.write(var_types_header)
             arrays_by_type = [numpy.array(var_counts, dtype=numpy.int64) for var_counts in var_counts_by_type]
             for stat in stats:
-                statistics_file.write(f'{stat}\t')
+                statistics_file.write(f'#{stat}\t')
                 if stat == 'total_counts':
                     stat_by_type = [np.sum(arr) for arr in arrays_by_type]
                 if stat == 'average_counts':
@@ -624,7 +639,7 @@ def run_short_read_tumor_normal_anonymizer(vcf_variants_per_sample: List[str],
     logging.debug(f'# extra_processors = {extra_processors}')
     # enhance_parallelization = extra_processors > 1
     if enhance_parallelization:
-        inputs_per_sample, input_sample_keys, output_sample_keys = divide_samples(inputs_per_sample, ref_idx_sequences,
+        inputs_per_sample, input_sample_keys, output_sample_keys = divide_samples(inputs_per_sample,
                                                                                   ref_genome_file, cpus)
         inv_input_sample = dict()
         for (k, v) in input_sample_keys.items():
