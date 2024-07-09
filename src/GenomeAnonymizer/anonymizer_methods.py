@@ -1,13 +1,13 @@
 # @author: Nicolas Gaitan
 import logging
 import sys
-from typing import Protocol, Dict, List, Tuple, Generator, Set, Union, NamedTuple
+from typing import Protocol, Dict, List, Tuple, Generator, Set, Union, NamedTuple, Any
 import itertools as it
+from numpy import strings
 import numpy as np
 import psutil
 import pysam
 from timeit import default_timer as timer
-
 from pysam import PileupColumn
 from variant_extractor.variants import VariantType
 from src.GenomeAnonymizer.variants import CalledGenomicVariant, SomaticVariationType
@@ -19,27 +19,39 @@ process = psutil.Process()
 # \DEBUG
 
 
-# reverses = {ord('A'): ord('T'), ord('C'): ord('G'), ord('G'): ord('C'), ord('T'): ord('A'), ord('N'): ord('N')}
+reverses = {ord('A'): ord('T'), ord('C'): ord('G'), ord('G'): ord('C'), ord('T'): ord('A'), ord('N'): ord('N')}
+# BASE_TO_INT = {'A': 0, 'C': 1, 'G': 2, 'T': 3, 'N': 4}
+# INT_TO_BASE = {0: 'A', 1: 'C', 2: 'G', 3: 'T', 4: 'N'}
 complements = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N'}
-BASE_TO_INT = {'A': 0, 'C': 1, 'G': 2, 'T': 3, 'N': 4}
-INT_TO_BASE = {0: 'A', 1: 'C', 2: 'G', 3: 'T', 4: 'N'}
+
+
+def encode_base(base: str):
+    return bytearray(base.encode())[0]
+
+
+def encode_sequence_as_np_array(sequence: str) -> np.ndarray[Any, np.dtype[np.bytes_]]:
+    return np.frombuffer(bytearray(sequence.encode()), dtype=np.uint8)
 
 
 # def encode_base(base: str):
-#     return bytearray(base.encode())[0]
-def encode_base(base: str) -> int:
-    return BASE_TO_INT[base]
+#     return base.encode('ascii')
+
+
+# def encode_base(base: str) -> int:
+#     return BASE_TO_INT[base]
+
+
+def decode_base(int_base: int) -> str:
+    return chr(int_base)
 
 
 # def decode_base(int_base: int) -> str:
-#     return chr(int_base)
-def decode_base(int_base: int) -> str:
-    return INT_TO_BASE[int_base]
+#     return INT_TO_BASE[int_base]
 
 
-def get_numeric_complement(fw_base: int) -> int:
-    rs_compl: str = complements[decode_base(fw_base)]
-    return encode_base(rs_compl)
+# def get_numeric_complement(fw_base: int) -> int:
+#     rs_compl: str = complements[decode_base(fw_base)]
+#     return encode_base(rs_compl)
 
 
 def generate_anonymized_read(name, sequence, quality):
@@ -48,6 +60,9 @@ def generate_anonymized_read(name, sequence, quality):
 
 def get_supplementary_hash_from_aln(aln: pysam.AlignedSegment):
     return f'{aln.reference_name};{aln.reference_start};{aln.cigarstring};{aln.query_sequence}'
+
+
+# reverses = {encode_base(base): encode_base(compl_base) for base, compl_base in complements.items()}
 
 
 """def get_pileup_pair_in_order(pileup1, pileup2) -> Generator[Tuple[PileupColumn, PileupColumn], None, None]:
@@ -68,8 +83,8 @@ def get_supplementary_hash_from_aln(aln: pysam.AlignedSegment):
 
 class AnonymizedRead:
     def __init__(self, read_alignment: pysam.AlignedSegment, dataset_idx: int):
-        # self.anonymized_sequence_array: np.ndarray = []
-        self.anonymized_sequence_array: list[int] = []
+        self.anonymized_sequence_array: np.ndarray = []
+        # self.anonymized_sequence_array: np.ndarray[Any, np.dtype[np.bytes_]] = np.array([], dtype=np.uint8)
         self.anonymized_qualities_array: list[int] = []
         self.query_name = read_alignment.query_name
         self.is_read1 = read_alignment.is_read1
@@ -133,9 +148,18 @@ class AnonymizedRead:
         self.is_supplementary = False
 
     def set_original_sequence(self, original_sequence: str):
-        self.anonymized_sequence_array: List[int] = [encode_base(base) for base in original_sequence]
+        # self.anonymized_sequence_array: np.ndarray[Any, np.dtype[np.bytes_]] = encode_sequence_as_np_array(
+        #     original_sequence
+        # )
+        # self.anonymized_sequence_array: List[int] = [encode_base(base) for base in original_sequence]
+        # self.anonymized_sequence_array: np.array = np.array([encode_base(base) for base in original_sequence],
+        #                                                     dtype=np.uint8)
+        # self.anonymized_sequence_array: np.ndarray[Any, np.dtype[np.bytes_]] = np.strings.encode(
+        #     [bp for bp in original_sequence],
+        #     encoding='ascii')
         # self.anonymized_sequence_array: np.ndarray = np.frombuffer(bytearray(original_sequence.encode()),
         #                                                            dtype=np.uint8)
+        self.anonymized_sequence_array: np.ndarray = encode_sequence_as_np_array(original_sequence)
 
     def set_original_qualities(self, original_qualities):
         self.anonymized_qualities_array = original_qualities
@@ -144,19 +168,24 @@ class AnonymizedRead:
 
     def mask_or_modify_base_pair(self, pos_in_read: int, new_base: str, modify_qualities: bool = False,
                                  new_quality: int = 0):
-        self.anonymized_sequence_array[pos_in_read] = encode_base(new_base)
-        # np.put(self.anonymized_sequence_array, pos_in_read, encode_base(new_base), mode='raise')
+        # self.anonymized_sequence_array[pos_in_read] = encode_base(new_base)
+        # self.anonymized_sequence_array[pos_in_read] = new_base
+        np.put(self.anonymized_sequence_array, pos_in_read, encode_base(new_base), mode='raise')
         if modify_qualities:
             self.anonymized_qualities_array[pos_in_read] = new_quality
 
     def mask_or_modify_indel(self, var_pos_in_read, variant):
+        # TODO: Modify to adapt to numpy array instead of regular list
         original_sequence = self.anonymized_sequence_array
         if variant.variant_type == VariantType.INS:
             # Deletes the insertion event
-            new_sequence: list[int] = original_sequence[0:var_pos_in_read] + original_sequence[var_pos_in_read + variant.length:]
+            new_sequence: list[int] = original_sequence[0:var_pos_in_read] + original_sequence[
+                                                                             var_pos_in_read + variant.length:]
         elif variant.variant_type == VariantType.DEL:
             # Adds the deleted reference bases
-            new_sequence: list[int] = original_sequence[0:var_pos_in_read] + [encode_base(base) for base in variant.ref_allele] + original_sequence[variant.end:]
+            new_sequence: list[int] = original_sequence[0:var_pos_in_read] + [base for base in
+                                                                              variant.ref_allele] + original_sequence[
+                                                                                                    variant.end:]
         else:
             # Placeholder for SVs
             new_sequence = original_sequence
@@ -165,15 +194,21 @@ class AnonymizedRead:
     def reverse_complement(self):
         # complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N'}
         # complement = {0: 3, 1: 2, 2: 1, 3: 0, 4: 4}
-        # self.anonymized_sequence_array = np.flip(np.vectorize(reverses.get)(self.anonymized_sequence_array))
-        self.anonymized_sequence_array = [get_numeric_complement(base) for base in
-                                          reversed(self.anonymized_sequence_array)]
+        # self.anonymized_sequence_array = np.flip(np.vectorize(
+        #     lambda x: complements[x.decode()])(self.anonymized_sequence_array))
+        # self.anonymized_sequence_array = [get_numeric_complement(base) for base in
+        #                                   reversed(self.anonymized_sequence_array)]
+        self.anonymized_sequence_array = np.flip(np.vectorize(reverses.get)(self.anonymized_sequence_array))
         self.anonymized_qualities_array = reversed(self.anonymized_qualities_array)
 
     def get_anonymized_fastq_record(self) -> str:
         if self.is_reverse:
             self.reverse_complement()
+        # else:
+        #     self.anonymized_sequence_array = strings.decode(self.anonymized_sequence_array, encoding='ascii')
         read_pair_name = f'{self.query_name}/{PAIR_1_IDX + 1}' if self.is_read1 else f'{self.query_name}/{PAIR_2_IDX + 1}'
+        # anonymized_read_seq: str = ''.join(self.anonymized_sequence_array)
+        # anonymized_read_seq: str = np.strings.decode(self.anonymized_sequence_array, encoding='ascii')
         anonymized_read_seq = ''.join(map(lambda x: decode_base(x), self.anonymized_sequence_array))
         # anonymized_read_seq: str = np.array2string(self.anonymized_sequence_array,
         #                                            formatter={'int': lambda x: decode_base(x)},
@@ -211,13 +246,15 @@ class AnonymizedRead:
                 f'Trying to mask left over variants in AnonymizedRead {self.query_name} without a primary mapping')
         if not self.has_left_overs_to_mask or len(self.left_over_variants_to_mask) == 0:
             logging.warning(
-                f'Trying to mask left over variants in AnonymizedRead {self.query_name} with no left over variants to mask')
+                f'Trying to mask left over variants in AnonymizedRead {self.query_name} '
+                f'with no left over variants to mask')
         for var_pos_in_read, variant in self.left_over_variants_to_mask:
             if variant.variant_type == VariantType.SNV:
                 self.mask_or_modify_base_pair(var_pos_in_read, variant.allele)
             if variant.variant_type == VariantType.DEL or variant.variant_type == VariantType.INS:
                 # TODO: Implement masking to reference for indels
-                self.mask_or_modify_indel(var_pos_in_read, variant)
+                # self.mask_or_modify_indel(var_pos_in_read, variant)
+                pass
         self.has_left_overs_to_mask = False
 
     def __hash__(self):
