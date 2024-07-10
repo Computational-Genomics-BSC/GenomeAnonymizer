@@ -1,9 +1,9 @@
 # @author: Nicolas Gaitan
+import array
 import logging
 import sys
 from typing import Protocol, Dict, List, Tuple, Generator, Set, Union, NamedTuple, Any
 import itertools as it
-from numpy import strings
 import numpy as np
 import psutil
 import pysam
@@ -29,7 +29,7 @@ def encode_base(base: str):
     return bytearray(base.encode())[0]
 
 
-def encode_sequence_as_np_array(sequence: str) -> np.ndarray[Any, np.dtype[np.bytes_]]:
+def encode_sequence_as_np_array(sequence: str):
     return np.frombuffer(bytearray(sequence.encode()), dtype=np.uint8)
 
 
@@ -85,7 +85,7 @@ class AnonymizedRead:
     def __init__(self, read_alignment: pysam.AlignedSegment, dataset_idx: int):
         self.anonymized_sequence_array: np.ndarray = []
         # self.anonymized_sequence_array: np.ndarray[Any, np.dtype[np.bytes_]] = np.array([], dtype=np.uint8)
-        self.anonymized_qualities_array: list[int] = []
+        self.anonymized_qualities_array: array.array = []
         self.query_name = read_alignment.query_name
         self.is_read1 = read_alignment.is_read1
         self.is_read2 = read_alignment.is_read2
@@ -162,7 +162,7 @@ class AnonymizedRead:
         self.anonymized_sequence_array: np.ndarray = encode_sequence_as_np_array(original_sequence)
 
     def set_original_qualities(self, original_qualities):
-        self.anonymized_qualities_array = original_qualities
+        self.anonymized_qualities_array: array.array = original_qualities
         # self.anonymized_qualities_array: np.ndarray = np.frombuffer(original_qualities,
         #                                                             dtype=np.uint8)
 
@@ -174,22 +174,32 @@ class AnonymizedRead:
         if modify_qualities:
             self.anonymized_qualities_array[pos_in_read] = new_quality
 
-    def mask_or_modify_indel(self, var_pos_in_read, variant):
-        # TODO: Modify to adapt to numpy array instead of regular list
-        original_sequence = self.anonymized_sequence_array
+    def mask_or_modify_indel(self, var_pos_in_read, variant, modify_qualities: bool = False,
+                                 new_quality: int = 0):
+        # TODO: Account for times when there are more than one indel in a read
+        sequence = self.anonymized_sequence_array
+        qualities = self.anonymized_qualities_array
         if variant.variant_type == VariantType.INS:
             # Deletes the insertion event
-            new_sequence: list[int] = original_sequence[0:var_pos_in_read] + original_sequence[
-                                                                             var_pos_in_read + variant.length:]
+            # new_sequence = original_sequence[0:var_pos_in_read] + original_sequence[var_pos_in_read + variant.length:]
+            new_sequence = np.concatenate((sequence[0:var_pos_in_read], sequence[var_pos_in_read + variant.length:]))
+            new_qualities = qualities[0:var_pos_in_read] + qualities[var_pos_in_read + variant.length:]
         elif variant.variant_type == VariantType.DEL:
             # Adds the deleted reference bases
-            new_sequence: list[int] = original_sequence[0:var_pos_in_read] + [base for base in
-                                                                              variant.ref_allele] + original_sequence[
-                                                                                                    variant.end:]
+            # new_sequence = original_sequence[0:var_pos_in_read] + [base for base in variant.ref_allele] + original_sequence[var_pos_in_read:]
+            ref_allele_encoded = encode_sequence_as_np_array(variant.ref_allele)
+            new_sequence = np.concatenate((sequence[0:var_pos_in_read], ref_allele_encoded, sequence[var_pos_in_read:]))
+            avg_quals = [int(np.mean(qualities))] * variant.length
+            ref_assigned_quals = array.array('B', avg_quals)
+            new_qualities = qualities[0:var_pos_in_read] + ref_assigned_quals + qualities[var_pos_in_read:]
         else:
             # Placeholder for SVs
-            new_sequence = original_sequence
+            new_sequence = sequence
+            new_qualities = qualities
+        if len(new_sequence) != len(new_qualities):
+            raise ValueError("Length of the modified qualities does not match the length of the modified sequence")
         self.anonymized_sequence_array = new_sequence
+        self.anonymized_qualities_array = new_qualities
 
     def reverse_complement(self):
         # complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N'}
@@ -248,13 +258,14 @@ class AnonymizedRead:
             logging.warning(
                 f'Trying to mask left over variants in AnonymizedRead {self.query_name} '
                 f'with no left over variants to mask')
+        # TODO: Handle SV order when they are handled
+        # First mask every SNV, then INDELs
+        self.left_over_variants_to_mask.sort(key=lambda x: x[1].variant_type.value)
         for var_pos_in_read, variant in self.left_over_variants_to_mask:
             if variant.variant_type == VariantType.SNV:
                 self.mask_or_modify_base_pair(var_pos_in_read, variant.allele)
             if variant.variant_type == VariantType.DEL or variant.variant_type == VariantType.INS:
-                # TODO: Implement masking to reference for indels
-                # self.mask_or_modify_indel(var_pos_in_read, variant)
-                pass
+                self.mask_or_modify_indel(var_pos_in_read, variant)
         self.has_left_overs_to_mask = False
 
     def __hash__(self):
