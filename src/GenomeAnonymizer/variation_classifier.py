@@ -68,7 +68,7 @@ def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, c
                 # TODO: Fix alleles for indel masking
                 end = pos + 1 if var_type == VariantType.INS else pos + length - 1
                 in_read_end = in_read_pos + length - 1 if var_type == VariantType.INS else in_read_pos + 1
-                alt_sequence = read_sequence[in_read_pos:in_read_end + 1]
+                alt_sequence = read_sequence[in_read_pos:in_read_end + 1].upper()
                 ref_sequence = ref_genome.fetch(seq_name, pos, end + 1).upper()
                 called_indel = CalledGenomicVariant(seq_name, pos, end, var_type, length, allele=alt_sequence, ref_allele=ref_sequence)
                 if called_indel.pos not in called_genomic_variants:
@@ -128,7 +128,7 @@ def process_snv(aln: AlignedSegment, specific_pair_query_name, reference_pos, in
     seq_name = aln.reference_name
     ignore_bases = {'N'}
     base = aln.query_sequence[in_read_position].upper()
-    if base in ignore_bases or base == ref_base:
+    if base in ignore_bases or base == ref_base or ref_base not in {'A', 'C', 'G', 'T'}:
         return
     called_snv = CalledGenomicVariant(seq_name, reference_pos, reference_pos, VariantType.SNV, 1,
                                       allele=base, ref_allele=ref_base)

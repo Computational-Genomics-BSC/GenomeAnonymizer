@@ -59,7 +59,7 @@ def generate_anonymized_read(name, sequence, quality):
 
 
 def get_supplementary_hash_from_aln(aln: pysam.AlignedSegment):
-    return f'{aln.reference_name};{aln.reference_start};{aln.cigarstring};{aln.query_sequence}'
+    return f'{aln.reference_name};{aln.reference_start};{aln.cigarstring};{aln.query_sequence};{aln.query_qualities};{aln.flag}'
 
 
 # reverses = {encode_base(base): encode_base(compl_base) for base, compl_base in complements.items()}
@@ -102,7 +102,8 @@ class AnonymizedRead:
         self.n_supplementaries = 0
         if self.has_supplementary:
             supplementaries = read_alignment.get_tag('SA').rstrip(';').split(';')
-            self.n_supplementaries = len(supplementaries) - 1
+            # self.n_supplementaries = len(supplementaries) - 1
+            self.n_supplementaries = len(supplementaries)
             if self.is_supplementary:
                 self.record_supplementary_aln(get_supplementary_hash_from_aln(read_alignment))
         # DEBUG/
@@ -159,7 +160,7 @@ class AnonymizedRead:
         #     encoding='ascii')
         # self.anonymized_sequence_array: np.ndarray = np.frombuffer(bytearray(original_sequence.encode()),
         #                                                            dtype=np.uint8)
-        self.anonymized_sequence_array: np.ndarray = encode_sequence_as_np_array(original_sequence)
+        self.anonymized_sequence_array: np.ndarray = encode_sequence_as_np_array(original_sequence.upper())
 
     def set_original_qualities(self, original_qualities):
         self.anonymized_qualities_array: array.array = original_qualities
@@ -175,7 +176,7 @@ class AnonymizedRead:
             self.anonymized_qualities_array[pos_in_read] = new_quality
 
     def mask_or_modify_indel(self, var_pos_in_read, variant, modify_qualities: bool = False,
-                                 new_quality: int = 0):
+                             new_quality: int = 0):
         # TODO: Account for times when there are more than one indel in a read
         sequence = self.anonymized_sequence_array
         qualities = self.anonymized_qualities_array
@@ -261,15 +262,30 @@ class AnonymizedRead:
         # TODO: Handle SV order when they are handled
         # First mask every SNV, then INDELs
         self.left_over_variants_to_mask.sort(key=lambda x: x[1].variant_type.value)
-        for var_pos_in_read, variant in self.left_over_variants_to_mask:
-            if variant.variant_type == VariantType.SNV:
-                self.mask_or_modify_base_pair(var_pos_in_read, variant.allele)
-            if variant.variant_type == VariantType.DEL or variant.variant_type == VariantType.INS:
-                self.mask_or_modify_indel(var_pos_in_read, variant)
+        for var_pos_in_read, called_variant in self.left_over_variants_to_mask:
+            if called_variant.variant_type == VariantType.SNV:
+                self.mask_or_modify_base_pair(var_pos_in_read, called_variant.ref_allele)
+            if called_variant.variant_type == VariantType.DEL or called_variant.variant_type == VariantType.INS:
+                # self.mask_or_modify_indel(var_pos_in_read, variant)
+                pass
         self.has_left_overs_to_mask = False
+
+    def get_status(self):
+        return (f'{self.query_name}: hasSupplementary={self.has_supplementary} n_supplementary={self.n_supplementaries} '
+                f'isSupplementary={self.is_supplementary} hasCollectedSupplementaries={self.supplementary_hashes} '
+                f'collectedSupp={len(self.supplementary_hashes)} hasLeftOversToMask={self.has_left_overs_to_mask} '
+                f'isComplete={self.anonymized_read_is_complete()}')
 
     def __hash__(self):
         return hash((self.query_name, self.get_pair_idx()))
+
+    def update_anonymized_read_from_other(self, anon_read2):
+        if anon_read2.has_left_overs_to_mask:
+            self.left_over_variants_to_mask.extend(anon_read2.left_over_variants_to_mask)
+        if len(self.left_over_variants_to_mask) > 0:
+            self.has_left_overs_to_mask = True
+        for suppl_hash in anon_read2.supplementary_hashes:
+            self.record_supplementary_aln(suppl_hash)
 
 
 class Anonymizer(Protocol):
@@ -349,20 +365,24 @@ def add_or_update_anonymized_read_from_other(anonymized_reads: Dict[str, List[An
         saved_anonymized_read = paired_anonymized_read_list[pair_idx]
         # Saved anonymized read is supplementary and the new one is a primary mapping
         if saved_anonymized_read.is_supplementary and not anonymized_read.is_supplementary:
-            anonymized_read.left_over_variants_to_mask.extend(saved_anonymized_read.left_over_variants_to_mask)
-            if len(anonymized_read.left_over_variants_to_mask) > 0:
-                anonymized_read.has_left_overs_to_mask = True
+            anonymized_read.update_anonymized_read_from_other(saved_anonymized_read)
+            # anonymized_read.left_over_variants_to_mask.extend(saved_anonymized_read.left_over_variants_to_mask)
+            # if len(anonymized_read.left_over_variants_to_mask) > 0:
+            #     anonymized_read.has_left_overs_to_mask = True
+            # for suppl_hash in saved_anonymized_read.supplementary_hashes:
+            #     anonymized_read.record_supplementary_aln(suppl_hash)
             paired_anonymized_read_list[pair_idx] = anonymized_read
             return
-        # In any case, update leftover bases to mask from the new anonymized read
-        if anonymized_read.has_left_overs_to_mask:
-            saved_anonymized_read.left_over_variants_to_mask.extend(anonymized_read.left_over_variants_to_mask)
-            if len(saved_anonymized_read.left_over_variants_to_mask) > 0:
-                saved_anonymized_read.has_left_overs_to_mask = True
+        # In any case other case, update leftover bases to mask from the new anonymized read and update the supp. record
+        saved_anonymized_read.update_anonymized_read_from_other(anonymized_read)
+        # if anonymized_read.has_left_overs_to_mask:
+        #     saved_anonymized_read.left_over_variants_to_mask.extend(anonymized_read.left_over_variants_to_mask)
+        #     if len(saved_anonymized_read.left_over_variants_to_mask) > 0:
+        #         saved_anonymized_read.has_left_overs_to_mask = True
         # If the new anonymized read is supplementary update the supp. record
-        if anonymized_read.is_supplementary:
-            for suppl_hash in anonymized_read.supplementary_hashes:
-                saved_anonymized_read.record_supplementary_aln(suppl_hash)
+        # if anonymized_read.is_supplementary:
+        #     for suppl_hash in anonymized_read.supplementary_hashes:
+        #         saved_anonymized_read.record_supplementary_aln(suppl_hash)
         # DEBUG/
         # if anonymized_read.query_name == 'HWI-ST1133:217:D1D4WACXX:2:1204:12012:86477':
         #     logging.info(f'# from anon_read - n_supplementaries={anonymized_read.n_supplementaries}'
@@ -437,6 +457,19 @@ class CompleteGermlineAnonymizer:
                 for pileup_read in pileup_column.pileups:
                     aln = pileup_read.alignment
                     add_anonymized_read_pair_to_collection_from_alignment(self.anonymized_reads, aln, dataset_idx)
+                    # DEBUG/
+                    # if aln.is_unmapped:
+                    #     logging.debug(f'aln {aln.to_string()} is unmapped and appears in the pileup')
+                    # if aln.query_name == 'HWI-ST1133:223:C1940ACXX:4:2314:12959:99156':
+                    #     logging.info(f'# Tracked read pair 1 {aln.is_read1} or 2 {aln.is_read2} found in pileup traversal'
+                    #                  f' at pos={pileup_column.reference_pos}')
+                    # if 66023812 <= pileup_column.reference_pos <= 66024052 and pileup_column.reference_name == '1' and is_in_normal:
+                    #     anon_reads = self.anonymized_reads.get(aln.query_name)
+                    #     logging.info(f'# pileup aln in tracked pileup {aln.to_string()}\n'
+                    #                  f' pair1 anon={0 if anon_reads[PAIR_1_IDX] is None else anon_reads[PAIR_1_IDX].get_status()}\n'
+                    #                  f' pair2 anon={0 if anon_reads[PAIR_2_IDX] is None else anon_reads[PAIR_2_IDX].get_status()}\n'
+                    #                  f' at pos={pileup_column.reference_pos}')
+                    # \DEBUG
                     if aln.query_name not in to_yield_anonymized_reads:
                         to_yield_anonymized_reads[aln.query_name] = aln.reference_end
                     else:
@@ -504,7 +537,7 @@ class CompleteGermlineAnonymizer:
         """Mask all germline SNVs and save the information from incomplete pairs and other variants to mask after"""
         for called_variant in variants_in_column:
             if (called_variant.somatic_variation_type == SomaticVariationType.TUMORAL_NORMAL_VARIANT
-                    and called_variant != variant_to_keep):
+                    and (variant_to_keep is None or called_variant != variant_to_keep)):
                 for specific_read_id, var_read_pos in called_variant.supporting_reads.items():
                     read_id, pair = decode_specific_read_pair_name(specific_read_id)
                     anonymized_read = self.anonymized_reads.get(read_id)[pair]
@@ -513,4 +546,5 @@ class CompleteGermlineAnonymizer:
                         continue
                     anonymized_read.mask_or_modify_base_pair(var_read_pos, called_variant.ref_allele)
                 # 11/06/24: For now, only SNVs are anonymized, but indels are also counted
-                stats_recorder.count_variant(called_variant)
+                if stats_recorder is not None:
+                    stats_recorder.count_variant(called_variant)

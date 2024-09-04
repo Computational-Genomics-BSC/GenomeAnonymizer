@@ -8,6 +8,7 @@ import pysam
 from variant_extractor import VariantExtractor
 from variant_extractor.variants import VariantRecord, VariantType
 from src.GenomeAnonymizer.short_read_tumor_normal_anonymizer import Window, get_ref_idxs
+from src.GenomeAnonymizer.variants import compare
 
 
 def read_variation_windows(stats_files_list: list[str], ref_idx_dict) -> (dict[str, dict[str, list]],
@@ -34,25 +35,6 @@ def read_variation_windows(stats_files_list: list[str], ref_idx_dict) -> (dict[s
     for _, window_order_list in window_order_lists.items():
         window_order_list.sort(key=lambda x: (ref_idx_dict.get(x.sequence), x.first, x.last))
     return variation_per_window_by_seq, window_order_lists
-
-
-def compare(seq_idx1: int, first1: int, last1: int, seq_idx2: int, first2: int, last2: int) -> int:
-    overlap = first2 <= last1 and last2 >= first1
-    if seq_idx1 < seq_idx2:
-        return -3
-    if seq_idx1 > seq_idx2:
-        return 3
-    # For these cases seq_idx1 == seq_idx2
-    if last1 < last2:
-        return -1 if overlap else -2
-    if last2 < last1:
-        return 1 if overlap else 2
-    # For these cases last1 == last2
-    if first1 < first2:
-        return -1
-    if first2 < first1:
-        return 1
-    return 0
 
 
 def process_variation_from_seq(file: str, window_order_lists, ref_idxs, min_af) -> (str, list):

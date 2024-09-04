@@ -4,23 +4,21 @@ import logging
 import re
 import shutil
 from dataclasses import dataclass
-
 import numpy
 import numpy as np
+import pileup_io
 import psutil
-import pileup_io as pileup_io
 import pysam
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from timeit import default_timer as timer
 from typing import List, Dict, Tuple
-
 from pysam import FastaFile
 from variant_extractor import VariantExtractor
 from variant_extractor.variants import VariantType, VariantRecord
 from src.GenomeAnonymizer.anonymizer_methods import AnonymizedRead, \
     add_anonymized_read_pair_to_collection_from_alignment, \
     add_or_update_anonymized_read_from_other, anonymized_read_pair_is_writeable, Anonymizer
-from src.GenomeAnonymizer.variants import CalledGenomicVariant
+from src.GenomeAnonymizer.variants import CalledGenomicVariant, compare
 from src.GenomeAnonymizer.variation_classifier import DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL, PAIR_1_IDX, PAIR_2_IDX, \
     DEBUG_TOTAL_TIMES
 
@@ -41,6 +39,12 @@ class Window:
     last: int
     variant: CalledGenomicVariant = None
 
+    def set_last_pos(self, updated_last):
+        self.last = updated_last
+
+    def is_variant_window(self):
+        return self.variant is not None
+
     def __str__(self):
         if self.variant is None:
             return ','.join(map(str, (self.sequence, self.first, self.last)))
@@ -58,6 +62,10 @@ def get_ref_idxs(ref_genome: FastaFile) -> Dict[str, int]:
     ref_sequences = ref_genome.references
     n_sequences = len(ref_sequences)
     return {k: v for (k, v) in zip(ref_sequences, range(n_sequences))}
+
+
+def sort_window_list(windows: list[Window], ref_sequences_dict):
+    windows.sort(key=lambda x: (ref_sequences_dict.get(x.sequence), x.first, x.last))
 
 
 def get_windows(variants, ref_sequences_dict, window_size=2000) -> List[Window]:
@@ -80,45 +88,46 @@ def get_windows(variants, ref_sequences_dict, window_size=2000) -> List[Window]:
         if variant_record.variant_type == VariantType.INV:
             if variant_record.pos + half_window > variant_record.end - half_window:
                 window = Window(sequence=variant_record.contig, first=variant_record.pos - half_window,
-                                last=variant_record.end + half_window, variant=called_variant)
+                                last=variant_record.end + half_window + 1, variant=called_variant)
                 windows.append(window)
                 # windows.append((variant_record.contig, variant_record.pos - half_window, variant_record.end + half_window, variant_record))
             else:
                 window1 = Window(sequence=variant_record.contig, first=variant_record.pos - half_window,
-                                 last=variant_record.pos + half_window, variant=called_variant)
+                                 last=variant_record.pos + half_window + 1, variant=called_variant)
                 window2 = Window(sequence=variant_record.contig, first=variant_record.end - half_window,
-                                 last=variant_record.end + half_window, variant=called_variant)
+                                 last=variant_record.end + half_window + 1, variant=called_variant)
                 windows.append(window1)
                 windows.append(window2)
                 # windows.append((variant_record.contig, variant_record.pos - half_window, variant_record.pos + half_window, variant_record))
                 # windows.append((variant_record.contig, variant_record.end - half_window, variant_record.end + half_window, variant_record))
         elif variant_record.variant_type == VariantType.TRA:
             window1 = Window(sequence=variant_record.contig, first=variant_record.pos - half_window,
-                             last=variant_record.pos + half_window, variant=called_variant)
+                             last=variant_record.pos + half_window + 1, variant=called_variant)
             window2 = Window(sequence=end_chrom, first=end - half_window,
-                             last=end + half_window, variant=called_variant)
+                             last=end + half_window + 1, variant=called_variant)
             windows.append(window1)
             windows.append(window2)
             # windows.append((variant_record.contig, variant_record.pos - half_window, variant_record.pos + half_window, variant_record))
             # windows.append((variant_record.contig, variant_record.end - half_window, variant_record.end + half_window, variant_record))
         elif variant_record.variant_type == VariantType.SNV:
             window = Window(sequence=variant_record.contig, first=variant_record.pos - half_window,
-                            last=variant_record.pos + half_window, variant=called_variant)
+                            last=variant_record.pos + half_window + 1, variant=called_variant)
             windows.append(window)
             # windows.append((variant_record.contig, variant_record.pos - half_window, variant_record.pos + half_window, variant_record))
         else:
             if variant_record.length < 100_000:
                 window = Window(sequence=variant_record.contig, first=variant_record.pos - half_window,
-                                last=variant_record.end + half_window, variant=called_variant)
+                                last=variant_record.end + half_window + 1, variant=called_variant)
                 windows.append(window)
             else:
                 window1 = Window(sequence=variant_record.contig, first=variant_record.pos - half_window,
-                                 last=variant_record.pos + half_window, variant=called_variant)
+                                 last=variant_record.pos + half_window + 1, variant=called_variant)
                 window2 = Window(sequence=end_chrom, first=end - half_window,
-                                 last=end + half_window, variant=called_variant)
+                                 last=end + half_window + 1, variant=called_variant)
                 windows.append(window1)
                 windows.append(window2)
-    windows.sort(key=lambda x: (ref_sequences_dict.get(x.sequence), x.first, x.last))
+    # windows.sort(key=lambda x: (ref_sequences_dict.get(x.sequence), x.first, x.last))
+    sort_window_list(windows, ref_sequences_dict)
     return windows
 
 
@@ -127,26 +136,33 @@ def write_pair(indexed_writer_streams, anonymized_read_pair1, anonymized_read_pa
         # If this method is called, the AnonymizedRead pair must be writable (pairs are not None, and are complete)
         read_id = anonymized_read_pair1.query_name
         # DEBUG/
-        # if read_id == 'HWI-ST898:327:C192HACXX:7:1305:14538:65422':
+        # if read_id == 'HWI-ST1133:223:C1940ACXX:4:2314:12959:99156':
         #     logging.info(f'# assessing writing read')
         # DEBUG/
         if read_id in written_read_ids:
             # DEBUG/
-            # if read_id == 'HWI-ST898:327:C192HACXX:7:1305:14538:65422':
+            # if read_id == 'HWI-ST1133:223:C1940ACXX:4:2314:12959:99156':
             #     logging.info(f'# read in set')
             # DEBUG/
             return
         else:
             # DEBUG/
-            # if read_id == 'HWI-ST898:327:C192HACXX:7:1305:14538:65422':
+            # if read_id == 'HWI-ST1133:223:C1940ACXX:4:2314:12959:99156':
             #     logging.info(f'# read not in set')
             # DEBUG/
             written_read_ids.add(read_id)
-    fastq_record_pair1 = str(anonymized_read_pair1.get_anonymized_fastq_record())
-    fastq_record_pair2 = str(anonymized_read_pair2.get_anonymized_fastq_record())
-    dataset_idx = anonymized_read_pair1.dataset_idx
-    indexed_writer_streams[dataset_idx][PAIR_1_IDX].write(f'{fastq_record_pair1}\n')
-    indexed_writer_streams[dataset_idx][PAIR_2_IDX].write(f'{fastq_record_pair2}\n')
+    try:
+        fastq_record_pair1 = str(anonymized_read_pair1.get_anonymized_fastq_record())
+        fastq_record_pair2 = str(anonymized_read_pair2.get_anonymized_fastq_record())
+        dataset_idx = anonymized_read_pair1.dataset_idx
+        indexed_writer_streams[dataset_idx][PAIR_1_IDX].write(f'{fastq_record_pair1}\n')
+        indexed_writer_streams[dataset_idx][PAIR_2_IDX].write(f'{fastq_record_pair2}\n')
+    except TypeError as e:
+        logging.error(f'Exception {str(e)} from trying to write anonymized read:\n'
+                      f'Read: {anonymized_read_pair1.query_name}'
+                      f'Pair 1 - SEQ = {anonymized_read_pair1.anonymized_sequence_array} - QUALs = {anonymized_read_pair1.anonymized_qualities_array}\n'
+                      f'Pair 2 - SEQ = {anonymized_read_pair2.anonymized_sequence_array} - QUALs = {anonymized_read_pair2.anonymized_qualities_array}')
+        raise
 
 
 def close_paired_streams(indexed_pair_writer_streams):
@@ -219,6 +235,40 @@ class AnonymizedVariantsStatistics:
                 # f'counts: {self.total_counts_by_variant_type[variant_type.value]}')
 
 
+def get_genome_sections(windows_in_sample: list[Window], ref_genome: FastaFile) -> list[Window]:
+    sections: list[Window] = []
+    sequences = ref_genome.references
+    lengths = ref_genome.lengths
+    ref_idxs = get_ref_idxs(ref_genome)
+    seq_lengths = {seq: length for seq, length in zip(sequences, lengths)}
+    window_dict = {k: [] for k in sequences}
+    for window in windows_in_sample:
+        window_dict[window.sequence].append(window)
+    for seq in sequences:
+        inter_window_first = 1
+        seq_windows = window_dict[seq]
+        if not seq_windows:
+            # In this case, the whole chromosome is an inter_window
+            inter_window = Window(sequence=seq, first=0, last=0)
+            sections.append(inter_window)
+            continue
+        for window in seq_windows:
+            inter_window_last = window.first - 1
+            inter_window = Window(sequence=seq, first=inter_window_first, last=inter_window_last)
+            inter_window_first = window.last + 1
+            sections.append(inter_window)
+            sections.append(window)
+        inter_window_last = seq_lengths[seq] - 1
+        last_inter_window = Window(sequence=seq, first=inter_window_first, last=inter_window_last)
+        sections.append(last_inter_window)
+    sort_window_list(sections, ref_idxs)
+    # DEBUG/
+    # for window in sections:
+    #     logging.debug(f'{str(window)}')
+    # \DEBUG
+    return sections
+
+
 def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq, ref_genome,
                      anonymizer, to_pair_anonymized_reads, written_read_ids, mem_debug_writer, stats_recorder=None):
     # DEBUG/
@@ -257,8 +307,8 @@ def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, 
             # DEBUG/
             # available_pair = anonymized_read_pair[PAIR_1_IDX] if anonymized_read_pair[PAIR_1_IDX] is not None else \
             #     anonymized_read_pair[PAIR_2_IDX]
-            # if available_pair.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
-            #     logging.info(f'# Tracked read is outside')
+            # if available_pair.query_name == 'HWI-ST1133:223:C1940ACXX:4:2314:12959:99156':
+            #     logging.info(f'# Tracked read found in pileup')
             # \DEBUG
             if anonymized_read_pair1 is not None:
                 dataset_idx = anonymized_read_pair1.dataset_idx
@@ -266,7 +316,7 @@ def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, 
                                                          anonymized_read_pair1)
                 read_id = anonymized_read_pair1.query_name
                 # DEBUG/
-                # if available_pair.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
+                # if available_pair.query_name == 'HWI-ST1133:217:D1D4WACXX:1:2103:3953:77371':
                 #     logging.info(f'# Tracked read is pair1')
                 # \DEBUG
             if anonymized_read_pair2 is not None:
@@ -274,16 +324,19 @@ def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, 
                 add_or_update_anonymized_read_from_other(to_pair_anonymized_reads,
                                                          anonymized_read_pair2)
                 read_id = anonymized_read_pair2.query_name
-                # DEBUG/
-                # if available_pair.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
-                #     logging.info(f'# Tracked read is pair2')
-                # \DEBUG
             # A read_aln pair is present in the collection, but may be the same pair, if it has supplementary alignments in other windows
             updated_anonymized_read_pair = to_pair_anonymized_reads.get(read_id)
             updated_anonymized_read_pair1 = updated_anonymized_read_pair[PAIR_1_IDX]
             updated_anonymized_read_pair2 = updated_anonymized_read_pair[PAIR_2_IDX]
             # DEBUG/
-            # if available_pair.query_name == 'HWI-ST1324:58:D1D2VACXX:6:1205:16111:8845':
+            # if available_pair.query_name == 'HWI-ST1133:223:C1940ACXX:4:2314:12959:99156':
+            #     if anonymized_read_pair1 is not None:
+            #         logging.info(f'# Updated Tracked read pair1 in pileup is: {updated_anonymized_read_pair1.get_status()}')
+            #     if anonymized_read_pair2 is not None:
+            #         logging.info(f'# Updated Tracked read pair2 in pileup is: {updated_anonymized_read_pair2.get_status()}')
+            # \DEBUG
+            # DEBUG/
+            # if available_pair.query_name == 'HWI-ST1133:223:C1940ACXX:4:2314:12959:99156':
             #     logging.info(f'# Tracked read is being tested')
             #     if anonymized_read_pair_is_writeable(updated_anonymized_read_pair1, updated_anonymized_read_pair2):
             #         logging.info(f'# Tracked read is writable')
@@ -312,37 +365,232 @@ def anonymize_window(window: Window, tumor_bam, normal_bam, tumor_output_fastq, 
     # anonymizer.reset()
 
 
+def pair_unmapped_or_non_pileup_pairs_and_write(to_pair_anonymized_reads, read_aln, dataset_idx,
+                                                indexed_pair_writer_streams,
+                                                written_read_ids):
+    add_anonymized_read_pair_to_collection_from_alignment(to_pair_anonymized_reads, read_aln,
+                                                          dataset_idx)
+    updated_anonymized_read_pair = to_pair_anonymized_reads.get(read_aln.query_name)
+    updated_anonymized_read_pair1 = updated_anonymized_read_pair[PAIR_1_IDX]
+    updated_anonymized_read_pair2 = updated_anonymized_read_pair[PAIR_2_IDX]
+    # DEBUG/
+    # if read_aln.query_name == 'HWI-ST1133:223:C1940ACXX:4:2314:12959:99156':
+    #     logging.info(f'# Tracked read found')
+    #     if read_aln.is_read1:
+    #         logging.info(f'# Tracked read pair 1 found to add')
+    #     if read_aln.is_read2:
+    #         logging.info(f'# Tracked read pair 2 found to add')
+    #     if updated_anonymized_read_pair1 is None:
+    #         logging.info(f'# Tracked read pair1 is None')
+    #     else:
+    #         logging.info(f'# Tracked read pair1 is: {updated_anonymized_read_pair1.get_status()}')
+    #     if updated_anonymized_read_pair2 is None:
+    #         logging.info(f'# Tracked read pair2 is None')
+    #     else:
+    #         logging.info(f'# Tracked read pair2 is: {updated_anonymized_read_pair1.get_status()}')
+    # \DEBUG
+    if anonymized_read_pair_is_writeable(updated_anonymized_read_pair1,
+                                         updated_anonymized_read_pair2):
+        if updated_anonymized_read_pair1.has_left_overs_to_mask:
+            updated_anonymized_read_pair1.mask_or_anonymize_left_over_variants()
+        if updated_anonymized_read_pair2.has_left_overs_to_mask:
+            updated_anonymized_read_pair2.mask_or_anonymize_left_over_variants()
+        write_pair(indexed_pair_writer_streams, updated_anonymized_read_pair1,
+                   updated_anonymized_read_pair2, written_read_ids)
+
+
 def pair_unpaired_or_supplementaries(to_pair_anonymized_reads, tumor_bam_file, normal_bam_file,
                                      tumor_output_fastq, normal_output_fastq, ref_genome_file,
-                                     written_read_ids, threads_per_file):
-    with pysam.AlignmentFile(tumor_bam_file, reference_filename=ref_genome_file) as tumor_reads_file, \
-            pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_reads_file:
-        tumor_reads_stream = tumor_reads_file.fetch(until_eof=True)
-        normal_reads_stream = normal_reads_file.fetch(until_eof=True)
+                                     anonymizer, written_read_ids, mem_debug_writer, threads_per_file):
+    with pysam.AlignmentFile(tumor_bam_file, reference_filename=ref_genome_file) as tumor_reads_file_fetch, \
+            pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_reads_file_fetch, \
+            pysam.AlignmentFile(tumor_bam_file, reference_filename=ref_genome_file) as tumor_reads_file_pileup, \
+            pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_reads_file_pileup:
+        # tumor_reads_stream = tumor_reads_file.fetch(until_eof=True)
+        # normal_reads_stream = normal_reads_file.fetch(until_eof=True)
+        tumor_normal_fetcher = pileup_io.iter_fetch_pair(tumor_reads_file_fetch, normal_reads_file_fetch,
+                                                         {*to_pair_anonymized_reads}, ref_genome_file)
+        ref_genome = pysam.FastaFile(ref_genome_file)
+        # ref_seq_idxs = get_ref_idxs(ref_genome)
         indexed_pair_writer_streams = [
             [open(tumor_output_fastq + '.1.fastq', 'a'), open(tumor_output_fastq + '.2.fastq', 'a')],
             [open(normal_output_fastq + '.1.fastq', 'a'), open(normal_output_fastq + '.2.fastq', 'a')]]
-        for dataset_idx, current_reads_stream in enumerate((tumor_reads_stream, normal_reads_stream)):
+        # window = Window(sequence=ref_genome.references[0], first=0, last=0, )
+        for fetched in tumor_normal_fetcher:
+            if fetched[DATASET_IDX_NORMAL] is not None and fetched[DATASET_IDX_TUMORAL] is not None:
+                seq, left, right = fetched[2]
+                # logging.debug(f'seq {seq} of type {type(seq)}\nleft {left} of type {type(left)} \nright {right} of type {type(right)}')
+                window = Window(sequence=seq, first=left, last=right, )
+                # DEBUG/
+                # if window.first == 66023812 and window.last == 66024052:
+                #     logging.info(f'# Window {str(window)} is processed for tracked read')
+                # \DEBUG
+                anonymize_window(window, tumor_reads_file_pileup, normal_reads_file_pileup, tumor_output_fastq,
+                                 normal_output_fastq,
+                                 ref_genome, anonymizer, to_pair_anonymized_reads, written_read_ids,
+                                 mem_debug_writer)
+            elif fetched[DATASET_IDX_NORMAL] is None and fetched[DATASET_IDX_TUMORAL] is None:
+                for dataset_idx in (DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL):
+                    unmapped_reads_tuple = fetched[2]
+                    for read_aln in unmapped_reads_tuple[dataset_idx]:
+                        # DEBUG/
+                        # if read_aln.query_name == 'HWI-ST1133:217:D1D4WACXX:1:2103:3953:77371' and read_aln.is_read2:
+                        #     logging.info(f'# Tracked read pair 2 found in unmapped')
+                        # \DEBUG
+                        pair_unmapped_or_non_pileup_pairs_and_write(to_pair_anonymized_reads, read_aln, dataset_idx,
+                                                                    indexed_pair_writer_streams, written_read_ids)
+            else:
+                if fetched[DATASET_IDX_TUMORAL] is not None:
+                    dataset_idx = DATASET_IDX_TUMORAL
+                elif fetched[DATASET_IDX_NORMAL] is not None:
+                    dataset_idx = DATASET_IDX_NORMAL
+                for read_aln in fetched[dataset_idx]:
+                    # DEBUG/
+                    # if read_aln.query_name == 'HWI-ST1133:217:D1D4WACXX:1:2103:3953:77371':
+                    #     logging.info(f'# Tracked read pair1 {read_aln.is_read1} or pair2 {read_aln.is_read2} found in non-pileup')
+                    # \DEBUG
+                    pair_unmapped_or_non_pileup_pairs_and_write(to_pair_anonymized_reads, read_aln, dataset_idx,
+                                                                indexed_pair_writer_streams, written_read_ids)
+        """for dataset_idx, current_reads_stream in enumerate((tumor_reads_stream, normal_reads_stream)):
             for read_aln in current_reads_stream:
                 read_id = read_aln.query_name
                 if read_id in to_pair_anonymized_reads:
-                    add_anonymized_read_pair_to_collection_from_alignment(to_pair_anonymized_reads, read_aln,
-                                                                          dataset_idx)
-                    updated_anonymized_read_pair = to_pair_anonymized_reads.get(read_id)
-                    updated_anonymized_read_pair1 = updated_anonymized_read_pair[PAIR_1_IDX]
-                    updated_anonymized_read_pair2 = updated_anonymized_read_pair[PAIR_2_IDX]
-                    if anonymized_read_pair_is_writeable(updated_anonymized_read_pair1, updated_anonymized_read_pair2):
-                        if updated_anonymized_read_pair1.has_left_overs_to_mask:
-                            updated_anonymized_read_pair1.mask_or_anonymize_left_over_variants()
-                        if updated_anonymized_read_pair2.has_left_overs_to_mask:
-                            updated_anonymized_read_pair2.mask_or_anonymize_left_over_variants()
-                        start4 = timer()
-                        write_pair(indexed_pair_writer_streams, updated_anonymized_read_pair1,
-                                   updated_anonymized_read_pair2, written_read_ids)
-                        end4 = timer()
-                        DEBUG_TOTAL_TIMES['write_pairs'] += end4 - start4
-                        to_pair_anonymized_reads.pop(read_id)
+                    if read_aln.is_unmapped:
+                        pair_unmapped_or_non_pileup_pairs_and_write(to_pair_anonymized_reads, read_aln, dataset_idx, indexed_pair_writer_streams, written_read_ids)
+                        continue
+                    intersects, righmost_bp = compare_read_aln_window(read_aln, window, ref_seq_idxs)
+                    if intersects:
+                        window.set_last_pos(righmost_bp)
+                    else:
+                        anonymize_window(window, tumor_reads_file_pileup, normal_reads_file_pileup, tumor_output_fastq,
+                                         normal_output_fastq,
+                                         ref_genome, anonymizer, to_pair_anonymized_reads, written_read_ids,
+                                         mem_debug_writer)
+                        window = Window(sequence=read_aln.reference_name, first=read_aln.reference_start,
+                                        last=read_aln.reference_end, )
+                    # add_anonymized_read_pair_to_collection_from_alignment(to_pair_anonymized_reads, read_aln,
+                    #                                                       dataset_idx)
+                    # updated_anonymized_read_pair = to_pair_anonymized_reads.get(read_id)
+                    # updated_anonymized_read_pair1 = updated_anonymized_read_pair[PAIR_1_IDX]
+                    # updated_anonymized_read_pair2 = updated_anonymized_read_pair[PAIR_2_IDX]
+                    # if anonymized_read_pair_is_writeable(updated_anonymized_read_pair1, updated_anonymized_read_pair2):
+                    #     if updated_anonymized_read_pair1.has_left_overs_to_mask:
+                    #         updated_anonymized_read_pair1.mask_or_anonymize_left_over_variants()
+                    #     if updated_anonymized_read_pair2.has_left_overs_to_mask:
+                    #         updated_anonymized_read_pair2.mask_or_anonymize_left_over_variants()
+                    #     start4 = timer()
+                    #     write_pair(indexed_pair_writer_streams, updated_anonymized_read_pair1,
+                    #                updated_anonymized_read_pair2, written_read_ids)
+                    #     end4 = timer()
+                    #     DEBUG_TOTAL_TIMES['write_pairs'] += end4 - start4
+                    #     to_pair_anonymized_reads.pop(read_id)"""
         close_paired_streams(indexed_pair_writer_streams)
+        ref_genome.close()
+
+
+def anonymize_inter_window_region(window: Window, to_pair_anonymized_reads, tumor_bam_pileup, normal_bam_pileup,
+                                  tumor_bam_fetch, normal_bam_fetch, tumor_output_fastq, normal_output_fastq,
+                                  ref_genome_file, anonymizer, written_read_ids, mem_debug_writer):
+    # tumor_reads_stream = tumor_reads_file.fetch(until_eof=True)
+    # normal_reads_stream = normal_reads_file.fetch(until_eof=True)
+    sequence = window.sequence
+    first = window.first
+    last = window.last
+    if first + last == 0:
+        first = None
+        last = None
+    # tumor_normal_fetcher = pileup_io.iter_fetch_pair(tumor_bam_fetch, normal_bam_fetch, {*to_pair_anonymized_reads},
+    #                                                  ref_genome_file,
+    #                                                  seq=sequence, first=first, last=last)
+    tumor_normal_fetcher = pileup_io.iter_fetch_pair(tumor_bam_fetch, normal_bam_fetch, ref_genome_file,
+                                                     seq=sequence, first=first, last=last)
+    ref_genome = pysam.FastaFile(ref_genome_file)
+    # ref_seq_idxs = get_ref_idxs(ref_genome)
+    indexed_pair_writer_streams = [
+        [open(tumor_output_fastq + '.1.fastq', 'a'), open(tumor_output_fastq + '.2.fastq', 'a')],
+        [open(normal_output_fastq + '.1.fastq', 'a'), open(normal_output_fastq + '.2.fastq', 'a')]]
+    # window = Window(sequence=ref_genome.references[0], first=0, last=0, )
+    for fetched in tumor_normal_fetcher:
+        if fetched is None:
+            break
+        if fetched[DATASET_IDX_NORMAL] is not None and fetched[DATASET_IDX_TUMORAL] is not None:
+            seq, left, right = fetched[2]
+            # logging.debug(f'seq {seq} of type {type(seq)}\nleft {left} of type {type(left)} \nright {right} of type {type(right)}')
+            window = Window(sequence=seq, first=left, last=right, )
+            # DEBUG/
+            # if window.first == 66023812 and window.last == 66024052:
+            #     logging.info(f'# Window {str(window)} is processed for tracked read')
+            # \DEBUG
+            anonymize_window(window, tumor_bam_pileup, normal_bam_pileup, tumor_output_fastq,
+                             normal_output_fastq,
+                             ref_genome, anonymizer, to_pair_anonymized_reads, written_read_ids,
+                             mem_debug_writer)
+        elif fetched[DATASET_IDX_NORMAL] is None and fetched[DATASET_IDX_TUMORAL] is None:
+            for dataset_idx in (DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL):
+                unmapped_reads_tuple = fetched[2]
+                for read_aln in unmapped_reads_tuple[dataset_idx]:
+                    # DEBUG/
+                    # if read_aln.query_name == 'HWI-ST1133:223:C1940ACXX:4:2314:12959:99156' and read_aln.is_read2:
+                    #     logging.info(f'# Tracked read pair 2 found in unmapped')
+                    # \DEBUG
+                    pair_unmapped_or_non_pileup_pairs_and_write(to_pair_anonymized_reads, read_aln, dataset_idx,
+                                                                indexed_pair_writer_streams, written_read_ids)
+        else:
+            if fetched[DATASET_IDX_TUMORAL] is not None:
+                dataset_idx = DATASET_IDX_TUMORAL
+            elif fetched[DATASET_IDX_NORMAL] is not None:
+                dataset_idx = DATASET_IDX_NORMAL
+            for read_aln in fetched[dataset_idx]:
+                # DEBUG/
+                # if read_aln.query_name == 'HWI-ST1133:223:C1940ACXX:4:2314:12959:99156':
+                #     logging.info(
+                #         f'# Tracked read pair1 {read_aln.is_read1} or pair2 {read_aln.is_read2} found in non-pileup')
+                # \DEBUG
+                pair_unmapped_or_non_pileup_pairs_and_write(to_pair_anonymized_reads, read_aln, dataset_idx,
+                                                            indexed_pair_writer_streams, written_read_ids)
+    close_paired_streams(indexed_pair_writer_streams)
+
+
+def pair_unmapped_mates(windows: list[Window], to_pair_anonymized_reads, tumor_bam_file, normal_bam_file,
+                        tumor_output_fastq,
+                        normal_output_fastq, ref_genome_file, written_read_ids):
+    indexed_pair_writer_streams = [
+        [open(tumor_output_fastq + '.1.fastq', 'a'), open(tumor_output_fastq + '.2.fastq', 'a')],
+        [open(normal_output_fastq + '.1.fastq', 'a'), open(normal_output_fastq + '.2.fastq', 'a')]]
+    with pysam.AlignmentFile(tumor_bam_file, reference_filename=ref_genome_file) as tumor_reads_file_fetch, \
+            pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_reads_file_fetch:
+        for window in windows:
+            tumor_fetcher = tumor_reads_file_fetch.fetch(reference=window.sequence, start=window.first - 1,
+                                                         stop=window.last)
+            normal_fetcher = normal_reads_file_fetch.fetch(reference=window.sequence, start=window.first - 1,
+                                                           stop=window.last)
+            for dataset_idx, fetcher in enumerate((tumor_fetcher, normal_fetcher)):
+                for read_aln in fetcher:
+                    # DEBUG/
+                    # if read_aln.query_name == 'HWI-ST1133:223:C1940ACXX:4:2314:12959:99156':
+                    #     logging.debug(f'Tracked read found to pair: is unmapped={read_aln.is_unmapped}'
+                    #                   f' is in dict={read_aln.query_name in to_pair_anonymized_reads} '
+                    #                   f' saved pair=\n {to_pair_anonymized_reads[read_aln.query_name][PAIR_1_IDX]}')
+                    # \DEBUG
+                    if read_aln.is_unmapped and read_aln.query_name in to_pair_anonymized_reads:
+                        # logging.debug(f'read_aln unmapped to pair: {read_aln}')
+                        pair_unmapped_or_non_pileup_pairs_and_write(to_pair_anonymized_reads, read_aln, dataset_idx,
+                                                                    indexed_pair_writer_streams, written_read_ids)
+        """tumor_fetcher = tumor_reads_file_fetch.fetch(until_eof=True)
+        normal_fetcher = normal_reads_file_fetch.fetch(until_eof=True)
+        for dataset_idx, fetcher in enumerate((tumor_fetcher, normal_fetcher)):
+            for read_aln in fetcher:
+                # if read_aln.query_name in to_pair_anonymized_reads:  #
+                if read_aln.query_name == 'HWI-ST1133:217:D1D4WACXX:2:2311:14232:47191':
+                    logging.debug(f'Tracked read found to pair: is unmapped={read_aln.is_unmapped}'
+                                  f' is in dict={read_aln.query_name in to_pair_anonymized_reads} '
+                                  f' saved pair=\n {to_pair_anonymized_reads[read_aln.query_name][PAIR_1_IDX]}')
+                if read_aln.is_unmapped and read_aln.query_name in to_pair_anonymized_reads:
+                    # logging.debug(f'read_aln unmapped to pair: {read_aln}')
+                    pair_unmapped_or_non_pileup_pairs_and_write(to_pair_anonymized_reads, read_aln, dataset_idx,
+                                                                indexed_pair_writer_streams, written_read_ids)"""
+
+    close_paired_streams(indexed_pair_writer_streams)
 
 
 def write_single_end_reads(to_pair_anonymized_reads, tumor_output_fastq, normal_output_fastq):
@@ -402,19 +650,35 @@ def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_fi
     mem_debug_writer.write(f'Memory usage before windows: {memory_usage} MB\n')
     written_read_ids = set()
     # current_sequence = ''
-    for window in windows_in_sample:
-        # if current_sequence != window.sequence:
-        #     written_read_ids.clear()
-        # current_sequence = window.sequence
-        with pysam.AlignmentFile(tumor_bam_file, reference_filename=ref_genome_file) as tumor_bam, \
-                pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_bam:
+    genome_sections = get_genome_sections(windows_in_sample, ref_genome)
+    with pysam.AlignmentFile(tumor_bam_file, reference_filename=ref_genome_file) as tumor_bam_pileup_windows, \
+            pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_bam_pileup_windows, \
+            pysam.AlignmentFile(tumor_bam_file, reference_filename=ref_genome_file) as tumor_bam_fetch, \
+            pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_bam_fetch:  #, \
+        # pysam.AlignmentFile(tumor_bam_file, reference_filename=ref_genome_file) as tumor_bam_pileup_non_windows, \
+        # pysam.AlignmentFile(normal_bam_file, reference_filename=ref_genome_file) as normal_bam_pileup_non_windows:
+        for window in genome_sections:
+            # if current_sequence != window.sequence:
+            #     written_read_ids.clear()
+            # current_sequence = window.sequence
             # Window is a tuple (start, end, VariantRecord)
             start2 = timer()
-            if record_statistics:
-                recorder.add_window(window)
-            anonymize_window(window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
-                             ref_genome, anonymizer, to_pair_anonymized_reads, written_read_ids, mem_debug_writer,
-                             stats_recorder=recorder)
+            if window.is_variant_window():
+                if record_statistics:
+                    recorder.add_window(window)
+                logging.debug(f'Anonymizing window: {str(window)}')
+                anonymize_window(window, tumor_bam_pileup_windows, normal_bam_pileup_windows, tumor_output_fastq,
+                                 normal_output_fastq,
+                                 ref_genome, anonymizer, to_pair_anonymized_reads, written_read_ids, mem_debug_writer,
+                                 stats_recorder=recorder)
+            else:
+                logging.debug(f'Anonymizing inter-window region: {str(window)}')
+                anonymize_inter_window_region(window, to_pair_anonymized_reads,
+                                              tumor_bam_pileup_windows, normal_bam_pileup_windows,
+                                              # tumor_bam_pileup_non_windows, normal_bam_pileup_non_windows,
+                                              tumor_bam_fetch, normal_bam_fetch,
+                                              tumor_output_fastq, normal_output_fastq, ref_genome_file, anonymizer,
+                                              written_read_ids, mem_debug_writer)
             # else:
             #     anonymize_window(window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
             #                      ref_genome, anonymizer, to_pair_anonymized_reads, written_read_ids, mem_debug_writer)
@@ -422,18 +686,17 @@ def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_fi
             # logging.debug(
             #    f'Time to anonymize reads in window {seq_name} {window[0]}-{window[1]} type {window[2].variant_type.name}: {end2 - start2}')
             DEBUG_TOTAL_TIMES['anonymize_windows'] += end2 - start2
-
     # Deal with any remaining anonymized reads, which have pairs or primary mappings in non-window regions
     memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
     mem_debug_writer.write(
         f'Memory usage after windows: {memory_usage} MB\n')
     ref_genome.close()
-    if to_pair_anonymized_reads:
+    """if to_pair_anonymized_reads:
         logging.info('Searching for remaining unpaired anonymized reads')
         start3 = timer()
         pair_unpaired_or_supplementaries(to_pair_anonymized_reads, tumor_bam_to_pair, normal_bam_to_pair,
-                                         tumor_output_fastq, normal_output_fastq, ref_genome_file, written_read_ids,
-                                         threads_per_file)
+                                         tumor_output_fastq, normal_output_fastq, ref_genome_file, anonymizer,
+                                         written_read_ids, mem_debug_writer, threads_per_file)
         # written_read_ids, threads_per_file)
         end3 = timer()
         logging.debug(f'Time to pair unpaired anonymized reads: {end3 - start3}')
@@ -448,19 +711,33 @@ def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_fi
         #         written_remaining_reads.append(read_id)
         # for read_id in written_remaining_reads:
         #     to_pair_anonymized_reads.pop(read_id)
-        # Remove all reads that are repeated due to nearby windows
-        for k in written_read_ids:
-            removed_id = to_pair_anonymized_reads.pop(k, '')
-            if removed_id != '':
-                logging.warning(f'Unexpected event: read {removed_id} was removed from remaining reads after '
-                                f'being written, this may happen because of nearby windows')
-        # [to_pair_anonymized_reads.pop(k, '') for k in written_read_ids]
-        if to_pair_anonymized_reads:
-            start4 = timer()
-            write_single_end_reads(to_pair_anonymized_reads, tumor_output_fastq, normal_output_fastq)
-            end4 = timer()
-            logging.debug(f'Time to write single end reads: {end4 - start4}')
-            DEBUG_TOTAL_TIMES['write_pairs'] += end4 - start4
+        # Remove all reads that are repeated due to nearby windows"""
+    # NOTE: Suboptimal solution if pileup cannot return unmapped pairs
+    if to_pair_anonymized_reads:
+        logging.info('Searching for remaining unpaired unmapped pairs')
+        start3 = timer()
+        pair_unmapped_mates(windows_in_sample, to_pair_anonymized_reads, tumor_bam_file, normal_bam_file,
+                            tumor_output_fastq, normal_output_fastq, ref_genome_file, written_read_ids)
+        end3 = timer()
+        logging.debug(f'Time to pair unpaired anonymized reads: {end3 - start3}')
+        DEBUG_TOTAL_TIMES['unpaired_searches'] += end3 - start3
+        # If there are still objects in the collection, write them as single end reads
+        memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
+        mem_debug_writer.write(
+            f'Memory usage after pairing leftover reads: {memory_usage} MB\n')
+    for k in written_read_ids:
+        removed_read = to_pair_anonymized_reads.pop(k, '')
+        if removed_read != '':
+            # logging.debug(f'Duplicated read object event: read {k} was removed from remaining reads after '
+            #               f'being written, this may happen because of nearby windows')
+            pass
+    # [to_pair_anonymized_reads.pop(k, '') for k in written_read_ids]
+    if to_pair_anonymized_reads:
+        start4 = timer()
+        write_single_end_reads(to_pair_anonymized_reads, tumor_output_fastq, normal_output_fastq)
+        end4 = timer()
+        logging.debug(f'Time to write single end reads: {end4 - start4}')
+        DEBUG_TOTAL_TIMES['write_pairs'] += end4 - start4
     memory_usage = process.memory_info().rss / (1024 * 1024)  # in MB
     mem_debug_writer.write(
         f'Final memory usage: {memory_usage} MB\n')

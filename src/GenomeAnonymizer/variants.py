@@ -30,7 +30,7 @@ class CalledGenomicVariant:
     @classmethod
     def from_variant_record(cls, variant_record: VariantRecord):
         # VariantRecord coordinates are 1-based, while CalledGenomicVariant coordinates are 0-based
-        return cls(variant_record.contig, variant_record.pos-1, variant_record.end-1,
+        return cls(variant_record.contig, variant_record.pos - 1, variant_record.end - 1,
                    variant_record.variant_type, variant_record.length, variant_record.alt, variant_record.ref)
 
     def add_supporting_read(self, read_id, var_read_pos):
@@ -55,3 +55,22 @@ class CalledGenomicVariant:
         return (f'seq_name: {self.seq_name} pos: {self.pos} end: {self.end} var_type: {self.variant_type} '
                 f'length: {self.length} alt_allele: {self.allele} ref_allele: {self.ref_allele} '
                 f'somatic_variation_type: {self.somatic_variation_type}')
+
+
+def compare(seq_idx1: int, first1: int, last1: int, seq_idx2: int, first2: int, last2: int) -> int:
+    overlap = first2 <= last1 and last2 >= first1
+    if seq_idx1 < seq_idx2:
+        return -3
+    if seq_idx1 > seq_idx2:
+        return 3
+    # For these cases seq_idx1 == seq_idx2
+    if last1 < last2:
+        return -1 if overlap else -2
+    if last2 < last1:
+        return 1 if overlap else 2
+    # For these cases last1 == last2
+    if first1 < first2:
+        return -1
+    if first2 < first1:
+        return 1
+    return 0
