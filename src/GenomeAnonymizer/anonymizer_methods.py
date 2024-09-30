@@ -259,15 +259,14 @@ class AnonymizedRead:
             logging.warning(
                 f'Trying to mask left over variants in AnonymizedRead {self.query_name} '
                 f'with no left over variants to mask')
-        # TODO: Handle SV order when they are handled
+        # TODO: Include SV in-order when they are handled
         # First mask every SNV, then INDELs
         self.left_over_variants_to_mask.sort(key=lambda x: x[1].variant_type.value)
         for var_pos_in_read, called_variant in self.left_over_variants_to_mask:
             if called_variant.variant_type == VariantType.SNV:
                 self.mask_or_modify_base_pair(var_pos_in_read, called_variant.ref_allele)
             if called_variant.variant_type == VariantType.DEL or called_variant.variant_type == VariantType.INS:
-                # self.mask_or_modify_indel(var_pos_in_read, variant)
-                pass
+                self.mask_or_modify_indel(var_pos_in_read, called_variant)
         self.has_left_overs_to_mask = False
 
     def get_status(self):
@@ -446,13 +445,11 @@ class CompleteGermlineAnonymizer:
                 #     for pileup_column in current_pileup:
                 is_in_normal = dataset_idx == DATASET_IDX_NORMAL
                 start1 = timer()
-                # TODO: Multithread this part
                 classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_alns, ref_genome,
                                                     called_genomic_variants)
                 end1 = timer()
                 # logging.debug(f"Classify variation time: {end1 - start1}")
                 DEBUG_TOTAL_TIMES['classify_variants'] += end1 - start1
-                # TODO: mask indels
                 start4 = timer()
                 for pileup_read in pileup_column.pileups:
                     aln = pileup_read.alignment
@@ -545,6 +542,5 @@ class CompleteGermlineAnonymizer:
                         anonymized_read.add_left_over_variant(var_read_pos, called_variant)
                         continue
                     anonymized_read.mask_or_modify_base_pair(var_read_pos, called_variant.ref_allele)
-                # 11/06/24: For now, only SNVs are anonymized, but indels are also counted
                 if stats_recorder is not None:
                     stats_recorder.count_variant(called_variant)

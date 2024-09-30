@@ -45,7 +45,7 @@ def get_mismatch_positions_from_md_tag(aln) -> List[Tuple[int, str]]:
 def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, called_genomic_variants, ref_genome,
                    process_snvs_from_md_tag=False):
     regexp = r"(?<=[a-zA-Z=])(?=[0-9])|(?<=[0-9])(?=[a-zA-Z=])"  # regex to split cigar string
-    cigar_indels = {"I", "D"}  # cigar operations to report
+    cigar_indels = {"I", "D", "S"}  # cigar operations to report
     ref_consuming = {'M', 'D', 'N', '=', 'X'}  # stores reference consuming cigar operations
     read_consuming_only = ['S', 'H', 'I']  # stores read consuming cigar operations
     cigar_list = re.split(regexp, aln.cigarstring)
@@ -62,10 +62,18 @@ def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, c
             cigar_op = cigar_list[cigar_list_idx + 1]
             if cigar_op in cigar_indels:
                 pos = start_ref_pos + current_cigar_len
+                # TODO: Add softclips as evidence for indels and circumdant signals, not only from exact matching
+                """
+                if cigar_op == 'S':
+                    if current_cigar_len == 0:
+                        pos = start_ref_pos - 1
+                    else:
+                        pos = start_ref_pos + current_cigar_len
+                """
                 in_read_pos = current_cigar_len + read_consumed_bases
                 length = int(symbol)
                 var_type = VariantType.INS if cigar_op == 'I' else VariantType.DEL
-                # TODO: Fix alleles for indel masking
+                # var_type = VariantType.INS if (cigar_op == 'I' or cigar_op == 'S') else VariantType.DEL
                 end = pos + 1 if var_type == VariantType.INS else pos + length - 1
                 in_read_end = in_read_pos + length - 1 if var_type == VariantType.INS else in_read_pos + 1
                 alt_sequence = read_sequence[in_read_pos:in_read_end + 1].upper()
@@ -165,7 +173,7 @@ def process_snv(aln: AlignedSegment, specific_pair_query_name, reference_pos, in
 
 
 def classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_alns, ref_genome: FastaFile,
-                                        called_genomic_variants):
+                                        called_genomic_variants, diffuse_potential_calls: bool = False):
     """
     Classify the read variation returning a dictionary with every INDEL and SNV CalledGenomicVariant by coordinate.
     """
@@ -195,3 +203,7 @@ def classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_al
                     called_genomic_variants, ref_base)
         end2 = timer()
         DEBUG_TOTAL_TIMES['process_snvs'] += end2 - start2
+        # if diffuse_potential_calls and dataset_idx == DATASET_IDX_NORMAL:
+
+
+

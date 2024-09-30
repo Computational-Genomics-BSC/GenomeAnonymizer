@@ -1,7 +1,33 @@
 # @author: Nicolas Gaitan
+import math
 from enum import Enum
+
 from variant_extractor.variants import VariantRecord
 from variant_extractor.variants import VariantType
+
+
+def compare(seq_idx1: int, first1: int, last1: int, seq_idx2: int, first2: int, last2: int) -> int:
+    overlap = first2 <= last1 and last2 >= first1
+    if seq_idx1 < seq_idx2:
+        return -3
+    if seq_idx1 > seq_idx2:
+        return 3
+    # For these cases seq_idx1 == seq_idx2
+    if last1 < last2:
+        return -1 if overlap else -2
+    if last2 < last1:
+        return 1 if overlap else 2
+    # For these cases last1 == last2
+    if first1 < first2:
+        return -1
+    if first2 < first1:
+        return 1
+    return 0
+
+
+def estimate_euclidean_distance(x1: int, y1: int, z1: int, x2: int, y2: int, z2: int) -> float:
+    square_sum = (x1 - x2) ** 2 + (y1 - y2) ** 2 + (z1 - z2) ** 2
+    return math.sqrt(square_sum)
 
 
 class SomaticVariationType(Enum):
@@ -51,26 +77,10 @@ class CalledGenomicVariant:
             return False
         return True
 
+    def calculate_distance_to_another(self, variant2):
+        return estimate_euclidean_distance(self.pos, self.end, self.length, variant2.pos, variant2.end, variant2.length)
+
     def __str__(self):
         return (f'seq_name: {self.seq_name} pos: {self.pos} end: {self.end} var_type: {self.variant_type} '
                 f'length: {self.length} alt_allele: {self.allele} ref_allele: {self.ref_allele} '
                 f'somatic_variation_type: {self.somatic_variation_type}')
-
-
-def compare(seq_idx1: int, first1: int, last1: int, seq_idx2: int, first2: int, last2: int) -> int:
-    overlap = first2 <= last1 and last2 >= first1
-    if seq_idx1 < seq_idx2:
-        return -3
-    if seq_idx1 > seq_idx2:
-        return 3
-    # For these cases seq_idx1 == seq_idx2
-    if last1 < last2:
-        return -1 if overlap else -2
-    if last2 < last1:
-        return 1 if overlap else 2
-    # For these cases last1 == last2
-    if first1 < first2:
-        return -1
-    if first2 < first1:
-        return 1
-    return 0

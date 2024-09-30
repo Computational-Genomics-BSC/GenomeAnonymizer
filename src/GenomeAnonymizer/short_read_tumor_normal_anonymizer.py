@@ -173,11 +173,15 @@ def close_paired_streams(indexed_pair_writer_streams):
 
 
 class AnonymizedVariantsStatistics:
+
+    outside_windows_str: str = 'outside_windows,-,-,-'
+
     def __init__(self, file_output: str):
         self.file_output = file_output
         # self.window_names = set()
         # self.total_counts_by_variant_type = []*len(VariantType)
         self.window_var_counts = dict()
+        self.window_var_counts[self.outside_windows_str] = [0] * len(VariantType)
         self.current_window = ''
         # self.n_windows = 0
 
@@ -201,6 +205,9 @@ class AnonymizedVariantsStatistics:
 
     def set_current_window(self, window_str):
         self.current_window = window_str
+
+    def set_outside_windows_as_current_window(self):
+        self.current_window = self.outside_windows_str
 
     def write_statistics(self):
         var_counts_by_type = [[] for _ in range(len(VariantType))]
@@ -490,7 +497,7 @@ def pair_unpaired_or_supplementaries(to_pair_anonymized_reads, tumor_bam_file, n
 
 def anonymize_inter_window_region(window: Window, to_pair_anonymized_reads, tumor_bam_pileup, normal_bam_pileup,
                                   tumor_bam_fetch, normal_bam_fetch, tumor_output_fastq, normal_output_fastq,
-                                  ref_genome_file, anonymizer, written_read_ids, mem_debug_writer):
+                                  ref_genome_file, anonymizer, written_read_ids, mem_debug_writer, stats_recorder=None):
     # tumor_reads_stream = tumor_reads_file.fetch(until_eof=True)
     # normal_reads_stream = normal_reads_file.fetch(until_eof=True)
     sequence = window.sequence
@@ -524,7 +531,7 @@ def anonymize_inter_window_region(window: Window, to_pair_anonymized_reads, tumo
             anonymize_window(window, tumor_bam_pileup, normal_bam_pileup, tumor_output_fastq,
                              normal_output_fastq,
                              ref_genome, anonymizer, to_pair_anonymized_reads, written_read_ids,
-                             mem_debug_writer)
+                             mem_debug_writer, stats_recorder=stats_recorder)
         elif fetched[DATASET_IDX_NORMAL] is None and fetched[DATASET_IDX_TUMORAL] is None:
             for dataset_idx in (DATASET_IDX_TUMORAL, DATASET_IDX_NORMAL):
                 unmapped_reads_tuple = fetched[2]
@@ -673,12 +680,14 @@ def anonymize_genome(windows_in_sample: List, tumor_bam_file: str, normal_bam_fi
                                  stats_recorder=recorder)
             else:
                 logging.debug(f'Anonymizing inter-window region: {str(window)}')
+                if record_statistics:
+                    recorder.set_outside_windows_as_current_window()
                 anonymize_inter_window_region(window, to_pair_anonymized_reads,
                                               tumor_bam_pileup_windows, normal_bam_pileup_windows,
                                               # tumor_bam_pileup_non_windows, normal_bam_pileup_non_windows,
                                               tumor_bam_fetch, normal_bam_fetch,
                                               tumor_output_fastq, normal_output_fastq, ref_genome_file, anonymizer,
-                                              written_read_ids, mem_debug_writer)
+                                              written_read_ids, mem_debug_writer, stats_recorder=recorder)
             # else:
             #     anonymize_window(window, tumor_bam, normal_bam, tumor_output_fastq, normal_output_fastq,
             #                      ref_genome, anonymizer, to_pair_anonymized_reads, written_read_ids, mem_debug_writer)
