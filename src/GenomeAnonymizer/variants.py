@@ -50,6 +50,8 @@ class CalledGenomicVariant:
         self.allele: str = allele
         self.ref_allele = ref_allele
         self.somatic_variation_type = SomaticVariationType.UNCLASSIFIED
+        # self.has_diffused = False
+        self.is_linked_to_another_germline = False
         # Dictionary with the supporting read ids as key and the position of the variant in the read as value
         self.supporting_reads = dict()
 
@@ -61,6 +63,22 @@ class CalledGenomicVariant:
 
     def add_supporting_read(self, read_id, var_read_pos):
         self.supporting_reads[read_id] = var_read_pos
+
+    # def set_diffused_status(self):
+    #     self.has_diffused = True
+
+    def set_link_to_another_germline(self):
+        self.is_linked_to_another_germline = True
+
+    def is_candidate_for_diffusion(self):
+        # if self.somatic_variation_type == SomaticVariationType.TUMORAL_NORMAL_VARIANT:
+        #     return False
+        if self.is_linked_to_another_germline:
+            return False
+        return True
+
+    def calculate_distance_to_another(self, variant2):
+        return estimate_euclidean_distance(self.pos, self.end, self.length, variant2.pos, variant2.end, variant2.length)
 
     def __eq__(self, var2):
         if self.seq_name != var2.seq_name:
@@ -76,9 +94,6 @@ class CalledGenomicVariant:
         if self.allele != var2.allele:
             return False
         return True
-
-    def calculate_distance_to_another(self, variant2):
-        return estimate_euclidean_distance(self.pos, self.end, self.length, variant2.pos, variant2.end, variant2.length)
 
     def __str__(self):
         return (f'seq_name: {self.seq_name} pos: {self.pos} end: {self.end} var_type: {self.variant_type} '

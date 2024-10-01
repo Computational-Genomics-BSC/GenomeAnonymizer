@@ -1,10 +1,12 @@
 # @author: Nicolas Gaitan
 import logging
+import math
 import re
 from typing import List, Tuple
 from timeit import default_timer as timer
 from pysam import PileupColumn, FastaFile, AlignedSegment, PileupRead
 from variant_extractor.variants import VariantType
+from collections import deque
 from src.GenomeAnonymizer.variants import CalledGenomicVariant, SomaticVariationType
 
 # constants
@@ -13,6 +15,11 @@ DATASET_IDX_NORMAL = 1
 
 PAIR_1_IDX = 0
 PAIR_2_IDX = 1
+
+MAX_GERMLINE_CANDIDATE_TO_DIFFUSE_LIMIT = 300
+DIFFUSION_POS_LIMIT = 10
+DIFFUSION_LENGTH_LIMIT = 15
+DIFFUSION_DISTANCE_LIMIT = math.sqrt(DIFFUSION_POS_LIMIT ** 2 + DIFFUSION_LENGTH_LIMIT ** 2)
 
 DEBUG_TOTAL_TIMES = {'anonymize_windows': 0, 'anonymize_call': 0, 'anonymize_with_pileup': 0, 'write_pairs': 0,
                      'unpaired_searches': 0, 'process_indels': 0, 'process_snvs': 0,
@@ -45,7 +52,9 @@ def get_mismatch_positions_from_md_tag(aln) -> List[Tuple[int, str]]:
 def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, called_genomic_variants, ref_genome,
                    process_snvs_from_md_tag=False):
     regexp = r"(?<=[a-zA-Z=])(?=[0-9])|(?<=[0-9])(?=[a-zA-Z=])"  # regex to split cigar string
-    cigar_indels = {"I", "D", "S"}  # cigar operations to report
+    # TODO: Include softclip signals
+    # cigar operations to report
+    cigar_indels = {"I", "D"}  # , "S"}
     ref_consuming = {'M', 'D', 'N', '=', 'X'}  # stores reference consuming cigar operations
     read_consuming_only = ['S', 'H', 'I']  # stores read consuming cigar operations
     cigar_list = re.split(regexp, aln.cigarstring)
@@ -78,7 +87,8 @@ def process_indels(aln: AlignedSegment, specific_pair_query_name, dataset_idx, c
                 in_read_end = in_read_pos + length - 1 if var_type == VariantType.INS else in_read_pos + 1
                 alt_sequence = read_sequence[in_read_pos:in_read_end + 1].upper()
                 ref_sequence = ref_genome.fetch(seq_name, pos, end + 1).upper()
-                called_indel = CalledGenomicVariant(seq_name, pos, end, var_type, length, allele=alt_sequence, ref_allele=ref_sequence)
+                called_indel = CalledGenomicVariant(seq_name, pos, end, var_type, length, allele=alt_sequence,
+                                                    ref_allele=ref_sequence)
                 if called_indel.pos not in called_genomic_variants:
                     called_genomic_variants[called_indel.pos] = []
                 indel_pos_list = called_genomic_variants[called_indel.pos]
@@ -173,7 +183,7 @@ def process_snv(aln: AlignedSegment, specific_pair_query_name, reference_pos, in
 
 
 def classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_alns, ref_genome: FastaFile,
-                                        called_genomic_variants, diffuse_potential_calls: bool = False):
+                                        called_snvs, called_indels, diffuse_potential_calls: bool = False):
     """
     Classify the read variation returning a dictionary with every INDEL and SNV CalledGenomicVariant by coordinate.
     """
@@ -190,7 +200,7 @@ def classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_al
         # process_snvs_from_md_tag = False
         if specific_pair_query_name not in seen_read_alns:
             start1 = timer()
-            process_indels(aln, specific_pair_query_name, dataset_idx, called_genomic_variants, ref_genome,
+            process_indels(aln, specific_pair_query_name, dataset_idx, called_indels, ref_genome,
                            process_snvs_from_md_tag)
             end1 = timer()
             DEBUG_TOTAL_TIMES['process_indels'] += end1 - start1
@@ -200,10 +210,30 @@ def classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_al
             continue
         start2 = timer()
         process_snv(aln, specific_pair_query_name, reference_pos, in_read_position, dataset_idx,
-                    called_genomic_variants, ref_base)
+                    called_snvs, ref_base)
         end2 = timer()
         DEBUG_TOTAL_TIMES['process_snvs'] += end2 - start2
-        # if diffuse_potential_calls and dataset_idx == DATASET_IDX_NORMAL:
-
-
-
+        if diffuse_potential_calls and dataset_idx == DATASET_IDX_NORMAL:
+            min_limit_pos = reference_pos - MAX_GERMLINE_CANDIDATE_TO_DIFFUSE_LIMIT
+            max_limit_pos = reference_pos + MAX_GERMLINE_CANDIDATE_TO_DIFFUSE_LIMIT
+            calls_to_diffuse: list[CalledGenomicVariant] = list()
+            candidate_calls_to_link: deque[CalledGenomicVariant] = deque()
+            if min_limit_pos < 0:
+                min_limit_pos = 0
+            for current_ref_pos in range(min_limit_pos, max_limit_pos):
+                ref_pos_indels: list[CalledGenomicVariant] = called_indels.get(reference_pos, None)
+                if ref_pos_indels is None:
+                    continue
+                for called_indel in ref_pos_indels:
+                    if called_indel.somatic_variation_type == SomaticVariationType.TUMORAL_NORMAL_VARIANT:
+                        calls_to_diffuse.append(called_indel)
+                    else:
+                        if called_indel.is_candidate_for_diffusion():
+                            candidate_calls_to_link.append(called_indel)
+            while candidate_calls_to_link:
+                tested_indel = candidate_calls_to_link.popleft()
+                for diffusing_indel in calls_to_diffuse:
+                    if diffusing_indel.calculate_distance_to_another(tested_indel) < DIFFUSION_DISTANCE_LIMIT:
+                        for read_id, pos_in_read in tested_indel.supporting_reads:
+                            diffusing_indel.add_supporting_read(read_id, pos_in_read)
+                        tested_indel.set_link_to_another_germline()

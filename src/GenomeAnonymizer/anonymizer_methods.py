@@ -430,7 +430,9 @@ class CompleteGermlineAnonymizer:
 
     def anonymize(self, validated_source_variant: CalledGenomicVariant, tumor_normal_pileup, ref_genome,
                   stats_recorder=None) -> Generator[Tuple[AnonymizedRead, AnonymizedRead], None, None]:
-        called_genomic_variants = {}
+        called_snvs: dict[int, list[CalledGenomicVariant]] = dict()
+        called_indels: dict[int, list[CalledGenomicVariant]] = dict()
+        called_svs: dict[int, list[CalledGenomicVariant]] = dict()
         start0 = timer()
         to_yield_anonymized_reads: Dict[str, int] = dict()
         # pileup_pair_iter = get_pileup_pair_in_order(tumor_reads_pileup, normal_reads_pileup)
@@ -446,7 +448,7 @@ class CompleteGermlineAnonymizer:
                 is_in_normal = dataset_idx == DATASET_IDX_NORMAL
                 start1 = timer()
                 classify_variation_in_pileup_column(pileup_column, dataset_idx, seen_read_alns, ref_genome,
-                                                    called_genomic_variants)
+                                                    called_snvs, called_indels)
                 end1 = timer()
                 # logging.debug(f"Classify variation time: {end1 - start1}")
                 DEBUG_TOTAL_TIMES['classify_variants'] += end1 - start1
@@ -474,11 +476,13 @@ class CompleteGermlineAnonymizer:
                                                                         aln.reference_end)
                 if is_in_normal:
                     pos = pileup_column.reference_pos
-                    variants_in_column: List[CalledGenomicVariant] = called_genomic_variants.get(pos)
-                    if variants_in_column is not None:
+                    # variants_in_column: List[CalledGenomicVariant] = called_genomic_variants.get(pos)
+                    snvs_in_column = called_snvs.get(pos)
+                    indels_in_column = called_indels.get(pos)
+                    if snvs_in_column is not None or indels_in_column is not None:
                         start2 = timer()
-                        self.mask_germline_snvs(variants_in_column, validated_source_variant,
-                                                stats_recorder=stats_recorder)
+                        self.mask_germline_variants(snvs_in_column, indels_in_column, validated_source_variant,
+                                                    stats_recorder=stats_recorder)
                         end2 = timer()
                         # logging.debug(f"Mask germline snvs time: {end2 - start2}")
                         DEBUG_TOTAL_TIMES['mask_germline_snvs'] += end2 - start2
@@ -530,17 +534,23 @@ class CompleteGermlineAnonymizer:
         self.reset()
         # self.has_anonymized_reads = True
 
-    def mask_germline_snvs(self, variants_in_column: List[CalledGenomicVariant], variant_to_keep, stats_recorder=None):
+    def mask_germline_variants(self, snvs_in_column: List[CalledGenomicVariant], indels_in_column: List[CalledGenomicVariant], variant_to_keep, stats_recorder=None):
         """Mask all germline SNVs and save the information from incomplete pairs and other variants to mask after"""
-        for called_variant in variants_in_column:
-            if (called_variant.somatic_variation_type == SomaticVariationType.TUMORAL_NORMAL_VARIANT
-                    and (variant_to_keep is None or called_variant != variant_to_keep)):
-                for specific_read_id, var_read_pos in called_variant.supporting_reads.items():
-                    read_id, pair = decode_specific_read_pair_name(specific_read_id)
-                    anonymized_read = self.anonymized_reads.get(read_id)[pair]
-                    if anonymized_read.is_supplementary or called_variant.variant_type != VariantType.SNV:
-                        anonymized_read.add_left_over_variant(var_read_pos, called_variant)
-                        continue
-                    anonymized_read.mask_or_modify_base_pair(var_read_pos, called_variant.ref_allele)
-                if stats_recorder is not None:
-                    stats_recorder.count_variant(called_variant)
+        variant_type_columns = []
+        if snvs_in_column is not None:
+            variant_type_columns.append(snvs_in_column)
+        if indels_in_column is not None:
+            variant_type_columns.append(indels_in_column)
+        for variants_in_column in variant_type_columns:
+            for called_variant in variants_in_column:
+                if (called_variant.somatic_variation_type == SomaticVariationType.TUMORAL_NORMAL_VARIANT
+                        and (variant_to_keep is None or called_variant != variant_to_keep)):
+                    for specific_read_id, var_read_pos in called_variant.supporting_reads.items():
+                        read_id, pair = decode_specific_read_pair_name(specific_read_id)
+                        anonymized_read = self.anonymized_reads.get(read_id)[pair]
+                        if anonymized_read.is_supplementary or called_variant.variant_type != VariantType.SNV:
+                            anonymized_read.add_left_over_variant(var_read_pos, called_variant)
+                            continue
+                        anonymized_read.mask_or_modify_base_pair(var_read_pos, called_variant.ref_allele)
+                    if stats_recorder is not None:
+                        stats_recorder.count_variant(called_variant)

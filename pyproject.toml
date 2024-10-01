@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "GenomeAnonymizer"
-version = "0.0.1"
+version = "0.0.2"
 description = ""
 authors = ["Nicolas Gaitan <ngaitan55@gmail.com>"]
 readme = "README.md"
