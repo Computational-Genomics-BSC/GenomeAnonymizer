@@ -1,6 +1,6 @@
 package io;
 
-import GenomicElements.PairedPileup;
+import genomicelements.PairedPileup;
 import htsjdk.samtools.SAMFileHeader;
 import htsjdk.samtools.SamReader;
 import htsjdk.samtools.SamReaderFactory;
@@ -15,6 +15,8 @@ import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.function.Consumer;
 
+import static utils.Operations.compare;
+
 /**
 * Simple read mapping reader to get paired pileups from tumor normal samples,
 * only from positions covered in both alignment files
@@ -27,6 +29,7 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
 
     private SAMFileHeader normalSamHeader;
     private SAMFileHeader tumorSamHeader;
+    private String platform;
     private SamLocusIterator iterTumor;
     private SamLocusIterator iterNormal;
     // private Iterator<PairedPileup> ;
@@ -46,18 +49,20 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         tumorSamFactory.referenceSequence(referenceGenome);
         SamReader normalSamReader = tumorSamFactory.open(normalFile);
         SamReader tumorSamReader = tumorSamFactory.open(tumorFile);
-            normalSamHeader = normalSamReader.getFileHeader();
-            tumorSamHeader = tumorSamReader.getFileHeader();
-            if (intervals != null){
-                iterTumor = new SamLocusIterator(tumorSamReader, intervals);
-                iterNormal = new SamLocusIterator(normalSamReader, intervals);
-            }
-            else{
-                iterTumor = new SamLocusIterator(tumorSamReader);
-                iterNormal = new SamLocusIterator(normalSamReader);
-            }
-            setFilteringForSAMIterators(iterNormal);
-            setFilteringForSAMIterators(iterTumor);
+        normalSamHeader = normalSamReader.getFileHeader();
+        tumorSamHeader = tumorSamReader.getFileHeader();
+        // This is temporary, as it relies on all read groups having the same information
+        platform = normalSamHeader.getReadGroups().get(0).getPlatform();
+        if (intervals != null){
+            iterTumor = new SamLocusIterator(tumorSamReader, intervals);
+            iterNormal = new SamLocusIterator(normalSamReader, intervals);
+        }
+        else{
+            iterTumor = new SamLocusIterator(tumorSamReader);
+            iterNormal = new SamLocusIterator(normalSamReader);
+        }
+        setFilteringForSAMIterators(iterNormal);
+        setFilteringForSAMIterators(iterTumor);
     }
 
     private void setFilteringForSAMIterators(SamLocusIterator iterator){
@@ -129,6 +134,35 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
             return currentPileup;
         }
 
+//        /**
+//         * <pre> Pileups must pertain to positions in the same sequence </pre>
+//         * @return currentPileup
+//         */
+//        private PairedPileup getNextOrAdvance() {
+//            PairedPileup currentPileup;
+//            while(true){
+//                if(nextNormalLocus == null || nextTumorLocus == null){
+//                    currentPileup = null;
+//                    break;
+//                }
+//                else{
+//                    if (nextNormalLocus.getPosition() < nextTumorLocus.getPosition()){
+//                        nextNormalLocus = iterNormal.next();
+//                    }
+//                    else if(nextNormalLocus.getPosition() > nextTumorLocus.getPosition()){
+//                        nextTumorLocus = iterTumor.next();
+//                    }
+//                    else{
+//                        currentPileup = new PairedPileup(nextNormalLocus, nextTumorLocus);
+//                        nextNormalLocus = iterNormal.next();
+//                        nextTumorLocus = iterTumor.next();
+//                        break;
+//                    }
+//                }
+//            }
+//            return currentPileup;
+//        }
+
         /**
          * <pre> Pileups must pertain to positions in the same sequence </pre>
          * @return currentPileup
@@ -141,10 +175,12 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
                     break;
                 }
                 else{
-                    if (nextNormalLocus.getPosition() < nextTumorLocus.getPosition()){
+                    int cmp = compare(nextNormalLocus.getSequenceIndex(), nextNormalLocus.getPosition(), nextNormalLocus.getEnd(),
+                            nextTumorLocus.getSequenceIndex(), nextTumorLocus.getPosition(), nextTumorLocus.getEnd());
+                    if (cmp < -1){
                         nextNormalLocus = iterNormal.next();
                     }
-                    else if(nextNormalLocus.getPosition() > nextTumorLocus.getPosition()){
+                    else if(cmp > 1){
                         nextTumorLocus = iterTumor.next();
                     }
                     else{

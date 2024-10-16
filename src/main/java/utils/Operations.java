@@ -1,4 +1,4 @@
-package Utils;
+package utils;
 
 /**
  * Holder class for functions to operate on genomic elements, such as reads or variants

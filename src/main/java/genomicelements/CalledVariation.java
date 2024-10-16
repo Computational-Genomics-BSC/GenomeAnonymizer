@@ -1,26 +1,30 @@
-package GenomicElements;
+package genomicelements;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
-import java.util.EnumSet;
-
-import static Utils.Operations.estimateEuclideanDistance;
+import static utils.Operations.estimateEuclideanDistance;
 
 public class CalledVariation {
+    public static final String GENERIC_TYPE_SNV = "SNV";
+    public static final String GENERIC_TYPE_INDEL = "INDEL";
+    public static final String GENERIC_TYPE_SV = "SV";
+
     private String seqName;
     private int pos;
     private int end;
     private VariantType variantType;
     private int length;
-    private String allele;
-    private String refAllele;
+    private byte[] allele;
+    private byte[] refAllele;
     private SomaticVariationType somaticVariationType;
     private boolean hasDiffused;
     private boolean isLinkedToAnotherGermline;
     private Map<String, Integer> supportingReads;
 
-    public CalledVariation(String seqName, int pos, int end, VariantType varType, int length, String allele, String refAllele) {
+    public CalledVariation(String seqName, int pos, int end, VariantType varType, int length, byte[] allele, byte[] refAllele) {
         this.seqName = seqName;
         this.pos = pos;
         this.end = end;
@@ -66,6 +70,10 @@ public class CalledVariation {
         return estimateEuclideanDistance(this.pos, this.end, this.length, variant2.pos, variant2.end, variant2.length);
     }
 
+    public int getInReadPosition(AnonymizedRead anonRead){
+        return supportingReads.get(anonRead.getUniqueReadName());
+    }
+
     public String getSeqName() {
         return seqName;
     }
@@ -82,27 +90,31 @@ public class CalledVariation {
         return variantType;
     }
 
-    public void setVariantType(VariantType variantType) {
-        this.variantType = variantType;
-    }
-
     public int getLength() {
         return length;
     }
 
-    public String getAllele() {
+    public byte[] getAllele() {
         return allele;
     }
 
-    public void setAllele(String allele) {
-        this.allele = allele;
-    }
-
-    public String getRefAllele() {
+    public byte[] getRefAllele() {
         return refAllele;
     }
 
-    public void setRefAllele(String refAllele) {
+    public Map<String, Integer> getSupportingReads() {
+        return supportingReads;
+    }
+
+    public void setVariantType(VariantType variantType) {
+        this.variantType = variantType;
+    }
+
+    public void setAllele(byte[] allele) {
+        this.allele = allele;
+    }
+
+    public void setRefAllele(byte[] refAllele) {
         this.refAllele = refAllele;
     }
 
@@ -117,42 +129,52 @@ public class CalledVariation {
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;
-        if (!(obj instanceof CalledVariation var2)) return false;
-        return seqName.equals(var2.seqName) &&
-                variantType.equals(var2.variantType) &&
-                pos == var2.pos &&
-                end == var2.end &&
-                length == var2.length &&
-                allele.equals(var2.allele);
+        if (obj instanceof CalledVariation) {
+            CalledVariation var2 = (CalledVariation) obj;
+            return this.seqName.equals(var2.seqName) &&
+                    this.variantType.equals(var2.variantType) &&
+                    this.pos == var2.pos &&
+                    this.end == var2.end &&
+                    this.length == var2.length &&
+                    Arrays.equals(this.allele, var2.allele);
+        }
+        return false;
     }
 
     @Override
     public String toString() {
         return "seq_name: " + seqName + " pos: " + pos + " end: " + end + " var_type: " + variantType +
-                " length: " + length + " alt_allele: " + allele + " ref_allele: " + refAllele +
+                " length: " + length + " alt_allele: " + new String(allele, StandardCharsets.UTF_8) + " ref_allele: " + new String(refAllele, StandardCharsets.UTF_8) +
                 " somatic_variation_type: " + somaticVariationType;
     }
 
     public enum VariantType {
-        SNV(0),
-        DEL(1),
-        INS(2),
-        LARGE_DEL(11),
-        LARGE_INS(12),
-        DUP(3),
-        INV(4),
-        CNV(5),
-        TRA(6),
-        SGL(7);
+        SNV(0, "SNV"),
+        DEL(1, "DEL"),
+        INS(2, "INS"),
+        LARGE_DEL(11, "LARGE_DEL"),
+        LARGE_INS(12, "LARGE_INS"),
+        DUP(3, "DUP"),
+        INV(4, "INV"),
+        CNV(5, "CNV"),
+        TRA(6, "TRA"),
+        SGL(7, "SGL");
+
 
         private final int value;
+        private final String name;
 
-        VariantType(int value) {
+        VariantType(int value, String name) {
             this.value = value;
+            this.name = name;
         }
 
         public int getValue() {
             return value;
+        }
+
+        public String getName() {
+            return name;
         }
     }
 

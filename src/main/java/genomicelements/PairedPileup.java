@@ -1,4 +1,4 @@
-package GenomicElements;
+package genomicelements;
 
 import htsjdk.samtools.util.SamLocusIterator.RecordAndOffset;
 import htsjdk.samtools.util.SamLocusIterator.LocusInfo;
@@ -6,9 +6,6 @@ import htsjdk.samtools.util.SamLocusIterator.LocusInfo;
 import java.util.List;
 
 public class PairedPileup {
-
-    public static final String TUMORAL_DATASET = "TUMORAL_DATASET";
-    public static final String NORMAL_DATASET = "NORMAL_DATASET";
 
     private LocusInfo normalLocus;
     private LocusInfo tumorLocus;
