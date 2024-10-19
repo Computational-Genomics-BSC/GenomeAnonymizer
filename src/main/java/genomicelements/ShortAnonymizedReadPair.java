@@ -1,5 +1,6 @@
 package genomicelements;
 
+import htsjdk.samtools.SAMRecord;
 import htsjdk.samtools.fastq.FastqRecord;
 
 public class ShortAnonymizedReadPair implements AnonymizedReadContainer{
@@ -12,18 +13,20 @@ public class ShortAnonymizedReadPair implements AnonymizedReadContainer{
     ShortAnonymizedRead pair1 = null;
     ShortAnonymizedRead pair2 = null;
 
-    public ShortAnonymizedReadPair(ShortAnonymizedRead pair, boolean updatePairSequenceIfPossible) {
-        readName = pair.getReadName();
-        addOrUpdatePair(pair, updatePairSequenceIfPossible);
-    }
-
     public ShortAnonymizedReadPair(ShortAnonymizedRead pair) {
         readName = pair.getReadName();
         addOrUpdatePair(pair);
     }
 
+//    public ShortAnonymizedReadPair(SAMRecord samRecord) {
+//        ShortAnonymizedRead pair = new ShortAnonymizedRead(samRecord);
+//        readName = pair.getReadName();
+//        addOrUpdatePair(pair);
+//    }
+
     @Override
     public boolean isWriteable() {
+        if (!hasBothPairs()) return false;
         if (pair1.isSupplementaryOrSecondary() || pair2.isSupplementaryOrSecondary()) return false;
         if (!pair1.isAnonymized() || !pair2.isAnonymized()) return false;
         return true;
@@ -38,38 +41,33 @@ public class ShortAnonymizedReadPair implements AnonymizedReadContainer{
     }
 
     /**
-     * Add or update pair from a new-found pair. This version is to be called with updatePairSequenceIfPossible = true,
-     * for the anonymization phase
+     * Add or update pair from a new-found pair. To be called for the anonymization phase
      * @param pair
-     * @param updatePairSequenceIfPossible
-     * @return true if the pair was added or updated, false if not
+     * @return ShortAnonymizedRead same as parameter if it didnt exist, or the updated saved one
      */
-    public boolean addOrUpdatePair(ShortAnonymizedRead pair, boolean updatePairSequenceIfPossible){
+    public ShortAnonymizedRead addOrUpdatePair(ShortAnonymizedRead pair){
         int pairIdx = pair.getPairIdx();
         if(!hasPair(pairIdx)){
             addPair(pair);
-            return true;
+            return pair;
         }
         else{
-            if (updatePairSequenceIfPossible){
-                ShortAnonymizedRead savedPair = getPair(pairIdx);
-                if (savedPair.isSupplementaryOrSecondary() && !pair.isSupplementaryOrSecondary()){
-                    savedPair.setSequenceArray(pair.getSequenceArray(), pair.getQualitiesArray());
-                    return true;
-                }
+            ShortAnonymizedRead savedPair = getPair(pairIdx);
+            if (savedPair.isSupplementaryOrSecondary() && !pair.isSupplementaryOrSecondary()){
+                savedPair.setSequenceArray(pair.getSequenceArray(), pair.getQualitiesArray());
             }
+            return savedPair;
         }
-        return false;
     }
 
-    /**
-     * Add or update pair from a new-found pair. This version is to be called for the variation discovery phase
-     * @param pair
-     * @return true if the pair was added or updated, false if not
-     */
-    public boolean addOrUpdatePair(ShortAnonymizedRead pair){
-        return addOrUpdatePair(pair, false);
-    }
+//    /**
+//     * Add or update pair from a new-found pair. This version is to be called for the variation discovery phase
+//     * @param pair
+//     * @return true if the pair was added or updated, false if not
+//     */
+//    public boolean addOrUpdatePair(ShortAnonymizedRead pair){
+//        return addOrUpdatePair(pair, false);
+//    }
 
     public boolean hasBothPairs(){
         return (pair1 != null && pair2 != null);

@@ -8,17 +8,30 @@ import java.io.IOException;
 
 public class GenomeAnonymizer {
 
+    public final static String BAM_FILE = "BAM";
+    public final static String SAM_FILE = "SAM";
+    public final static String CRAM_FILE = "SAM";
 
-    public void run(String normalPath, String tumorPath, String refGenome, String algorithm, int nThreads) throws IOException {
+    public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed, String algorithm, int nThreads) throws IOException {
+        AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm);
+        long start1 = System.currentTimeMillis();
+        // TODO: Parallelize per chromosome, and then, per reads to anonymize
+        anonymizer.callVariation(normalPath, tumorPath, refGenome);
+        long end1 = System.currentTimeMillis();
+        System.out.println("Elapsed Time in seconds for variation calling: "+ (double) (end1-start1)/1000);
+        long start2 = System.currentTimeMillis();
+        anonymizer.anonymizeReads(normalPath, tumorPath, refGenome, outputPrefix, false);
+        long end2 = System.currentTimeMillis();
+        System.out.println("Elapsed Time in seconds for anonymization: "+ (double) (end2-start2)/1000);
+    }
+
+    private static AnonymizerAlgorithm getAnonymizer(String algorithm) {
         AnonymizerAlgorithm anonymizer = null;
         if (AnonymizerAlgorithm.SHORT_READ_ALGORITHM.equals(algorithm)) anonymizer = new ShortReadAnonymizer();
         //Try with intervals as chr for parallelization, then maybe chr chunks too
         // try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, intervals)
-        try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome);
-            IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(refGenome));) {
-            assert anonymizer != null: "No Anonymizer class impl was instantiated";
-            anonymizer.anonymizeReads(pairPileupReader, referenceWalker);
-        }
+        assert anonymizer != null: "No Anonymizer class impl was instantiated";
+        return anonymizer;
     }
 
     public static void main(String[] args) throws IOException {
@@ -35,8 +48,14 @@ public class GenomeAnonymizer {
 //        }
         long start2 = System.currentTimeMillis();
         GenomeAnonymizer appInstance = new GenomeAnonymizer();
-        appInstance.run(normalPath, tumorPath, refGenome, AnonymizerAlgorithm.SHORT_READ_ALGORITHM, 1);
+        appInstance.run(normalPath, tumorPath, refGenome, removeSuffixIfExists(normalPath, BAM_FILE), false, AnonymizerAlgorithm.SHORT_READ_ALGORITHM, 1);
         long end2 = System.currentTimeMillis();
-        System.out.println("Elapsed Time in seconds: "+ (double) (end2-start2)/1000);
+        System.out.println("Total execution Time in seconds: "+ (double) (end2-start2)/1000);
+    }
+
+    private static String removeSuffixIfExists(String key, String suffix) {
+        return key.endsWith(suffix)
+                ? key.substring(0, key.length() - suffix.length())
+                : key;
     }
 }

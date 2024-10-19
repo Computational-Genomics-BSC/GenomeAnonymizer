@@ -4,6 +4,7 @@ import htsjdk.samtools.SAMRecord;
 import htsjdk.samtools.fastq.FastqRecord;
 import htsjdk.samtools.util.Locatable;
 
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 import static analysis.VariationClassifier.getShortReadPairName;
@@ -34,18 +35,17 @@ public class ShortAnonymizedRead implements AnonymizedRead{
         variantsToAnonymize = new HashMap<>();
     }
 
-    public ShortAnonymizedRead fromSAMRecord(SAMRecord samRec, boolean updateSequenceIfPossible) {
-        ShortAnonymizedRead instance = new ShortAnonymizedRead(samRec.getReadName(), samRec.getContig(), samRec.getStart(), samRec.getEnd());
+    public ShortAnonymizedRead(SAMRecord samRec) {
+        new ShortAnonymizedRead(samRec.getReadName(), samRec.getContig(), samRec.getStart(), samRec.getEnd());
         int pairIdx = samRec.getFirstOfPairFlag() ? PAIR_1_IDX : PAIR_2_IDX;
-        instance.setPair(pairIdx);
+        this.setPair(pairIdx);
         isSupplementaryOrSecondary = samRec.isSecondaryOrSupplementary();
-        if (updateSequenceIfPossible && !isSupplementaryOrSecondary) setSequenceArray(samRec);
-        return instance;
+        if (!isSupplementaryOrSecondary) setSequenceArray(samRec);
     }
 
-    public ShortAnonymizedRead fromSAMRecord(SAMRecord samRec) {
-        return fromSAMRecord(samRec, false);
-    }
+//    public ShortAnonymizedRead fromSAMRecord(SAMRecord samRec) {
+//        return new ShortAnonymizedRead(samRec, false);
+//    }
 
     @Override
     public void anonymizeVariantsInRead() {
@@ -88,7 +88,12 @@ public class ShortAnonymizedRead implements AnonymizedRead{
 
     private int modifyIndel(int inReadPosition, CalledVariation var) {
         int addedOffset = 0;
+        if (CalledVariation.VariantType.INS.equals(var.getVariantType())){
 
+        }
+        if (CalledVariation.VariantType.INS.equals(var.getVariantType())){
+
+        }
         return addedOffset;
     }
 
@@ -134,7 +139,17 @@ public class ShortAnonymizedRead implements AnonymizedRead{
         return pair;
     }
 
+    public boolean addAllVariantsToAnonymize(List<CalledVariation> variations){
+        boolean added = false;
+        for (CalledVariation var : variations){
+            added = addVariantToAnonymize(var);
+            if (!added) return false;
+        }
+        return added;
+    }
+
     public boolean addVariantToAnonymize(CalledVariation variation){
+        // Can change when dealing with SVs
         String varType = CalledVariation.VariantType.SNV.equals(variation.getVariantType()) ?
                 CalledVariation.GENERIC_TYPE_SNV : CalledVariation.GENERIC_TYPE_INDEL;
         List<CalledVariation> variationPerType = variantsToAnonymize.computeIfAbsent(varType,
@@ -166,10 +181,23 @@ public class ShortAnonymizedRead implements AnonymizedRead{
         return isAnonymized;
     }
 
+    public boolean variantsToAnonymizeIsEmpty(){
+        return variantsToAnonymize.isEmpty();
+    }
+
     @Override
     public FastqRecord getFastqRecord() {
+        String name = this.readName;
+        String readSequence = new String(sequenceArray, StandardCharsets.UTF_8);
+        String qualitySequence = new String(qualitiesArray, StandardCharsets.UTF_8);
+        String comment = "";
+        return new FastqRecord(name, readSequence, qualitySequence, comment);
+    }
 
-        return null;
+    public void updateIfPossible(SAMRecord samRecord){
+        if(isSupplementaryOrSecondary && !samRecord.isSecondaryOrSupplementary()){
+            setSequenceArray(samRecord);
+        }
     }
 
     /**
@@ -194,6 +222,10 @@ public class ShortAnonymizedRead implements AnonymizedRead{
 
     public void setPair(int pair){
         this.pair = pair;
+    }
+
+    public void setVariantsToAnonymize(Map<String, List<CalledVariation>> variantsToAnonymize) {
+        this.variantsToAnonymize = variantsToAnonymize;
     }
 
     // TODO: Fix these methods

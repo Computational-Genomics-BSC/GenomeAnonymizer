@@ -164,7 +164,7 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
 //        }
 
         /**
-         * <pre> Pileups must pertain to positions in the same sequence </pre>
+         *
          * @return currentPileup
          */
         private PairedPileup getNextOrAdvance() {
