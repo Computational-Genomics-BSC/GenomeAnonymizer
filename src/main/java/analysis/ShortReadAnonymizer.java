@@ -9,6 +9,7 @@ import htsjdk.samtools.fastq.FastqRecord;
 import htsjdk.samtools.fastq.FastqWriter;
 import htsjdk.samtools.fastq.FastqWriterFactory;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
+import htsjdk.samtools.util.SequenceUtil;
 import io.SamplePairReadAlignmentReader;
 
 import java.io.File;
@@ -31,11 +32,19 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     // Map collecting to-be-anonymized reads while they can be masked and written
     Map<String, ShortAnonymizedReadPair> anonReadContainer;
     Set<String> anonReadNames;
+    File[][] outputFiles;
+    FastqWriter[][] writers;
+    boolean removeUnmapped;
+    boolean writersAreOpen;
 
     public ShortReadAnonymizer() {
         anonReadContainer = new HashMap<>();
         potentialGermlinesPerAnonRead = new HashMap<>();
         anonReadNames = new HashSet<>();
+        outputFiles = new File[OUTPUT_FILE_NUMBER/2][OUTPUT_FILE_NUMBER/2];
+        writers = new FastqWriter[OUTPUT_FILE_NUMBER/2][OUTPUT_FILE_NUMBER/2];
+        removeUnmapped = true;
+        writersAreOpen = false;
     }
 
     @Override
@@ -71,7 +80,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
             for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
                 String[] keyElems = entry.getKey().split(READ_PAIR_NAME_SEPARATOR);
                 String readName = keyElems[0];
-                int pairIdx = Integer.parseInt(keyElems[0]);
+                int pairIdx = Integer.parseInt(keyElems[1]);
                 Map<Integer, List<CalledVariation>> potentialGermlinesInReadPair = potentialGermlinesPerAnonRead.computeIfAbsent(readName, v -> new HashMap<>());
                 List<CalledVariation> potentialGermlinesInRead = potentialGermlinesInReadPair.computeIfAbsent(pairIdx, v -> new ArrayList<>());
                 potentialGermlinesInRead.add(var);
@@ -84,62 +93,94 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
 
     @Override
     public void anonymizeReads(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed) throws IOException {
-        FastqWriter[][] writers = null;
-        IndexedFastaSequenceFile referenceWalker = null;
+        //IndexedFastaSequenceFile referenceWalker = null;
         SamReader normalSamReader = null;
         SamReader tumoralSamReader = null;
         try {
             //Open streams and anonymize
-            referenceWalker = new IndexedFastaSequenceFile(new File(refGenome));
+            //referenceWalker = new IndexedFastaSequenceFile(new File(refGenome));
             SamReaderFactory factory = SamReaderFactory.makeDefault();
             normalSamReader = factory.open(new File(normalPath));
             tumoralSamReader = factory.open(new File(tumorPath));
-            FastqWriterFactory[][] factories = new FastqWriterFactory[OUTPUT_FILE_NUMBER / 2][OUTPUT_FILE_NUMBER / 2];
             writers = new FastqWriter[OUTPUT_FILE_NUMBER / 2][OUTPUT_FILE_NUMBER / 2];
-            openOutputStreams(outputPrefix, compressed, factories, writers);
-            anonymizeReadsInFile(normalSamReader, writers,true);
-            anonymizeReadsInFile(tumoralSamReader, writers,false);
+            createOutputStreams(outputPrefix, compressed);
+            anonymizeReadsInFile(normalSamReader, true);
+            anonymizeReadsInFile(tumoralSamReader, false);
+            writeUnmodifiedReads(normalPath, tumorPath, outputPrefix, compressed);
         } finally {
             // Close every stream
-            assert referenceWalker != null;
+            //assert referenceWalker != null;
             assert writers != null;
-            referenceWalker.close();
+            //referenceWalker.close();
             normalSamReader.close();
             tumoralSamReader.close();
-            closeOutputStreams(writers);
+            closeOutputStreams();
         }
     }
 
     /**
      *
      * @param samReader
-     * @param writers
      * @param isNormalDataset
-     * @param removeUnmapped
      */
-    private void anonymizeReadsInFile(SamReader samReader, FastqWriter[][] writers, boolean isNormalDataset, boolean removeUnmapped) {
+    private void anonymizeReadsInFile(SamReader samReader, boolean isNormalDataset) {
         for (SAMRecord samRecord : samReader){
             String readName = samRecord.getReadName();
             if ((removeUnmapped && samRecord.getReadUnmappedFlag()) || !potentialGermlinesPerAnonRead.containsKey(readName)) continue;
+            // DEBUG
+            if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498")) System.out.println("# Found after first filter");
+            // DEBUG
             ShortAnonymizedRead anonRead = new ShortAnonymizedRead(samRecord);
             ShortAnonymizedReadPair pair;
             if (!anonReadContainer.containsKey(readName)){
                 pair = new ShortAnonymizedReadPair(anonRead);
                 anonReadContainer.put(readName, pair);
+                // DEBUG
+                if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498")) System.out.println("# Added first time");
+                // DEBUG
             }
             else{
                 pair = anonReadContainer.get(readName);
                 anonRead = pair.addOrUpdatePair(anonRead);
+                // DEBUG
+                if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498")) System.out.println("# Added second time");
+                // DEBUG
             }
             int pairIdx = anonRead.getPairIdx();
             List<CalledVariation> variantsToAnonymizeInRead = potentialGermlinesPerAnonRead.get(readName).getOrDefault(pairIdx, new ArrayList<>());
+            // DEBUG
+            if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498")) {
+                System.out.println("# Variants to anonymize in read pair=" + (pairIdx+1) + " n=" + variantsToAnonymizeInRead.size());
+            }
+            // DEBUG
             if (anonRead.variantsToAnonymizeIsEmpty() && !variantsToAnonymizeInRead.isEmpty()) anonRead.addAllVariantsToAnonymize(variantsToAnonymizeInRead);
+            // DEBUG
+            if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498") && pairIdx==1) {
+                System.out.println("# SNVs to anonymize: " + anonRead.getVariantsToAnonymize().get("SNV").size());
+                //System.out.println("# INDELs to anonymize: " + anonRead.getVariantsToAnonymize().get("INDEL").size());
+            }
+            // DEBUG
             anonRead.updateIfPossible(samRecord);
             if(!anonRead.isSupplementaryOrSecondary()) {
                 anonRead.anonymizeVariantsInRead();
+                // DEBUG
+                if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498") && pairIdx==1) {
+                    System.out.println("# Variants anonymized pair2: " + anonRead.isAnonymized());
+                    //System.out.println("# INDELs to anonymize: " + anonRead.getVariantsToAnonymize().get("INDEL").size());
+                }
+                if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498") && pairIdx==0) {
+                    System.out.println("# Variants anonymized pair1: " + anonRead.isAnonymized());
+                    //System.out.println("# INDELs to anonymize: " + anonRead.getVariantsToAnonymize().get("INDEL").size());
+                }
+                // DEBUG
             }
+            // DEBUG
+            if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498")) {
+                System.out.println("# Read pair " + pair.getReadName() + " is writable=" + pair.isWriteable());
+            }
+            // DEBUG
             if (pair.isWriteable()){
-                writeFastqRecord(pair, writers, isNormalDataset);
+                writeFastqRecord(pair, isNormalDataset);
                 potentialGermlinesPerAnonRead.remove(readName);
                 anonReadContainer.remove(readName);
                 anonReadNames.add(readName);
@@ -147,8 +188,33 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         }
     }
 
-    private void anonymizeReadsInFile(SamReader samReader, FastqWriter[][] writers, boolean isNormalDataset) {
-        anonymizeReadsInFile(samReader, writers, isNormalDataset, true);
+    public void writeUnmodifiedReads(String normalPath, String tumorPath, String outputPrefix, boolean compressed) throws IOException{
+        if(!writersAreOpen) openOutputStreams();
+        SamReaderFactory factory = SamReaderFactory.makeDefault();
+        try(SamReader normalSamReader = factory.open(new File(normalPath));
+            SamReader tumoralSamReader = factory.open(new File(tumorPath));){
+            handleUnmodifiedReadsInFile(normalSamReader, true);
+            handleUnmodifiedReadsInFile(tumoralSamReader, false);
+        }
+        finally {
+            closeOutputStreams();
+        }
+    }
+
+    private void handleUnmodifiedReadsInFile(SamReader samReader, boolean isNormalDataset){
+        Map<String, SAMRecord[]> unmodifiedReadsContainer = new HashMap<>();
+        int datasetIdx = isNormalDataset ? NORMAL_DATASET_IDX : TUMORAL_DATASET_IDX;
+        for (SAMRecord samRecord : samReader){
+            String readName = samRecord.getReadName();
+            if ((removeUnmapped && samRecord.getReadUnmappedFlag()) || anonReadNames.contains(readName) || samRecord.isSecondaryOrSupplementary()) continue;
+            SAMRecord[] arrayPair = unmodifiedReadsContainer.computeIfAbsent(readName, v -> new SAMRecord[2]);
+            int pairIdx = samRecord.getFirstOfPairFlag() ? PAIR_1_IDX : PAIR_2_IDX;
+            arrayPair[pairIdx] = samRecord;
+            if(arrayPair[PAIR_1_IDX] != null && arrayPair[PAIR_2_IDX] != null){
+                writeFastqRecord(arrayPair, isNormalDataset);
+                unmodifiedReadsContainer.remove(readName);
+            }
+        }
     }
 
     @Override
@@ -161,33 +227,72 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
 //        anonReadContainer.putIfAbsent(readName, newAnonRead);
 //    }
 
-    private void writeFastqRecord(ShortAnonymizedReadPair pairToWrite, FastqWriter[][] writers, boolean isNormalDataset){
+    private void writeFastqRecord(ShortAnonymizedReadPair pairToWrite, boolean isNormalDataset){
         int datasetIdx = isNormalDataset ? NORMAL_DATASET_IDX : TUMORAL_DATASET_IDX;
         FastqRecord[] fqRecords = pairToWrite.getFastqRecords();
         writers[datasetIdx][PAIR_1_IDX].write(fqRecords[PAIR_1_IDX]);
         writers[datasetIdx][PAIR_2_IDX].write(fqRecords[PAIR_2_IDX]);
     }
 
-    private void openOutputStreams(String prefix, boolean compressed, FastqWriterFactory[][] factories, FastqWriter[][] writers) throws IOException{
-        factories[NORMAL_DATASET_IDX][PAIR_1_IDX] = new FastqWriterFactory();
-        factories[NORMAL_DATASET_IDX][PAIR_2_IDX] = new FastqWriterFactory();
-        factories[TUMORAL_DATASET_IDX][PAIR_1_IDX] = new FastqWriterFactory();
-        factories[TUMORAL_DATASET_IDX][PAIR_2_IDX] = new FastqWriterFactory();
+    private void writeFastqRecord(SAMRecord[] pairToWrite, boolean isNormalDataset){
+        int datasetIdx = isNormalDataset ? NORMAL_DATASET_IDX : TUMORAL_DATASET_IDX;
+        String comment = "";
+        FastqRecord[] fqRecords = new FastqRecord[2];
+        fqRecords[PAIR_1_IDX] = getFastqRecordFromSamRecord(pairToWrite[PAIR_1_IDX]);
+        fqRecords[PAIR_2_IDX] = getFastqRecordFromSamRecord(pairToWrite[PAIR_2_IDX]);
+        writers[datasetIdx][PAIR_1_IDX].write(fqRecords[PAIR_1_IDX]);
+        writers[datasetIdx][PAIR_2_IDX].write(fqRecords[PAIR_2_IDX]);
+    }
+
+    private FastqRecord getFastqRecordFromSamRecord(SAMRecord samRec){
+        byte[] sequenceArray = samRec.getReadBases().clone();
+        byte[] qualitiesArray = samRec.getBaseQualities().clone();
+        if (samRec.getReadNegativeStrandFlag()){
+            SequenceUtil.reverseComplement(sequenceArray);
+            SequenceUtil.reverseQualities(qualitiesArray);
+        }
+        String name = samRec.getReadName();
+        //String readSequence = new String(sequenceArray, StandardCharsets.UTF_8);
+        //String qualitySequence = new String(qualitiesArray, StandardCharsets.UTF_8);
+        String comment = "";
+        return new FastqRecord(name, sequenceArray, comment, qualitiesArray);
+    }
+
+    private void createOutputStreams(String prefix, boolean compressed) throws IOException{
         File normalPair1File = new File(getFastqOutputName(prefix, NORMAL_DATASET_IDX, PAIR_1_IDX, compressed));
         File normalPair2File = new File(getFastqOutputName(prefix, NORMAL_DATASET_IDX, PAIR_2_IDX, compressed));
         File tumoralPair1File = new File(getFastqOutputName(prefix, TUMORAL_DATASET_IDX, PAIR_1_IDX, compressed));
         File tumoralPair2File = new File(getFastqOutputName(prefix, TUMORAL_DATASET_IDX, PAIR_2_IDX, compressed));
-        writers[NORMAL_DATASET_IDX][PAIR_1_IDX] = factories[NORMAL_DATASET_IDX][PAIR_1_IDX].newWriter(normalPair1File);
-        writers[NORMAL_DATASET_IDX][PAIR_2_IDX] = factories[NORMAL_DATASET_IDX][PAIR_2_IDX].newWriter(normalPair2File);
-        writers[TUMORAL_DATASET_IDX][PAIR_1_IDX] = factories[TUMORAL_DATASET_IDX][PAIR_1_IDX].newWriter(tumoralPair1File);
-        writers[TUMORAL_DATASET_IDX][PAIR_2_IDX] = factories[TUMORAL_DATASET_IDX][PAIR_2_IDX].newWriter(tumoralPair2File);
+        outputFiles[NORMAL_DATASET_IDX][PAIR_1_IDX] = normalPair1File;
+        outputFiles[NORMAL_DATASET_IDX][PAIR_2_IDX] = normalPair2File;
+        outputFiles[TUMORAL_DATASET_IDX][PAIR_1_IDX] = tumoralPair1File;
+        outputFiles[TUMORAL_DATASET_IDX][PAIR_2_IDX] = tumoralPair2File;
+        openOutputStreams();
     }
 
-    private void closeOutputStreams(FastqWriter[][] writers){
+    private void openOutputStreams() throws IOException {
+        if(writersAreOpen) return;
+        FastqWriterFactory factory = new FastqWriterFactory();
+        writers[NORMAL_DATASET_IDX][PAIR_1_IDX] = factory.newWriter(outputFiles[NORMAL_DATASET_IDX][PAIR_1_IDX]);
+        writers[NORMAL_DATASET_IDX][PAIR_2_IDX] = factory.newWriter(outputFiles[NORMAL_DATASET_IDX][PAIR_2_IDX]);
+        writers[TUMORAL_DATASET_IDX][PAIR_1_IDX] = factory.newWriter(outputFiles[TUMORAL_DATASET_IDX][PAIR_1_IDX]);
+        writers[TUMORAL_DATASET_IDX][PAIR_2_IDX] = factory.newWriter(outputFiles[TUMORAL_DATASET_IDX][PAIR_2_IDX]);
+        writersAreOpen = true;
+    }
+
+//    private void createOutputStreams() throws IOException{
+//        writers[NORMAL_DATASET_IDX][PAIR_1_IDX].;
+//        writers[NORMAL_DATASET_IDX][PAIR_2_IDX] = factory.newWriter(normalPair2File);
+//        writers[TUMORAL_DATASET_IDX][PAIR_1_IDX] = factory.newWriter(tumoralPair1File);
+//        writers[TUMORAL_DATASET_IDX][PAIR_2_IDX] = factory.newWriter(tumoralPair2File);
+//    }
+
+    private void closeOutputStreams(){
         writers[NORMAL_DATASET_IDX][PAIR_1_IDX].close();
         writers[NORMAL_DATASET_IDX][PAIR_2_IDX].close();
         writers[TUMORAL_DATASET_IDX][PAIR_1_IDX].close();
         writers[TUMORAL_DATASET_IDX][PAIR_2_IDX].close();
+        writersAreOpen = false;
     }
 
     public String getFastqOutputName(String outputPrefix, int datasetIdx, int pairIdx, boolean compressed){
@@ -195,6 +300,14 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         String pairIdxStr = pairIdx == PAIR_1_IDX ? ".1" : ".2";
         String extension = compressed ? ".fastq.gz" : ".fastq";
         return outputPrefix + datasetIdStr + pairIdxStr + extension;
+    }
+
+    /**
+     * Must be set before calling any public method
+     * @param removeUnmapped
+     */
+    public void setRemoveUnmapped(boolean removeUnmapped){
+        this.removeUnmapped = removeUnmapped;
     }
 
     // DEBUG

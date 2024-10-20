@@ -8,12 +8,13 @@ import java.io.IOException;
 
 public class GenomeAnonymizer {
 
-    public final static String BAM_FILE = "BAM";
-    public final static String SAM_FILE = "SAM";
-    public final static String CRAM_FILE = "SAM";
+    public final static String BAM_FILE = ".bam";
+    public final static String SAM_FILE = ".sam";
+    public final static String CRAM_FILE = ".cram";
 
     public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed, String algorithm, int nThreads) throws IOException {
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm);
+        //anonymizer.setRemoveUnmapped(false);
         long start1 = System.currentTimeMillis();
         // TODO: Parallelize per chromosome, and then, per reads to anonymize
         anonymizer.callVariation(normalPath, tumorPath, refGenome);
@@ -23,6 +24,10 @@ public class GenomeAnonymizer {
         anonymizer.anonymizeReads(normalPath, tumorPath, refGenome, outputPrefix, false);
         long end2 = System.currentTimeMillis();
         System.out.println("Elapsed Time in seconds for anonymization: "+ (double) (end2-start2)/1000);
+        //long start3 = System.currentTimeMillis();
+        //anonymizer.writeUnmodifiedReads(normalPath, tumorPath, outputPrefix, false);
+        //long end3 = System.currentTimeMillis();
+        //System.out.println("Elapsed Time in seconds for retrieving missing reads: "+ (double) (end2-start2)/1000);
     }
 
     private static AnonymizerAlgorithm getAnonymizer(String algorithm) {
