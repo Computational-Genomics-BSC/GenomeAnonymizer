@@ -101,9 +101,9 @@ public class VariationClassifier {
         for (CigarElement cigarElement : cigarElems){
             CigarOperator op = cigarElement.getOperator();
             if (op.isIndel()){
-                int currentRefPos = initRefPos + currentCigarLength;
+                int currentRefPos = initRefPos + currentCigarLength-1;
                 int inReadPos = readConsumedBaseNumber;// + currentCigarLength;
-                int length = cigarElement.getLength();
+                int length = cigarElement.getLength()+1;
                 VariantType indelType;
                 int vcfStdEnd;
                 int inRefend;
@@ -112,7 +112,7 @@ public class VariationClassifier {
                     indelType = VariantType.INS;
                     inRefend = currentRefPos;// + 1;
                     vcfStdEnd = inRefend + 1;
-                    inReadEnd = inReadPos + length;
+                    inReadEnd = inReadPos + length - 1;
                 }
                 else{
                     indelType = VariantType.DEL;

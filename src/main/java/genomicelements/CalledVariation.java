@@ -1,5 +1,7 @@
 package genomicelements;
 
+import htsjdk.variant.variantcontext.VariantContext;
+
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -36,6 +38,29 @@ public class CalledVariation {
         this.hasDiffused = false;
         this.isLinkedToAnotherGermline = false;
         this.supportingReads = new HashMap<>();
+    }
+
+    /**
+     * Constructor to create a CalledVarition object from the fields in a VariantContext from a VCF file
+     * @param varContext
+     */
+    public CalledVariation(VariantContext varContext){
+        this(varContext.getContig(), varContext.getStart(), varContext.getEnd(), VariantType.SNV, varContext.getLengthOnReference(),
+                varContext.getAlternateAllele(0).getBases(), new byte[0]);
+        this.setVariantType(getTypeFromVarContext(varContext));
+        this.somaticVariationType = SomaticVariationType.UNCLASSIFIED;
+        this.hasDiffused = false;
+        this.isLinkedToAnotherGermline = false;
+        this.supportingReads = new HashMap<>();
+    }
+
+    private VariantType getTypeFromVarContext(VariantContext context){
+        VariantType varType = VariantType.SNV;
+        if(context.isSNP()) varType = VariantType.SNV;
+        if(context.isSimpleDeletion()) varType = VariantType.DEL;
+        if(context.isSimpleInsertion()) varType = VariantType.INS;
+        if(context.isSymbolicOrSV()) varType = VariantType.SV;
+        return varType;
     }
 
     /*
@@ -135,7 +160,7 @@ public class CalledVariation {
                     this.variantType.equals(var2.variantType) &&
                     this.pos == var2.pos &&
                     this.end == var2.end &&
-                    this.length == var2.length &&
+                    //this.length == var2.length &&
                     Arrays.equals(this.allele, var2.allele);
         }
         return false;
@@ -158,7 +183,10 @@ public class CalledVariation {
         INV(4, "INV"),
         CNV(5, "CNV"),
         TRA(6, "TRA"),
-        SGL(7, "SGL");
+        SGL(7, "SGL"),
+        //Generic type used as placeholder for now
+        SV(13, "SV");;
+
 
 
         private final int value;

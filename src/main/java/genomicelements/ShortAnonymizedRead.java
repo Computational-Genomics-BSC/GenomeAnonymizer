@@ -84,7 +84,10 @@ public class ShortAnonymizedRead implements AnonymizedRead{
     public void modifyBaseInRead(int inReadPosition, byte asciiBase){
         int inArrayPosition = inReadPosition - 1;
         // DEBUG
-        assert inArrayPosition <= sequenceArray.length: "In read position is bigger than the length of the read sequence: readpos=" + inReadPosition + " seq_length=" + sequenceArray.length;
+        if (inArrayPosition==100 && sequenceArray.length==95){
+            System.out.println("# Read=" + this.readName + " seq=" + Arrays.toString(sequenceArray) + " inArrayPos=" + inArrayPosition + " base=" + asciiBase + " pair=" + pair);
+        }
+        assert inArrayPosition < sequenceArray.length: "In read position is bigger than the length of the read sequence: readpos=" + inReadPosition + " seq_length=" + sequenceArray.length;
         // DEBUG
         sequenceArray[inArrayPosition] = asciiBase;
     }
@@ -139,7 +142,9 @@ public class ShortAnonymizedRead implements AnonymizedRead{
 
     private byte[] removeInsertion(byte[] original, int inArrayPosition, int varLength){
         byte[] answer = new byte[original.length - varLength];
-        System.arraycopy(original, 0, answer, 0, inArrayPosition);
+        //System.arraycopy(original, 0, answer, 0, inArrayPosition);
+        System.arraycopy(original, 0, answer, 0, inArrayPosition + 1);
+        //System.arraycopy(original, inArrayPosition + varLength + 1, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
         System.arraycopy(original, inArrayPosition + varLength + 1, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
         return answer;
     }
@@ -147,9 +152,11 @@ public class ShortAnonymizedRead implements AnonymizedRead{
     private byte[] removeDeletion(byte[] original, int inArrayPosition, int varLength, byte[] newContent){
         byte[] answer = new byte[original.length + varLength];
         System.arraycopy(original, 0, answer, 0, inArrayPosition);
+        //System.arraycopy(original, 0, answer, 0, inArrayPosition + 1);
         assert (varLength == newContent.length): "Length of reference is not equal to varLength";
-        System.arraycopy(newContent, 0, answer, inArrayPosition + 1, varLength);
-        System.arraycopy(original, inArrayPosition + 1, answer, inArrayPosition + varLength + 1, original.length - inArrayPosition - 1);
+        System.arraycopy(newContent, 1, answer, inArrayPosition + 1, varLength-1);
+        //System.arraycopy(newContent, 0, answer, inArrayPosition, varLength);
+        System.arraycopy(original, inArrayPosition + 1, answer, inArrayPosition + varLength-1, original.length - inArrayPosition - 1);
         return answer;
     }
 

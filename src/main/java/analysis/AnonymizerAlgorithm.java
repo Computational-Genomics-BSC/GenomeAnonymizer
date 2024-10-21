@@ -1,5 +1,6 @@
 package analysis;
 
+import genomicelements.CalledVariation;
 import genomicelements.ShortAnonymizedReadPair;
 import htsjdk.samtools.SAMReadGroupRecord;
 
@@ -19,4 +20,6 @@ public interface AnonymizerAlgorithm {
     public void writeUnmodifiedReads(String normalPath, String tumorPath, String outputPrefix, boolean compressed)throws IOException;
 
     public void setRemoveUnmapped(boolean removeUnmapped);
+
+    public void setSomaticCalls(Map<String, Map<Integer, CalledVariation>> somaticCallsToKeep);
 }

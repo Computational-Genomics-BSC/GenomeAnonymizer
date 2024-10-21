@@ -36,6 +36,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     FastqWriter[][] writers;
     boolean removeUnmapped;
     boolean writersAreOpen;
+    private Map<String, Map<Integer, CalledVariation>> somaticVariantsToKeep = null;
 
     public ShortReadAnonymizer() {
         anonReadContainer = new HashMap<>();
@@ -72,9 +73,13 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     private void processPotentialGermlines(List<CalledVariation> variationInPos) {
         for (CalledVariation var : variationInPos){
             if (!SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(var.getSomaticVariationType())) continue;
+            if(somaticVariantsToKeep!=null && somaticVariantsToKeep.get(var.getSeqName()).get(var.getPos()).equals(var)) continue;
             // DEBUG
-            System.out.print(var.toString());
-            System.out.print("\tpresent in reads:\t");
+            boolean enableTest = CalledVariation.VariantType.DEL.equals(var.getVariantType());
+            if(enableTest){
+                System.out.print(var.toString());
+                System.out.print("\tpresent in reads:\t");
+            }
             // DEBUG
             Map<String, Integer> supportingReads = var.getSupportingReads();
             for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
@@ -85,7 +90,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
                 List<CalledVariation> potentialGermlinesInRead = potentialGermlinesInReadPair.computeIfAbsent(pairIdx, v -> new ArrayList<>());
                 potentialGermlinesInRead.add(var);
                 // DEBUG
-                System.out.println(entry.getKey() + " in_read_pos=" + entry.getValue());
+                if(enableTest) System.out.println(entry.getKey() + " in_read_pos=" + entry.getValue());
                 // DEBUG
             }
         }
@@ -128,7 +133,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
             String readName = samRecord.getReadName();
             if ((removeUnmapped && samRecord.getReadUnmappedFlag()) || !potentialGermlinesPerAnonRead.containsKey(readName)) continue;
             // DEBUG
-            if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498")) System.out.println("# Found after first filter");
+            if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) System.out.println("# Found after first filter");
             // DEBUG
             ShortAnonymizedRead anonRead = new ShortAnonymizedRead(samRecord);
             ShortAnonymizedReadPair pair;
@@ -136,46 +141,58 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
                 pair = new ShortAnonymizedReadPair(anonRead);
                 anonReadContainer.put(readName, pair);
                 // DEBUG
-                if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498")) System.out.println("# Added first time");
+                if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) System.out.println("# Added first time");
                 // DEBUG
             }
             else{
                 pair = anonReadContainer.get(readName);
                 anonRead = pair.addOrUpdatePair(anonRead);
                 // DEBUG
-                if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498")) System.out.println("# Added second time");
+                if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) System.out.println("# Added second time");
                 // DEBUG
             }
             int pairIdx = anonRead.getPairIdx();
             List<CalledVariation> variantsToAnonymizeInRead = potentialGermlinesPerAnonRead.get(readName).getOrDefault(pairIdx, new ArrayList<>());
             // DEBUG
-            if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498")) {
+            if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) {
                 System.out.println("# Variants to anonymize in read pair=" + (pairIdx+1) + " n=" + variantsToAnonymizeInRead.size());
             }
             // DEBUG
             if (anonRead.variantsToAnonymizeIsEmpty() && !variantsToAnonymizeInRead.isEmpty()) anonRead.addAllVariantsToAnonymize(variantsToAnonymizeInRead);
             // DEBUG
-            if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498") && pairIdx==1) {
-                System.out.println("# SNVs to anonymize: " + anonRead.getVariantsToAnonymize().get("SNV").size());
-                //System.out.println("# INDELs to anonymize: " + anonRead.getVariantsToAnonymize().get("INDEL").size());
+            if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) {
+                System.out.println("# pair=" + (anonRead.getPairIdx()+1));
+                if(anonRead.getVariantsToAnonymize().get("SNV") != null) {
+                    System.out.println("# SNVs to anonymize: " + anonRead.getVariantsToAnonymize().get("SNV").size());
+                    for(CalledVariation v:anonRead.getVariantsToAnonymize().get("SNV")){
+                        System.out.println(v.toString());
+                    }
+                }
+                if(anonRead.getVariantsToAnonymize().get("INDEL") != null){
+                    System.out.println("# INDELs to anonymize: " + anonRead.getVariantsToAnonymize().get("INDEL").size());
+                    for(CalledVariation v:anonRead.getVariantsToAnonymize().get("INDEL")){
+                        System.out.println(v.toString());
+                    }
+                }
+
             }
             // DEBUG
             anonRead.updateIfPossible(samRecord);
-            if(!anonRead.isSupplementaryOrSecondary()) {
+            if(!anonRead.isSupplementaryOrSecondary() && !anonRead.isAnonymized()) {
                 anonRead.anonymizeVariantsInRead();
                 // DEBUG
-                if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498") && pairIdx==1) {
+                if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459") && pairIdx==1) {
                     System.out.println("# Variants anonymized pair2: " + anonRead.isAnonymized());
                     //System.out.println("# INDELs to anonymize: " + anonRead.getVariantsToAnonymize().get("INDEL").size());
                 }
-                if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498") && pairIdx==0) {
+                if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459") && pairIdx==0) {
                     System.out.println("# Variants anonymized pair1: " + anonRead.isAnonymized());
                     //System.out.println("# INDELs to anonymize: " + anonRead.getVariantsToAnonymize().get("INDEL").size());
                 }
                 // DEBUG
             }
             // DEBUG
-            if(readName.equals("HWI-ST1133:217:D1D4WACXX:1:1301:10205:28498")) {
+            if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) {
                 System.out.println("# Read pair " + pair.getReadName() + " is writable=" + pair.isWriteable());
             }
             // DEBUG
@@ -222,10 +239,9 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         return anonReadContainer;
     }
 
-//    public void addAnonReadContainerIfAbsent(AnonymizedReadContainer newAnonRead){
-//        String readName = newAnonRead.getReadName();
-//        anonReadContainer.putIfAbsent(readName, newAnonRead);
-//    }
+    public void setSomaticCalls(Map<String, Map<Integer, CalledVariation>> somaticCallsToKeep){
+        this.somaticVariantsToKeep = somaticCallsToKeep;
+    }
 
     private void writeFastqRecord(ShortAnonymizedReadPair pairToWrite, boolean isNormalDataset){
         int datasetIdx = isNormalDataset ? NORMAL_DATASET_IDX : TUMORAL_DATASET_IDX;
