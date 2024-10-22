@@ -77,8 +77,6 @@ public class GenomeAnonymizer {
     private static AnonymizerAlgorithm getAnonymizer(String algorithm) {
         AnonymizerAlgorithm anonymizer = null;
         if (AnonymizerAlgorithm.SHORT_READ_ALGORITHM.equals(algorithm)) anonymizer = new ShortReadAnonymizer();
-        //Try with intervals as chr for parallelization, then maybe chr chunks too
-        // try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, intervals)
         assert anonymizer != null: "No Anonymizer class impl was instantiated";
         return anonymizer;
     }

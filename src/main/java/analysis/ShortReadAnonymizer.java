@@ -75,7 +75,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
             if (!SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(var.getSomaticVariationType())) continue;
             if(somaticVariantsToKeep!=null && somaticVariantsToKeep.get(var.getSeqName()).get(var.getPos()).equals(var)) continue;
             // DEBUG
-            boolean enableTest = CalledVariation.VariantType.DEL.equals(var.getVariantType());
+            boolean enableTest = CalledVariation.VariantType.DEL.equals(var.getVariantType()) || CalledVariation.VariantType.INS.equals(var.getVariantType());
             if(enableTest){
                 System.out.print(var.toString());
                 System.out.print("\tpresent in reads:\t");

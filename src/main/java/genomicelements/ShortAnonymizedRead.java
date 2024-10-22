@@ -5,6 +5,7 @@ import htsjdk.samtools.fastq.FastqRecord;
 import htsjdk.samtools.util.Locatable;
 import htsjdk.samtools.util.SequenceUtil;
 
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 import static analysis.VariationClassifier.getShortReadPairName;
@@ -144,19 +145,20 @@ public class ShortAnonymizedRead implements AnonymizedRead{
         byte[] answer = new byte[original.length - varLength];
         //System.arraycopy(original, 0, answer, 0, inArrayPosition);
         System.arraycopy(original, 0, answer, 0, inArrayPosition + 1);
+        System.arraycopy(original, inArrayPosition + varLength, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
         //System.arraycopy(original, inArrayPosition + varLength + 1, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
-        System.arraycopy(original, inArrayPosition + varLength + 1, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
         return answer;
     }
 
     private byte[] removeDeletion(byte[] original, int inArrayPosition, int varLength, byte[] newContent){
         byte[] answer = new byte[original.length + varLength];
-        System.arraycopy(original, 0, answer, 0, inArrayPosition);
+        System.arraycopy(original, 0, answer, 0, inArrayPosition+1);
         //System.arraycopy(original, 0, answer, 0, inArrayPosition + 1);
         assert (varLength == newContent.length): "Length of reference is not equal to varLength";
-        System.arraycopy(newContent, 1, answer, inArrayPosition + 1, varLength-1);
-        //System.arraycopy(newContent, 0, answer, inArrayPosition, varLength);
-        System.arraycopy(original, inArrayPosition + 1, answer, inArrayPosition + varLength-1, original.length - inArrayPosition - 1);
+        //System.arraycopy(newContent, 1, answer, inArrayPosition + 1, varLength-1);
+        System.arraycopy(newContent, 0, answer, inArrayPosition, varLength);
+        //System.arraycopy(original, inArrayPosition + 1, answer, inArrayPosition + varLength-1, original.length - inArrayPosition - 1);
+        System.arraycopy(original, inArrayPosition + 1, answer, inArrayPosition + varLength, original.length - inArrayPosition - 1);
         return answer;
     }
 
@@ -292,6 +294,14 @@ public class ShortAnonymizedRead implements AnonymizedRead{
 
     public void setVariantsToAnonymize(Map<String, List<CalledVariation>> variantsToAnonymize) {
         this.variantsToAnonymize = variantsToAnonymize;
+    }
+
+    @Override
+    public String toString(){
+        return "name=" + this.readName + " seq=" + this.contig + " pos=" + this.start + " end=" +
+                this.end + " length=" + this.length + " sequence=" +  new String(this.sequenceArray, StandardCharsets.UTF_8)
+                + " qualities=" + Arrays.toString(this.qualitiesArray) + " pairIdx=" + this.pair +
+                " isSupplementaryOrSecondary=" + this.isSupplementaryOrSecondary + " isAnonymized=" + this.isAnonymized + " isReverse=" + this.isReverse;
     }
 
     // TODO: Fix these methods

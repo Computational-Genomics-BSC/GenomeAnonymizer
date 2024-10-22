@@ -121,7 +121,7 @@ public class VariationClassifier {
                     inReadEnd = inReadPos + 1;
                 }
                 // Ends vary based on the functions to recover the alleles, whether they are inclusive or exclusive on interval ends
-                byte[] altAllele = Arrays.copyOfRange(sequenceBases, inReadPos, inReadEnd);
+                byte[] altAllele = Arrays.copyOfRange(sequenceBases, inReadPos-1, inReadEnd-1);
                 byte[] refAllele = referenceWalker.getSubsequenceAt(sequenceName, currentRefPos, inRefend).getBases();
                 CalledVariation calledVar = new CalledVariation(sequenceName, currentRefPos, vcfStdEnd, indelType, length,
                         altAllele, refAllele);
