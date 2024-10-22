@@ -85,9 +85,9 @@ public class ShortAnonymizedRead implements AnonymizedRead{
     public void modifyBaseInRead(int inReadPosition, byte asciiBase){
         int inArrayPosition = inReadPosition - 1;
         // DEBUG
-        if (inArrayPosition==100 && sequenceArray.length==95){
-            System.out.println("# Read=" + this.readName + " seq=" + Arrays.toString(sequenceArray) + " inArrayPos=" + inArrayPosition + " base=" + asciiBase + " pair=" + pair);
-        }
+//        if (inArrayPosition==100 && sequenceArray.length==95){
+//            System.out.println("# Read=" + this.readName + " seq=" + Arrays.toString(sequenceArray) + " inArrayPos=" + inArrayPosition + " base=" + asciiBase + " pair=" + pair);
+//        }
         assert inArrayPosition < sequenceArray.length: "In read position is bigger than the length of the read sequence: readpos=" + inReadPosition + " seq_length=" + sequenceArray.length;
         // DEBUG
         sequenceArray[inArrayPosition] = asciiBase;

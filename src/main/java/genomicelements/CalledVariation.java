@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 import static utils.Operations.estimateEuclideanDistance;
 
@@ -48,7 +49,8 @@ public class CalledVariation {
         this(varContext.getContig(), varContext.getStart(), varContext.getEnd(), VariantType.SNV, varContext.getLengthOnReference(),
                 varContext.getAlternateAllele(0).getBases(), new byte[0]);
         this.setVariantType(getTypeFromVarContext(varContext));
-        this.somaticVariationType = SomaticVariationType.UNCLASSIFIED;
+        if(VariantType.INS.equals(variantType)) setEnd(end+1);
+        this.somaticVariationType = SomaticVariationType.NOT_SOMATIC;
         this.hasDiffused = false;
         this.isLinkedToAnotherGermline = false;
         this.supportingReads = new HashMap<>();
@@ -131,6 +133,10 @@ public class CalledVariation {
         return supportingReads;
     }
 
+    public void setEnd(int end){
+        this.end = end;
+    }
+
     public void setVariantType(VariantType variantType) {
         this.variantType = variantType;
     }
@@ -155,13 +161,22 @@ public class CalledVariation {
     public boolean equals(Object obj) {
         if (this == obj) return true;
         if (obj instanceof CalledVariation) {
+            boolean answer;
             CalledVariation var2 = (CalledVariation) obj;
-            return this.seqName.equals(var2.seqName) &&
+            answer =  this.seqName.equals(var2.seqName) &&
                     this.variantType.equals(var2.variantType) &&
                     this.pos == var2.pos &&
                     this.end == var2.end &&
-                    //this.length == var2.length &&
+                    this.length == var2.length &&
                     Arrays.equals(this.allele, var2.allele);
+            //DEBUG
+//            if(pos==73824164 && SomaticVariationType.NOT_SOMATIC.equals(this.somaticVariationType)){
+//                System.out.println("# Found var: " + this.toString());
+//                System.out.println("# VCF var: " + var2.toString());
+//                System.out.println("# equal=" + answer);
+//            }
+            return answer;
+            //DEBUG
         }
         return false;
     }
@@ -207,6 +222,7 @@ public class CalledVariation {
     }
 
     public enum SomaticVariationType {
+        NOT_SOMATIC(-1),
         UNCLASSIFIED(0),
         NORMAL_SINGLE_READ_VARIANT(1),
         TUMORAL_SINGLE_READ_VARIANT(2),

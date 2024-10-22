@@ -5,13 +5,16 @@ import genomicelements.ShortAnonymizedReadPair;
 import htsjdk.samtools.SAMReadGroupRecord;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 
 public interface AnonymizerAlgorithm {
 
+    public static final String DEFAULT_RUN_MODE_FUNCTIONALITY = "DEFAULT";
+    public static final String SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY = "SOMATIC_BENCHMARK";
     public final static String SHORT_READ_ALGORITHM = SAMReadGroupRecord.PlatformValue.ILLUMINA.name();
 
-    public void callVariation(String normalPath, String tumorPath, String refGenome)throws IOException;
+    //public Map<String, Map<Integer, List<CalledVariation>>> callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile)throws IOException;
 
     public void anonymizeReads(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed)throws IOException;
 
@@ -20,6 +23,4 @@ public interface AnonymizerAlgorithm {
     public void writeUnmodifiedReads(String normalPath, String tumorPath, String outputPrefix, boolean compressed)throws IOException;
 
     public void setRemoveUnmapped(boolean removeUnmapped);
-
-    public void setSomaticCalls(Map<String, Map<Integer, CalledVariation>> somaticCallsToKeep);
 }
