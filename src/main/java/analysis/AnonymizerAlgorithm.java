@@ -10,8 +10,6 @@ import java.util.Map;
 
 public interface AnonymizerAlgorithm {
 
-    public static final String DEFAULT_RUN_MODE_FUNCTIONALITY = "DEFAULT";
-    public static final String SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY = "SOMATIC_BENCHMARK";
     public final static String SHORT_READ_ALGORITHM = SAMReadGroupRecord.PlatformValue.ILLUMINA.name();
 
     //public Map<String, Map<Integer, List<CalledVariation>>> callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile)throws IOException;

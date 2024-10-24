@@ -4,6 +4,7 @@ import genomicelements.PairedPileup;
 import htsjdk.samtools.SAMFileHeader;
 import htsjdk.samtools.SamReader;
 import htsjdk.samtools.SamReaderFactory;
+import htsjdk.samtools.util.Interval;
 import htsjdk.samtools.util.IntervalList;
 import htsjdk.samtools.util.SamLocusIterator;
 import htsjdk.samtools.util.SamLocusIterator.LocusInfo;
@@ -11,6 +12,8 @@ import htsjdk.samtools.util.SamLocusIterator.LocusInfo;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.function.Consumer;
@@ -42,6 +45,13 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         init(new File(normalFilePath), new File(tumorFilePath), new File(referenceGenome), intervals);
     }
 
+    /**
+     * Initializes the iterators for the normal and tumor files. If intervals is provided, the iteration is restricted to that genomic region
+     * @param normalFile
+     * @param tumorFile
+     * @param referenceGenome
+     * @param intervals Can be any range of valid genomic regions, but is intended to be a list of one interval for multithreading
+     */
     private void init(File normalFile, File tumorFile, File referenceGenome, IntervalList intervals) {
         SamReaderFactory normalSamFactory = SamReaderFactory.makeDefault();
         SamReaderFactory tumorSamFactory = SamReaderFactory.makeDefault();

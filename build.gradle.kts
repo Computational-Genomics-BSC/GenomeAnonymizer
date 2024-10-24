@@ -17,7 +17,7 @@ dependencies {
 }
 
 application {
-    mainClass = "GenomeAnonymizer"
+    mainClass = "analysis.GenomeAnonymizer"
 }
 
 

@@ -6,27 +6,27 @@ import genomicelements.PairedPileup;
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.SAMRecord;
+import htsjdk.samtools.SAMSequenceDictionary;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
-import htsjdk.samtools.reference.ReferenceSequence;
-import htsjdk.samtools.reference.ReferenceSequenceFile;
-import htsjdk.samtools.reference.ReferenceSequenceFileWalker;
-import htsjdk.samtools.util.SamLocusIterator;
+import htsjdk.samtools.util.Interval;
+import htsjdk.samtools.util.IntervalList;
 import htsjdk.samtools.util.SamLocusIterator.RecordAndOffset;
-import genomicelements.ShortAnonymizedRead;
+import htsjdk.tribble.SimpleFeature;
 import io.SamplePairReadAlignmentReader;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
 
-import static analysis.AnonymizerAlgorithm.DEFAULT_RUN_MODE_FUNCTIONALITY;
-import static analysis.AnonymizerAlgorithm.SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY;
+import static analysis.GenomeAnonymizer.DEFAULT_RUN_MODE_FUNCTIONALITY;
+import static analysis.GenomeAnonymizer.SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY;
 import static genomicelements.ShortAnonymizedReadPair.*;
 import static io.VCFReader.readVCF;
 
+
 /**
  * Class that offers methods to classify all variation from a sample over pileup positions
- * @author Nicolás Gaitán
+ * @author Nicolas Gaitan
  */
 
 public class VariationClassifier {
@@ -40,51 +40,124 @@ public class VariationClassifier {
 
     public static final int SLIDING_WINDOW_LIMIT = 200;
 
+    Map<String, Map<Integer, List<CalledVariation>>> potentialGermlinesPerRead;
+
     public VariationClassifier(){
+        potentialGermlinesPerRead = new HashMap<>();
     }
 
-    public Map<String, Map<Integer, List<CalledVariation>>> callVariation(String normalPath, String tumorPath, String refGenome) throws IOException {
-        return callVariation(normalPath, tumorPath, refGenome, DEFAULT_RUN_MODE_FUNCTIONALITY, "");
+    public Map<String, Map<Integer, List<CalledVariation>>> getPotentialGermlinesPerRead() {
+        return potentialGermlinesPerRead;
     }
 
-    public Map<String, Map<Integer, List<CalledVariation>>> callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile) throws IOException {
-        Map<String, Map<Integer, List<CalledVariation>>> potentialGermlinesPerAnonRead = new HashMap<>();
+    /**
+     * Call for discovering variation over a specific genomic region
+     * @param normalPath
+     * @param tumorPath
+     * @param refGenome
+     * @param mode
+     * @param vcfFile
+     * @param region
+     * @throws IOException
+     */
+    public void callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile, SimpleFeature region) throws IOException {
+        IndexedFastaSequenceFile referenceWalker = null;
+        SamplePairReadAlignmentReader pairPileupReader = null;
+        try{
+            referenceWalker = new IndexedFastaSequenceFile(new File(refGenome));
+            SAMSequenceDictionary seqDict = referenceWalker.getSequenceDictionary();
+            IntervalList intervals = new IntervalList(seqDict);
+            Interval interval = new Interval(region.getContig(), region.getStart(), region.getEnd());
+            intervals.add(interval);
+            pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, intervals);
+            callVariation(pairPileupReader, referenceWalker, mode, vcfFile);
+        }
+        finally{
+            referenceWalker.close();
+            pairPileupReader.close();
+
+        }
+    }
+
+    /**
+     * Call for discovering variation over the complete genome
+     * @param normalPath
+     * @param tumorPath
+     * @param refGenome
+     * @param mode
+     * @param vcfFile
+     * @throws IOException
+     */
+    public void callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile) throws IOException {
         try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome);
             IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(refGenome));){
-            Map<Integer, List<CalledVariation>> variationPerPos = new HashMap<>();
-            Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep = new HashMap<>();
-            if(SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)){
-                somaticVariantsToKeep = readVCF(vcfFile);
-            }
-            Set<String> seenReads = new HashSet<>();
-            int p = 1;
-            for (PairedPileup pileup : pairPileupReader){
-                int pos = pileup.getReferencePos();
-                classifyVariationInPairedPileup(variationPerPos, pileup, seenReads, referenceWalker);
-                if(SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)) {
-                    processPotentialGermlines(variationPerPos.get(pos), potentialGermlinesPerAnonRead, somaticVariantsToKeep);
-                }
-                else{
-                    processPotentialGermlines(variationPerPos.get(pos), potentialGermlinesPerAnonRead);
-                }
-                // DEBUG
-                // testingClassifier(variationPerPos, pos);
-                // DEBUG
-                variationPerPos.remove(pos-SLIDING_WINDOW_LIMIT);
-                if (p==SLIDING_WINDOW_LIMIT) p = 0;
-                p++;
-            }
+            callVariation(pairPileupReader, referenceWalker, mode, vcfFile);
         }
-        return potentialGermlinesPerAnonRead;
+    }
+
+    public void callVariation(SamplePairReadAlignmentReader pairPileupReader, IndexedFastaSequenceFile referenceWalker, String mode, String vcfFile) throws IOException {
+        Map<Integer, List<CalledVariation>> variationPerPos = new HashMap<>();
+        Set<String> seenReads = new HashSet<>();
+        Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep = new HashMap<>();
+        if(SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)){
+            somaticVariantsToKeep = readVCF(vcfFile);
+        }
+        int p = 1;
+        for (PairedPileup pileup : pairPileupReader){
+            int pos = pileup.getReferencePos();
+            classifyVariationInPairedPileup(variationPerPos, pileup, seenReads, referenceWalker);
+            if(SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)) {
+                processPotentialGermlines(variationPerPos.get(pos), somaticVariantsToKeep);
+            }
+            else{
+                processPotentialGermlines(variationPerPos.get(pos));
+            }
+            variationPerPos.remove(pos-SLIDING_WINDOW_LIMIT);
+            if (p==SLIDING_WINDOW_LIMIT) p = 0;
+            p++;
+        }
+    }
+
+//    public Map<String, Map<Integer, List<CalledVariation>>> callVariation(String normalPath, String tumorPath, String refGenome) throws IOException {
+//        return callVariation(normalPath, tumorPath, refGenome, DEFAULT_RUN_MODE_FUNCTIONALITY, "");
+//    }
+//
+//    public Map<String, Map<Integer, List<CalledVariation>>> callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile) throws IOException {
+//        Map<String, Map<Integer, List<CalledVariation>>> potentialGermlinesPerAnonRead = new HashMap<>();
+//        try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome);
+//            IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(refGenome));){
+//            Map<Integer, List<CalledVariation>> variationPerPos = new HashMap<>();
+//            Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep = new HashMap<>();
+//            if(SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)){
+//                somaticVariantsToKeep = readVCF(vcfFile);
+//            }
+//            Set<String> seenReads = new HashSet<>();
+//            int p = 1;
+//            for (PairedPileup pileup : pairPileupReader){
+//                int pos = pileup.getReferencePos();
+//                classifyVariationInPairedPileup(variationPerPos, pileup, seenReads, referenceWalker);
+//                if(SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)) {
+//                    processPotentialGermlines(variationPerPos.get(pos), potentialGermlinesPerAnonRead, somaticVariantsToKeep);
+//                }
+//                else{
+//                    processPotentialGermlines(variationPerPos.get(pos), potentialGermlinesPerAnonRead);
+//                }
+//                // DEBUG
+//                // testingClassifier(variationPerPos, pos);
+//                // DEBUG
+//                variationPerPos.remove(pos-SLIDING_WINDOW_LIMIT);
+//                if (p==SLIDING_WINDOW_LIMIT) p = 0;
+//                p++;
+//            }
+//        }
+//        return potentialGermlinesPerAnonRead;
+//    }
+
+    private void processPotentialGermlines(List<CalledVariation> variationInPos) {
+        processPotentialGermlines(variationInPos, new HashMap<>());
     }
 
     private void processPotentialGermlines(List<CalledVariation> variationInPos,
-                                           Map<String, Map<Integer, List<CalledVariation>>> potentialGermlinesPerAnonRead) {
-        processPotentialGermlines(variationInPos, potentialGermlinesPerAnonRead, new HashMap<>());
-    }
-
-    private void processPotentialGermlines(List<CalledVariation> variationInPos,
-                                           Map<String, Map<Integer, List<CalledVariation>>> potentialGermlinesPerAnonRead,
                                            Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep) {
         for (CalledVariation var : variationInPos){
             if (!SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(var.getSomaticVariationType())) continue;
@@ -94,27 +167,55 @@ public class VariationClassifier {
                 CalledVariation validatedSomaticAtPos = validatedSomaticsAtSeq.get(var.getPos());
                 if(validatedSomaticAtPos!=null && validatedSomaticAtPos.equals(var)) continue;
             }
-            // DEBUG
-//            boolean enableTest = CalledVariation.VariantType.DEL.equals(var.getVariantType()) || CalledVariation.VariantType.INS.equals(var.getVariantType());
-//            if(enableTest){
-//                System.out.print(var.toString());
-//                System.out.print("\tpresent in reads:\t");
-//            }
-            // DEBUG
             Map<String, Integer> supportingReads = var.getSupportingReads();
             for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
                 String[] keyElems = entry.getKey().split(READ_PAIR_NAME_SEPARATOR);
                 String readName = keyElems[0];
                 int pairIdx = Integer.parseInt(keyElems[1]);
-                Map<Integer, List<CalledVariation>> potentialGermlinesInReadPair = potentialGermlinesPerAnonRead.computeIfAbsent(readName, v -> new HashMap<>());
+                Map<Integer, List<CalledVariation>> potentialGermlinesInReadPair = potentialGermlinesPerRead.computeIfAbsent(readName, v -> new HashMap<>());
                 List<CalledVariation> potentialGermlinesInRead = potentialGermlinesInReadPair.computeIfAbsent(pairIdx, v -> new ArrayList<>());
                 potentialGermlinesInRead.add(var);
-                // DEBUG
-//                if(enableTest) System.out.println(entry.getKey() + " in_read_pos=" + entry.getValue());
-                // DEBUG
             }
         }
     }
+
+//    private void processPotentialGermlines(List<CalledVariation> variationInPos,
+//                                           Map<String, Map<Integer, List<CalledVariation>>> potentialGermlinesPerAnonRead) {
+//        processPotentialGermlines(variationInPos, potentialGermlinesPerAnonRead, new HashMap<>());
+//    }
+//
+//    private void processPotentialGermlines(List<CalledVariation> variationInPos,
+//                                           Map<String, Map<Integer, List<CalledVariation>>> potentialGermlinesPerAnonRead,
+//                                           Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep) {
+//        for (CalledVariation var : variationInPos){
+//            if (!SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(var.getSomaticVariationType())) continue;
+//            if (!somaticVariantsToKeep.isEmpty()){
+//                Map<Integer, CalledVariation> validatedSomaticsAtSeq = somaticVariantsToKeep.get(var.getSeqName());
+//                if(validatedSomaticsAtSeq==null) continue;
+//                CalledVariation validatedSomaticAtPos = validatedSomaticsAtSeq.get(var.getPos());
+//                if(validatedSomaticAtPos!=null && validatedSomaticAtPos.equals(var)) continue;
+//            }
+//            // DEBUG
+////            boolean enableTest = CalledVariation.VariantType.DEL.equals(var.getVariantType()) || CalledVariation.VariantType.INS.equals(var.getVariantType());
+////            if(enableTest){
+////                System.out.print(var.toString());
+////                System.out.print("\tpresent in reads:\t");
+////            }
+//            // DEBUG
+//            Map<String, Integer> supportingReads = var.getSupportingReads();
+//            for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
+//                String[] keyElems = entry.getKey().split(READ_PAIR_NAME_SEPARATOR);
+//                String readName = keyElems[0];
+//                int pairIdx = Integer.parseInt(keyElems[1]);
+//                Map<Integer, List<CalledVariation>> potentialGermlinesInReadPair = potentialGermlinesPerAnonRead.computeIfAbsent(readName, v -> new HashMap<>());
+//                List<CalledVariation> potentialGermlinesInRead = potentialGermlinesInReadPair.computeIfAbsent(pairIdx, v -> new ArrayList<>());
+//                potentialGermlinesInRead.add(var);
+//                // DEBUG
+////                if(enableTest) System.out.println(entry.getKey() + " in_read_pos=" + entry.getValue());
+//                // DEBUG
+//            }
+//        }
+//    }
 
     /**
      * @param variationPerPos Map where keys are coordinates of variants, and the variants are values of different types
@@ -228,7 +329,7 @@ public class VariationClassifier {
         altAllele[0] = (byte) readBase;
         byte[] refAllele = new byte[1];
         refAllele[0] = (byte) referenceBase;
-        CalledVariation calledVar = new CalledVariation(sequenceName, refPosition, refPosition, CalledVariation.VariantType.SNV, 1,
+        CalledVariation calledVar = new CalledVariation(sequenceName, refPosition, refPosition, VariantType.SNV, 1,
                 altAllele, refAllele);
         List<CalledVariation> variationInPos = variationPerPos.computeIfAbsent(refPosition, v -> new ArrayList<>());
         int indexSearch = variationInPos.indexOf(calledVar);

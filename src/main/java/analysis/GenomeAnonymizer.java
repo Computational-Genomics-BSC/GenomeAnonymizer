@@ -1,23 +1,19 @@
-import analysis.AnonymizerAlgorithm;
-import analysis.ShortReadAnonymizer;
-import analysis.VariationClassifier;
+package analysis;
+
 import genomicelements.CalledVariation;
+import htsjdk.samtools.SAMSequenceDictionary;
+import htsjdk.samtools.SAMSequenceRecord;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
-import htsjdk.variant.variantcontext.VariantContext;
-import htsjdk.variant.variantcontext.VariantContextBuilder;
-import htsjdk.variant.vcf.VCFFileReader;
-import io.SamplePairReadAlignmentReader;
+import htsjdk.tribble.SimpleFeature;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-import static analysis.AnonymizerAlgorithm.DEFAULT_RUN_MODE_FUNCTIONALITY;
-import static analysis.AnonymizerAlgorithm.SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY;
+import java.util.*;
 
 public class GenomeAnonymizer {
+
+    public static final String DEFAULT_RUN_MODE_FUNCTIONALITY = "DEFAULT";
+    public static final String SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY = "SOMATIC_BENCHMARK";
 
     public final static String BAM_FILE = ".bam";
     public final static String SAM_FILE = ".sam";
@@ -41,9 +37,40 @@ public class GenomeAnonymizer {
         //anonymizer.setRemoveUnmapped(false);
         long start1 = System.currentTimeMillis();
         // TODO: Parallelize per chromosome, and then, per reads to anonymize
-        VariationClassifier classifier = new VariationClassifier();
-        Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize = classifier
-                .callVariation(normalPath, tumorPath, refGenome, SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, vcfFile);
+        Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize = new HashMap<>();
+        if (nThreads==1){
+            VariationClassifier classifier = new VariationClassifier();
+            classifier.callVariation(normalPath, tumorPath, refGenome, SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, vcfFile);
+            readGermlinesToAnonymize = classifier.getPotentialGermlinesPerRead();
+        }
+        else{
+            IndexedFastaSequenceFile reference = new IndexedFastaSequenceFile(new File(refGenome));
+            SAMSequenceDictionary seqDict = reference.getSequenceDictionary();
+            reference.close();
+            long genomeSize = seqDict.getReferenceLength();
+            List<SAMSequenceRecord> sequences = seqDict.getSequences();
+            List<SimpleFeature> regions = new ArrayList<>();
+            if(nThreads>sequences.size()) {
+                Collections.sort(sequences, Comparator.comparing(SAMSequenceRecord::getSequenceLength));
+                Collections.reverse(sequences);
+                //int nNewPartitions = nThreads-currentPartitions;
+                int availableThreads = nThreads-sequences.size();
+                int[] partitionsPerSequence = new int[sequences.size()];
+                Arrays.fill(partitionsPerSequence, 1);
+                long basesPerThread = genomeSize/nThreads;
+                for(int i = 0; i < sequences.size(); i++){
+                    partitionsPerSequence[i] += (int) (sequences.get(i).getSequenceLength() / basesPerThread);
+                    availableThreads -= partitionsPerSequence[i];
+                    assert (availableThreads>=0): "Available threads are lower than 0, this shouldnt happen";
+                    if(availableThreads==0) break;
+                }
+            }
+            else{
+                regions = sequences.stream()
+                        .map(samSeq -> new SimpleFeature(samSeq.getContig(), samSeq.getStart(), samSeq.getEnd()))
+                        .toList();
+            }
+        }
         long end1 = System.currentTimeMillis();
         System.out.println("Elapsed Time in seconds for variation calling: "+ (double) (end1-start1)/1000);
         long start2 = System.currentTimeMillis();
@@ -51,10 +78,6 @@ public class GenomeAnonymizer {
         anonymizer.anonymizeReads(normalPath, tumorPath, refGenome, outputPrefix, false);
         long end2 = System.currentTimeMillis();
         System.out.println("Elapsed Time in seconds for anonymization: "+ (double) (end2-start2)/1000);
-        //long start3 = System.currentTimeMillis();
-        //anonymizer.writeUnmodifiedReads(normalPath, tumorPath, outputPrefix, false);
-        //long end3 = System.currentTimeMillis();
-        //System.out.println("Elapsed Time in seconds for retrieving missing reads: "+ (double) (end2-start2)/1000);
     }
 
     /**
@@ -90,13 +113,8 @@ public class GenomeAnonymizer {
         System.out.println(refGenome);
         String vcfFilePath = args[3];
         System.out.println(vcfFilePath);
-//        try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome);) {
-//            pairPileupReader.forEach(x -> System.out.println("Pileup seq=" + x.getRefenceSequenceName() + " pos=" + x.getReferencePos()
-//                                        + " n_reads="+x.totalSize()));
-//        }
         long start2 = System.currentTimeMillis();
         GenomeAnonymizer appInstance = new GenomeAnonymizer();
-        //appInstance.run(normalPath, tumorPath, refGenome, removeSuffixIfExists(normalPath, BAM_FILE), false, AnonymizerAlgorithm.SHORT_READ_ALGORITHM, 1);
         appInstance.run(normalPath, tumorPath, refGenome, removeSuffixIfExists(normalPath, BAM_FILE), false,
                 AnonymizerAlgorithm.SHORT_READ_ALGORITHM, SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, vcfFilePath, 1);
         long end2 = System.currentTimeMillis();
