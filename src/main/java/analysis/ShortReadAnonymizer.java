@@ -108,7 +108,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
             // DEBUG
             if (anonRead.variantsToAnonymizeIsEmpty() && !variantsToAnonymizeInRead.isEmpty()) anonRead.addAllVariantsToAnonymize(variantsToAnonymizeInRead);
             // DEBUG
-//            if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) {
+//            if(readName.equals("DCT4KXP1:304:C18LHACXX:2:1116:3428:30651")) {
 //                System.out.println("# pair=" + (anonRead.getPairIdx()+1));
 //                if(anonRead.getVariantsToAnonymize().get("SNV") != null) {
 //                    System.out.println("# SNVs to anonymize: " + anonRead.getVariantsToAnonymize().get("SNV").size());
@@ -116,13 +116,13 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
 //                        System.out.println(v.toString());
 //                    }
 //                }
-//                if(anonRead.getVariantsToAnonymize().get("INDEL") != null){
-//                    System.out.println("# INDELs to anonymize: " + anonRead.getVariantsToAnonymize().get("INDEL").size());
-//                    for(CalledVariation v:anonRead.getVariantsToAnonymize().get("INDEL")){
-//                        System.out.println(v.toString());
-//                    }
-//                }
-//
+////                if(anonRead.getVariantsToAnonymize().get("INDEL") != null){
+////                    System.out.println("# INDELs to anonymize: " + anonRead.getVariantsToAnonymize().get("INDEL").size());
+////                    for(CalledVariation v:anonRead.getVariantsToAnonymize().get("INDEL")){
+////                        System.out.println(v.toString());
+////                    }
+////                }
+////
 //            }
             // DEBUG
             anonRead.updateIfPossible(samRecord);
@@ -260,10 +260,11 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     }
 
     public String getFastqOutputName(String outputPrefix, int datasetIdx, int pairIdx, boolean compressed){
+        String anonTag = ".anonymized";
         String datasetIdStr = datasetIdx == NORMAL_DATASET_IDX ? ".N" : ".T";
         String pairIdxStr = pairIdx == PAIR_1_IDX ? ".1" : ".2";
         String extension = compressed ? ".fastq.gz" : ".fastq";
-        return outputPrefix + datasetIdStr + pairIdxStr + extension;
+        return outputPrefix + anonTag + datasetIdStr + pairIdxStr + extension;
     }
 
     /**

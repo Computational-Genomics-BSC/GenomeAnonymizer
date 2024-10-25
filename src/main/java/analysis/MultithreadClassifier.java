@@ -1,10 +1,9 @@
 package analysis;
 
 import genomicelements.CalledVariation;
-import htsjdk.samtools.util.IntervalList;
 import htsjdk.tribble.SimpleFeature;
 
-import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -36,11 +35,18 @@ public class MultithreadClassifier implements Runnable{
         try {
             classifier.callVariation(normalPath, tumorPath, refGenome, mode, vcfFile, region);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            e.printStackTrace();
+            System.exit(1);
         }
     }
 
-    public Map<String, Map<Integer, List<CalledVariation>>> getResult(){
-        return classifier.getPotentialGermlinesPerRead();
+    public String getContig(){
+        return this.region.getContig();
+    }
+
+    public Map<Integer, List<CalledVariation>> getAnswer(){
+        assert(classifier.getPotentialGermlinesPerRead().size() == 1): "The result of this classifier is incorrect: "
+                + region.getContig() + " " + region.getStart() + " " + region.getEnd();
+        return classifier.getPotentialGermlinesPerRead().getOrDefault(region.getContig(), new HashMap<>());
     }
 }

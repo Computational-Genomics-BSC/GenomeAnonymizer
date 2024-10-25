@@ -8,6 +8,7 @@ import htsjdk.samtools.util.Interval;
 import htsjdk.samtools.util.IntervalList;
 import htsjdk.samtools.util.SamLocusIterator;
 import htsjdk.samtools.util.SamLocusIterator.LocusInfo;
+import htsjdk.tribble.SimpleFeature;
 
 import java.io.Closeable;
 import java.io.File;
@@ -21,8 +22,8 @@ import java.util.function.Consumer;
 import static utils.Operations.compare;
 
 /**
-* Simple read mapping reader to get paired pileups from tumor normal samples,
-* only from positions covered in both alignment files
+* Read mapping reader to get paired pileups from tumor normal samples,
+* only in positions covered in both alignment files
 * @author Nicolas Gaitan
  */
 public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Closeable {
@@ -41,8 +42,8 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         init(new File(normalFilePath), new File(tumorFilePath), new File(referenceGenome), null);
     }
 
-    public SamplePairReadAlignmentReader(String normalFilePath, String tumorFilePath, String referenceGenome, IntervalList intervals) throws IOException {
-        init(new File(normalFilePath), new File(tumorFilePath), new File(referenceGenome), intervals);
+    public SamplePairReadAlignmentReader(String normalFilePath, String tumorFilePath, String referenceGenome, SimpleFeature region) throws IOException {
+        init(new File(normalFilePath), new File(tumorFilePath), new File(referenceGenome), region);
     }
 
     /**
@@ -50,9 +51,9 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
      * @param normalFile
      * @param tumorFile
      * @param referenceGenome
-     * @param intervals Can be any range of valid genomic regions, but is intended to be a list of one interval for multithreading
+     * @param region Can be any range of valid genomic regions, but is intended to be a list of one region for multithreading
      */
-    private void init(File normalFile, File tumorFile, File referenceGenome, IntervalList intervals) {
+    private void init(File normalFile, File tumorFile, File referenceGenome, SimpleFeature region)throws IOException {
         SamReaderFactory normalSamFactory = SamReaderFactory.makeDefault();
         SamReaderFactory tumorSamFactory = SamReaderFactory.makeDefault();
         normalSamFactory.referenceSequence(referenceGenome);
@@ -63,14 +64,34 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         tumorSamHeader = tumorSamReader.getFileHeader();
         // This is temporary, as it relies on all read groups having the same information
         platform = normalSamHeader.getReadGroups().get(0).getPlatform();
-        if (intervals != null){
-            iterTumor = new SamLocusIterator(tumorSamReader, intervals);
-            iterNormal = new SamLocusIterator(normalSamReader, intervals);
+        if (region != null){
+            assert (getNormalSamHeader().getSequenceDictionary().isSameDictionary(getTumorSamHeader().getSequenceDictionary())):
+                    "Headers have different sequence dictionaries";
+            IntervalList intervalList = new IntervalList(this.getNormalSamHeader());
+            Interval intervalRegion = new Interval(region.getContig(), region.getStart(), region.getEnd());
+            intervalList.add(intervalRegion);
+            //DEBUG
+            //intervalList.forEach(v -> System.out.println(v.getContig() + " " + v.getStart() + " " + v.getEnd()));
+            //System.exit(0);
+            //DEBUG
+            iterTumor = new SamLocusIterator(tumorSamReader, intervalList, true);
+            iterNormal = new SamLocusIterator(normalSamReader, intervalList, true);
         }
         else{
             iterTumor = new SamLocusIterator(tumorSamReader);
             iterNormal = new SamLocusIterator(normalSamReader);
         }
+        // DEBUG
+        //System.out.println("hola");
+//        if (iterTumor==null){
+//            System.out.println("iterTumor is null");
+//        }
+        // DEBUG
+        // DEBUG
+//        if (iterNormal==null){
+//            System.out.println("iterNormal is null");
+//        }
+        // DEBUG
         setFilteringForSAMIterators(iterNormal);
         setFilteringForSAMIterators(iterTumor);
     }
@@ -90,10 +111,10 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
     @Override
     public Iterator<PairedPileup> iterator() {
         if (iterNormal == null) {
-            throw new IllegalStateException("File reader for normal file is null");
+            throw new IllegalStateException("Normal file reader is closed");
         }
         if (iterTumor == null) {
-            throw new IllegalStateException("File reader for tumor file is null");
+            throw new IllegalStateException("Tumoral file reader is closed");
         }
         return new PairedPileupIterator();
     }
@@ -124,16 +145,9 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         private LocusInfo nextTumorLocus;
 
         public PairedPileupIterator(){
-            if (!iterNormal.hasNext()){
-                throw new IllegalStateException("Normal set alignment file is empty");
-            }
-            if (!iterTumor.hasNext()){
-                throw new IllegalStateException("Tumor set alignment file is empty");
-            }
             nextNormalLocus = iterNormal.next();
             nextTumorLocus = iterTumor.next();
             nextPileup = getNextOrAdvance();
-            // PairedPileup nextPileup = new PairedPileup(iterNormal, iterTumor);
         }
 
         @Override
