@@ -39,7 +39,6 @@ public class GenomeAnonymizer {
                     String algorithm, String mode, String vcfFile, int nThreads) throws IOException {
         //anonymizer.setRemoveUnmapped(false);
         long start1 = System.currentTimeMillis();
-        // TODO: Parallelize per chromosome, and then, per reads to anonymize
         Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize = new HashMap<>();
         if (nThreads==1){
             VariationClassifier classifier = new VariationClassifier();

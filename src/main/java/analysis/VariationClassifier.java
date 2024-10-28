@@ -6,10 +6,7 @@ import genomicelements.PairedPileup;
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.SAMRecord;
-import htsjdk.samtools.SAMSequenceDictionary;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
-import htsjdk.samtools.util.Interval;
-import htsjdk.samtools.util.IntervalList;
 import htsjdk.samtools.util.SamLocusIterator.RecordAndOffset;
 import htsjdk.tribble.SimpleFeature;
 import io.SamplePairReadAlignmentReader;
@@ -18,7 +15,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.*;
 
-import static analysis.GenomeAnonymizer.DEFAULT_RUN_MODE_FUNCTIONALITY;
 import static analysis.GenomeAnonymizer.SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY;
 import static genomicelements.ShortAnonymizedReadPair.*;
 import static io.VCFReader.readVCF;
@@ -113,7 +109,9 @@ public class VariationClassifier {
     private void processPotentialGermlines(List<CalledVariation> variationInPos,
                                            Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep) {
         for (CalledVariation var : variationInPos){
-            if (!SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(var.getSomaticVariationType())) continue;
+            // Anonymize only potential germlines if seen in both datasets, at least once in each, or more than once if only found in the normal tissue mappings
+            if (!SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(var.getSomaticVariationType()) ||
+                    !SomaticVariationType.NORMAL_ONLY_VARIANT.equals(var.getSomaticVariationType())) continue;
             if (!somaticVariantsToKeep.isEmpty()){
                 Map<Integer, CalledVariation> validatedSomaticsAtSeq = somaticVariantsToKeep.get(var.getSeqName());
                 if(validatedSomaticsAtSeq==null) continue;
