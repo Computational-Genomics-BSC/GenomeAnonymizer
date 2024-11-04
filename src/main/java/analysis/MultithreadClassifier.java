@@ -6,12 +6,15 @@ import htsjdk.tribble.SimpleFeature;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.logging.Logger;
 
 /**
  * Helper class to multithread the variation calling phase
  * @author Nicolas Gaitan
  */
 public class MultithreadClassifier implements Runnable{
+
+    private static final Logger LOGGER = Logger.getLogger(MultithreadClassifier.class.getName());
 
     private final VariationClassifier classifier = new VariationClassifier();
     private String normalPath;
@@ -35,8 +38,10 @@ public class MultithreadClassifier implements Runnable{
         try {
             classifier.callVariation(normalPath, tumorPath, refGenome, mode, vcfFile, region);
         } catch (Exception e) {
-            e.printStackTrace();
-            System.exit(1);
+            LOGGER.severe("Exception in thread for region: " + region.getContig() + " " + region.getStart() + " " + region.getEnd() +
+                    " halting execution prematurely");
+            LOGGER.severe(e.getMessage());
+            //System.exit(1);
         }
     }
 

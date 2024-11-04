@@ -5,18 +5,26 @@ import htsjdk.samtools.reference.FastaSequenceIndex;
 import htsjdk.samtools.reference.FastaSequenceIndexEntry;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
 import htsjdk.tribble.SimpleFeature;
-
+import org.apache.commons.cli.*;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.logging.ConsoleHandler;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.logging.SimpleFormatter;
+
 
 public class GenomeAnonymizer {
 
-    public static final String DEFAULT_RUN_MODE_FUNCTIONALITY = "DEFAULT";
-    public static final String SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY = "SOMATIC_BENCHMARK";
+    private static final Logger LOGGER = logConfigure();
+
+
+    public static final String DEFAULT_RUN_MODE_FUNCTIONALITY = "default";
+    public static final String SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY = "benchmark";
 
     public final static String BAM_FILE = ".bam";
     public final static String SAM_FILE = ".sam";
@@ -38,6 +46,8 @@ public class GenomeAnonymizer {
     public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed,
                     String algorithm, String mode, String vcfFile, int nThreads) throws IOException {
         //anonymizer.setRemoveUnmapped(false);
+        LOGGER.info("Beginning anonymization in " + mode + " mode");
+        //System.out.println("Beginning anonymization in " + mode + " mode");
         long start1 = System.currentTimeMillis();
         Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize = new HashMap<>();
         if (nThreads==1){
@@ -50,12 +60,12 @@ public class GenomeAnonymizer {
             readGermlinesToAnonymize = callVariationInParallel(normalPath, tumorPath, refGenome, mode, vcfFile, partitions, nThreads);
         }
         long end1 = System.currentTimeMillis();
-        System.out.println("Elapsed Time in seconds for variation calling: "+ (double) (end1-start1)/1000);
+        LOGGER.info("Elapsed Time in seconds for variation calling: "+ (double) (end1-start1)/1000);
         long start2 = System.currentTimeMillis();
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm, readGermlinesToAnonymize);
         anonymizer.anonymizeReads(normalPath, tumorPath, refGenome, outputPrefix, false);
         long end2 = System.currentTimeMillis();
-        System.out.println("Elapsed Time in seconds for anonymization: "+ (double) (end2-start2)/1000);
+        LOGGER.info("Elapsed Time in seconds for anonymization: "+ (double) (end2-start2)/1000);
     }
 
     private Map<String, Map<Integer, List<CalledVariation>>> callVariationInParallel(String normalPath, String tumorPath, String refGenome,
@@ -99,42 +109,80 @@ public class GenomeAnonymizer {
         reference.close();
         // long genomeSize = seqDict.getReferenceLength();
         List<SimpleFeature> regions = new ArrayList<>();
-        if(nThreads>sequences.size()) {
-            Collections.sort(sequences, Comparator.comparing(FastaSequenceIndexEntry::getSize));
-            Collections.reverse(sequences);
-            //int nNewPartitions = nThreads-currentPartitions;
-            int availableThreads = nThreads-sequences.size();
-            int[] partitionsPerSequence = new int[sequences.size()];
-            Arrays.fill(partitionsPerSequence, 1);
-            long basesPerThread = genomeSize/nThreads;
-            // Estimate threads to be assigned to each contig
-            for(int i = 0; i < sequences.size(); i++){
-                partitionsPerSequence[i] += (int) (sequences.get(i).getSize() / basesPerThread);
-                availableThreads -= partitionsPerSequence[i];
-                assert (availableThreads>=0): "Available threads are lower than 0, this should not happen";
-                if(availableThreads==0) break;
-            }
-            // Make propper contig partitions into the regions, based on n assigned threads
-            for(int i = 0; i < sequences.size(); i++){
-                FastaSequenceIndexEntry currentContig = sequences.get(i);
-                String contig = currentContig.getContig();
-                int contigLength = (int) currentContig.getSize();
-                int partitionSize = contigLength / partitionsPerSequence[i];
-                int currentFirst = 1;
-                for(int j = 0; j < partitionsPerSequence[i]; j++){
-                    //Be careful with very large chromosomes, with humans there should not be a problem
-                    int currentLast = j == partitionsPerSequence[i]-1 ? (int) currentContig.getSize() : currentFirst + 1 + partitionSize;
-                    SimpleFeature region = new SimpleFeature(contig, currentFirst, currentLast);
-                    regions.add(region);
-                    currentFirst += partitionSize;
-                }
+        Collections.sort(sequences, Comparator.comparing(FastaSequenceIndexEntry::getSize));
+        Collections.reverse(sequences);
+        //int nNewPartitions = nThreads-currentPartitions;
+        //int availableThreads = nThreads-sequences.size();
+        int availableThreads = nThreads;
+        System.out.println("init avail=" + availableThreads);
+        int[] partitionsPerSequence = new int[sequences.size()];
+        Arrays.fill(partitionsPerSequence, 1);
+        long basesPerThread = genomeSize/nThreads;
+        System.out.println("basesPerThread=" + basesPerThread);
+        // Estimate threads to be assigned to each contig
+        for(int i = 0; i < sequences.size(); i++){
+            if(availableThreads <= 0) break;
+            partitionsPerSequence[i] += (int) (sequences.get(i).getSize() / basesPerThread);
+            availableThreads -= partitionsPerSequence[i];
+            System.out.println("avail=" + availableThreads);
+            System.out.println("part per seq=" + partitionsPerSequence[i]);
+            assert (availableThreads>=0): "Available threads are lower than 0, this should not happen";
+        }
+        // Make propper contig partitions into the regions, based on n assigned threads
+        for(int i = 0; i < sequences.size(); i++){
+            FastaSequenceIndexEntry currentContig = sequences.get(i);
+            String contig = currentContig.getContig();
+            int contigLength = (int) currentContig.getSize();
+            int partitionSize = contigLength / partitionsPerSequence[i];
+            int currentFirst = 1;
+            for(int j = 0; j < partitionsPerSequence[i]; j++){
+                //Be careful with very large chromosomes, with humans there should not be a problem
+                int currentLast = j == partitionsPerSequence[i]-1 ? (int) currentContig.getSize() : currentFirst + partitionSize;
+                SimpleFeature region = new SimpleFeature(contig, currentFirst, currentLast);
+                regions.add(region);
+                currentFirst += partitionSize + 1;
             }
         }
-        else{
-            regions = sequences.stream()
-                    .map(sequenceIndexEntry -> new SimpleFeature(sequenceIndexEntry.getContig(), 1, (int) sequenceIndexEntry.getSize()))
-                    .toList();
-        }
+//        if(nThreads>sequences.size()) {
+//            Collections.sort(sequences, Comparator.comparing(FastaSequenceIndexEntry::getSize));
+//            Collections.reverse(sequences);
+//            //int nNewPartitions = nThreads-currentPartitions;
+//            int availableThreads = nThreads-sequences.size();
+//            int[] partitionsPerSequence = new int[sequences.size()];
+//            Arrays.fill(partitionsPerSequence, 1);
+//            long basesPerThread = genomeSize/nThreads;
+//            // Estimate threads to be assigned to each contig
+//            for(int i = 0; i < sequences.size(); i++){
+//                partitionsPerSequence[i] += (int) (sequences.get(i).getSize() / basesPerThread);
+//                availableThreads -= partitionsPerSequence[i];
+//                assert (availableThreads>=0): "Available threads are lower than 0, this should not happen";
+//                if(availableThreads==0) break;
+//            }
+//            // Make propper contig partitions into the regions, based on n assigned threads
+//            for(int i = 0; i < sequences.size(); i++){
+//                FastaSequenceIndexEntry currentContig = sequences.get(i);
+//                String contig = currentContig.getContig();
+//                int contigLength = (int) currentContig.getSize();
+//                int partitionSize = contigLength / partitionsPerSequence[i];
+//                int currentFirst = 1;
+//                for(int j = 0; j < partitionsPerSequence[i]; j++){
+//                    //Be careful with very large chromosomes, with humans there should not be a problem
+//                    int currentLast = j == partitionsPerSequence[i]-1 ? (int) currentContig.getSize() : currentFirst + 1 + partitionSize;
+//                    SimpleFeature region = new SimpleFeature(contig, currentFirst, currentLast);
+//                    regions.add(region);
+//                    currentFirst += partitionSize;
+//                }
+//            }
+//        }
+//        else{
+//            regions = sequences.stream()
+//                    .map(sequenceIndexEntry -> new SimpleFeature(sequenceIndexEntry.getContig(), 1, (int) sequenceIndexEntry.getSize()))
+//                    .toList();
+//        }
+        //DEBUG
+        //regions.forEach(r-> System.out.println(r.getContig() + " " + r.getStart() + " " + r.getEnd()));
+        //System.exit(0);
+        //DEBUG
         return regions;
     }
 
@@ -163,21 +211,134 @@ public class GenomeAnonymizer {
 
     public static void main(String[] args) throws IOException {
         // Test functionalities temporarily
-        String normalPath = args[0];
-        System.out.println(normalPath);
-        String tumorPath = args[1];
-        System.out.println(tumorPath);
-        String refGenome = args[2];
-        System.out.println(refGenome);
-        String vcfFilePath = args[3];
-        System.out.println(vcfFilePath);
-        int nThreads = Integer.parseInt(args[4]);
-        long start2 = System.currentTimeMillis();
+//        String normalPath = args[0];
+//        System.out.println(normalPath);
+//        String tumorPath = args[1];
+//        System.out.println(tumorPath);
+//        String refGenome = args[2];
+//        System.out.println(refGenome);
+//        String vcfFilePath = args[3];
+//        System.out.println(vcfFilePath);
+//        int nThreads = Integer.parseInt(args[4]);
+//        long start2 = System.currentTimeMillis();
         GenomeAnonymizer appInstance = new GenomeAnonymizer();
-        appInstance.run(normalPath, tumorPath, refGenome, removeSuffixIfExists(normalPath, BAM_FILE), false,
-                AnonymizerAlgorithm.SHORT_READ_ALGORITHM, SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, vcfFilePath, nThreads);
+//        appInstance.run(normalPath, tumorPath, refGenome, removeSuffixIfExists(normalPath, BAM_FILE), false,
+//                AnonymizerAlgorithm.SHORT_READ_ALGORITHM, SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, vcfFilePath, nThreads);
+//        long end2 = System.currentTimeMillis();
+//        System.out.println("Total execution Time in seconds: "+ (double) (end2-start2)/1000);
+        long start2 = System.currentTimeMillis();
+        Options options = buildCommandLineArguments();
+        CommandLineParser parser = new DefaultParser();
+        try {
+            CommandLine commandLine = parser.parse(options, args);
+            if(args.length==0 || commandLine.hasOption("h")){
+                HelpFormatter formatter = new HelpFormatter();
+                String header = "GenomeAnonymizer";
+                String footer = "";
+                if(args.length==0) footer = "No arguments provided. Displaying default help message.";
+                // TODO: Change when it is set to be run as a jar, or container
+                formatter.printHelp("./gradlew --args '...'", header, options, footer, true);
+                return;
+                //System.exit(0);
+            }
+            String normalPath = commandLine.getOptionValue("in");
+            String tumorPath = commandLine.getOptionValue("it");
+            String refGenome = commandLine.getOptionValue("r");
+            String outputPrefix = commandLine.getOptionValue("o", removeSuffixIfExists(normalPath, BAM_FILE));
+            int nThreads = Integer.parseInt(commandLine.getOptionValue("t", "4"));
+            String mode = commandLine.getOptionValue("m", DEFAULT_RUN_MODE_FUNCTIONALITY);
+            String vcfFilePath = "";
+            if (SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)){
+                if(!commandLine.hasOption("v")) throw new ParseException("benchmark mode requires VCF file, but none was provided");
+                vcfFilePath = commandLine.getOptionValue("v");
+                appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, false,
+                        AnonymizerAlgorithm.SHORT_READ_ALGORITHM, SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, vcfFilePath, nThreads);
+            }
+            else{
+                if(commandLine.hasOption("v")) System.out.println("Mode is not set to benchmark, but vcf file was provided," +
+                        " default mode will be run normally," +
+                        " vcf records will not be read");
+                appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, false,
+                        AnonymizerAlgorithm.SHORT_READ_ALGORITHM, nThreads);
+            }
+        }
+        catch (Exception e){
+            //System.err.println(e.getMessage());
+            LOGGER.warning(e.getMessage());
+        }
         long end2 = System.currentTimeMillis();
-        System.out.println("Total execution Time in seconds: "+ (double) (end2-start2)/1000);
+        LOGGER.info("Total execution Time in seconds: "+ (double) (end2-start2)/1000);
+//        catch (ParseException e){
+//            System.err.println("Invalid arguments: " + e.getMessage());
+//        }
+//        catch (IOException e){
+//            System.err.println("Invalid arguments: " + e.getMessage());
+//        }
+    }
+
+    private static Options buildCommandLineArguments(){
+        Options options = new Options();
+        options.addOption("h", "Prints help message with information about the arguments");
+        options.addOption(Option.builder("in")
+                .desc("Input mappings coming from the normal sample (SAM/BAM/CRAM)")
+                .argName("FILE")
+                .hasArg(true)
+                //.required(true)
+                .build());
+        options.addOption(Option.builder("it")
+                .desc("Input mappings coming from the tumoral sample (SAM/BAM/CRAM)")
+                .argName("FILE")
+                .hasArg(true)
+                //.required(true)
+                .build());
+        options.addOption(Option.builder("r")
+                .desc("Reference genome against which the samples are aligned (.fasta, .fa)")
+                .argName("FILE")
+                .hasArg(true)
+                //.required(true)
+                .build());
+        options.addOption(Option.builder("o")
+                .desc("Prefix to name the output files")
+                .argName("STRING")
+                .hasArg(true)
+                //.required(true)
+                .build());
+        options.addOption(Option.builder("t")
+                .desc("Number of threads to run the anonymizer (default=4)")// + "'functional:' ")
+                .hasArg(true)
+                .argName("INT")
+                //.required(false)
+                .type(Integer.class)
+                .build());
+        options.addOption(Option.builder("m")
+                .desc("""
+                        Mode that defines the functionality of the anonymizer, between: \
+                        
+                        'default': Anonymizes all possible germline variants\
+                        
+                        'benchmark': Keeps marked variants for somatic calling benchmarking (requires a VCF file)""")// + "'functional:' ")
+                .argName("STRING")
+                .hasArg(true)
+                //.required(false)
+                .build());
+        options.addOption(Option.builder("v")
+                .desc("VCF file containing the variants to be kept  (.VCF), required for running the Anonymizer in benchmark mode")
+                .argName("FILE")
+                .hasArg(true)
+                //.required(false)
+                .build());
+        return options;
+    }
+
+    private static Logger logConfigure(){
+        Logger answer = Logger.getLogger(GenomeAnonymizer.class.getName());
+        answer.setLevel(Level.ALL);
+        ConsoleHandler consoleHandler = new ConsoleHandler();
+        //consoleHandler.setOutputStream(System.out);
+        consoleHandler.setFormatter(new SimpleFormatter());
+        answer.addHandler(consoleHandler);
+        answer.setUseParentHandlers(false);
+        return answer;
     }
 
     private static String removeSuffixIfExists(String key, String suffix) {
