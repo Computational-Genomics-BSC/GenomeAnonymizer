@@ -13,8 +13,6 @@ import htsjdk.tribble.SimpleFeature;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.function.Consumer;
@@ -36,6 +34,7 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
     private String platform;
     private SamLocusIterator iterTumor;
     private SamLocusIterator iterNormal;
+    private boolean returnNormal = false;
     // private Iterator<PairedPileup> ;
 
     public SamplePairReadAlignmentReader(String normalFilePath, String tumorFilePath, String referenceGenome) throws IOException {
@@ -81,17 +80,6 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
             iterTumor = new SamLocusIterator(tumorSamReader);
             iterNormal = new SamLocusIterator(normalSamReader);
         }
-        // DEBUG
-        //System.out.println("hola");
-//        if (iterTumor==null){
-//            System.out.println("iterTumor is null");
-//        }
-        // DEBUG
-        // DEBUG
-//        if (iterNormal==null){
-//            System.out.println("iterNormal is null");
-//        }
-        // DEBUG
         setFilteringForSAMIterators(iterNormal);
         setFilteringForSAMIterators(iterTumor);
     }
@@ -101,6 +89,10 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         iterator.setEmitUncoveredLoci(false);
         iterator.setMappingQualityScoreCutoff(MINIMUM_MAPPING_QUALITY);
         iterator.setIncludeNonPfReads(INCLUDE_NON_PF_READS);
+    }
+
+    public void setReturnNormal(boolean returnNormal){
+        this.returnNormal = returnNormal;
     }
 
     /**
@@ -147,51 +139,70 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         public PairedPileupIterator(){
             nextNormalLocus = iterNormal.next();
             nextTumorLocus = iterTumor.next();
-            nextPileup = getNextOrAdvance();
+            nextPileup = getNext();
         }
 
         @Override
         public PairedPileup next() {
             if(nextPileup == null) throw new NoSuchElementException();
             PairedPileup currentPileup = nextPileup;
-            nextPileup = getNextOrAdvance();
+            nextPileup = getNext();
             return currentPileup;
         }
 
-//        /**
-//         * <pre> Pileups must pertain to positions in the same sequence </pre>
-//         * @return currentPileup
-//         */
-//        private PairedPileup getNextOrAdvance() {
-//            PairedPileup currentPileup;
-//            while(true){
-//                if(nextNormalLocus == null || nextTumorLocus == null){
-//                    currentPileup = null;
-//                    break;
-//                }
-//                else{
-//                    if (nextNormalLocus.getPosition() < nextTumorLocus.getPosition()){
-//                        nextNormalLocus = iterNormal.next();
-//                    }
-//                    else if(nextNormalLocus.getPosition() > nextTumorLocus.getPosition()){
-//                        nextTumorLocus = iterTumor.next();
-//                    }
-//                    else{
-//                        currentPileup = new PairedPileup(nextNormalLocus, nextTumorLocus);
-//                        nextNormalLocus = iterNormal.next();
-//                        nextTumorLocus = iterTumor.next();
-//                        break;
-//                    }
-//                }
-//            }
-//            return currentPileup;
-//        }
+        private PairedPileup getNext(){
+            if(returnNormal) return getPairsAndNormals();
+            return getPairs();
+        }
 
         /**
          *
          * @return currentPileup
          */
-        private PairedPileup getNextOrAdvance() {
+        private PairedPileup getPairsAndNormals() {
+            PairedPileup currentPileup;
+            while(true){
+                if (nextNormalLocus != null && nextTumorLocus != null){
+                    int cmp = compare(nextNormalLocus.getSequenceIndex(), nextNormalLocus.getPosition(), nextNormalLocus.getEnd(),
+                            nextTumorLocus.getSequenceIndex(), nextTumorLocus.getPosition(), nextTumorLocus.getEnd());
+                    if (cmp < -1){
+                        currentPileup = new PairedPileup(nextNormalLocus);
+                        nextNormalLocus = iterNormal.next();
+                        break;
+                    }
+                    else if(cmp > 1){
+                        nextTumorLocus = iterTumor.next();
+                    }
+                    else{
+                        currentPileup = new PairedPileup(nextNormalLocus, nextTumorLocus);
+                        nextNormalLocus = iterNormal.next();
+                        nextTumorLocus = iterTumor.next();
+                        break;
+                    }
+                }
+                else if(nextNormalLocus == null && nextTumorLocus == null){
+                    currentPileup = null;
+                    break;
+                }
+                else{
+                    if(nextTumorLocus == null){
+                        currentPileup = new PairedPileup(nextNormalLocus);
+                        nextNormalLocus = iterNormal.next();
+                    }
+                    else{
+                        currentPileup = null;
+                    }
+                    break;
+                }
+            }
+            return currentPileup;
+        }
+
+        /**
+         *
+         * @return currentPileup
+         */
+        private PairedPileup getPairs() {
             PairedPileup currentPileup;
             while(true){
                 if(nextNormalLocus == null || nextTumorLocus == null){

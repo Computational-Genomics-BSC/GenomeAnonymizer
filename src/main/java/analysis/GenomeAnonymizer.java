@@ -49,16 +49,19 @@ public class GenomeAnonymizer {
         LOGGER.info("Beginning anonymization in " + mode + " mode");
         //System.out.println("Beginning anonymization in " + mode + " mode");
         long start1 = System.currentTimeMillis();
-        Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize = new HashMap<>();
-        if (nThreads==1){
-            VariationClassifier classifier = new VariationClassifier();
-            classifier.callVariation(normalPath, tumorPath, refGenome, mode, vcfFile);
-            readGermlinesToAnonymize = classifier.getPotentialGermlinesPerRead();
-        }
-        else{
-            List<SimpleFeature> partitions = getPartitions(refGenome, nThreads);
-            readGermlinesToAnonymize = callVariationInParallel(normalPath, tumorPath, refGenome, mode, vcfFile, partitions, nThreads);
-        }
+        //Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize = new HashMap<>();
+//        if (nThreads==1){
+//            VariationClassifier classifier = new VariationClassifier();
+//            classifier.callVariation(normalPath, tumorPath, refGenome, mode, vcfFile);
+//            readGermlinesToAnonymize = classifier.getPotentialGermlinesPerRead();
+//        }
+//        else{
+//            List<SimpleFeature> partitions = getPartitions(refGenome, nThreads);
+//            readGermlinesToAnonymize = callVariationInParallel(normalPath, tumorPath, refGenome, mode, vcfFile, partitions, nThreads);
+//        }
+        List<SimpleFeature> partitions = getPartitions(refGenome, nThreads);
+        Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize =
+                callVariationInParallel(normalPath, tumorPath, refGenome, mode, vcfFile, partitions, nThreads);
         long end1 = System.currentTimeMillis();
         LOGGER.info("Elapsed Time in seconds for variation calling: "+ (double) (end1-start1)/1000);
         long start2 = System.currentTimeMillis();
@@ -70,7 +73,6 @@ public class GenomeAnonymizer {
 
     private Map<String, Map<Integer, List<CalledVariation>>> callVariationInParallel(String normalPath, String tumorPath, String refGenome,
                                                                                      String mode, String vcfFile, List<SimpleFeature> partitions, int nThreads) {
-        assert (nThreads==partitions.size()): "Partition number is not equal to the number of threads";
         Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize = new HashMap<>();
         MultithreadClassifier[] mClassifiers = new MultithreadClassifier[partitions.size()];
         for(int i = 0; i < partitions.size(); i++){
@@ -88,9 +90,11 @@ public class GenomeAnonymizer {
         executorService.shutdown();
         for(MultithreadClassifier classifier : mClassifiers){
             String contig = classifier.getContig();
-            Map<Integer, List<CalledVariation>> germlinesInPartition = classifier.getAnswer();
-            Map<Integer, List<CalledVariation>> germlinesInContig = readGermlinesToAnonymize.computeIfAbsent(contig, v -> new HashMap<>());
-            germlinesInContig.putAll(germlinesInPartition);
+            Map<String, Map<Integer, List<CalledVariation>>> germlinesInPartitionReads = classifier.getAnswer();
+            //System.out.println("# readGermlinesInPartition=" + germlinesInPartitionReads.size());
+            //Map<Integer, List<CalledVariation>> germlinesInContig = readGermlinesToAnonymize.computeIfAbsent(contig, v -> new HashMap<>());
+            readGermlinesToAnonymize.putAll(germlinesInPartitionReads);
+            //System.out.println("# allReadGermlines up to now=" + readGermlinesToAnonymize.size());
         }
         return readGermlinesToAnonymize;
     }
@@ -110,22 +114,26 @@ public class GenomeAnonymizer {
         // long genomeSize = seqDict.getReferenceLength();
         List<SimpleFeature> regions = new ArrayList<>();
         Collections.sort(sequences, Comparator.comparing(FastaSequenceIndexEntry::getSize));
+        //long basesPerThread = sequences.size() % 2 == 0 ? (sequences.get(sequences.size()/2).getSize() + sequences.get((sequences.size()/2)-1).getSize())/2 :
+        //        sequences.get(sequences.size()/2).getSize();
         Collections.reverse(sequences);
         //int nNewPartitions = nThreads-currentPartitions;
         //int availableThreads = nThreads-sequences.size();
         int availableThreads = nThreads;
-        System.out.println("init avail=" + availableThreads);
+        //System.out.println("init avail=" + availableThreads);
         int[] partitionsPerSequence = new int[sequences.size()];
         Arrays.fill(partitionsPerSequence, 1);
         long basesPerThread = genomeSize/nThreads;
-        System.out.println("basesPerThread=" + basesPerThread);
+        //long basesPerThread = availableThreads < sequences.size() ? sequences.get(availableThreads).getSize() :
+        //        sequences.get(sequences.size() - 1).getSize();
+        //System.out.println("basesPerThread=" + basesPerThread);
         // Estimate threads to be assigned to each contig
         for(int i = 0; i < sequences.size(); i++){
             if(availableThreads <= 0) break;
             partitionsPerSequence[i] += (int) (sequences.get(i).getSize() / basesPerThread);
             availableThreads -= partitionsPerSequence[i];
-            System.out.println("avail=" + availableThreads);
-            System.out.println("part per seq=" + partitionsPerSequence[i]);
+            //System.out.println("avail=" + availableThreads);
+            //System.out.println("part per seq=" + partitionsPerSequence[i]);
             assert (availableThreads>=0): "Available threads are lower than 0, this should not happen";
         }
         // Make propper contig partitions into the regions, based on n assigned threads
@@ -209,7 +217,7 @@ public class GenomeAnonymizer {
         return anonymizer;
     }
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws Exception {
         // Test functionalities temporarily
 //        String normalPath = args[0];
 //        System.out.println(normalPath);
@@ -255,16 +263,19 @@ public class GenomeAnonymizer {
                         AnonymizerAlgorithm.SHORT_READ_ALGORITHM, SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, vcfFilePath, nThreads);
             }
             else{
-                if(commandLine.hasOption("v")) System.out.println("Mode is not set to benchmark, but vcf file was provided," +
+                if(commandLine.hasOption("v")) LOGGER.warning("Mode is not set to benchmark, but vcf file was provided," +
                         " default mode will be run normally," +
-                        " vcf records will not be read");
+                        " but vcf records will not be read");
                 appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, false,
                         AnonymizerAlgorithm.SHORT_READ_ALGORITHM, nThreads);
             }
         }
         catch (Exception e){
             //System.err.println(e.getMessage());
-            LOGGER.warning(e.getMessage());
+            LOGGER.severe("Exception happened during execution: " + e.getMessage() + "\n halting execution and" +
+                    " printing stacktrace");
+            e.printStackTrace();
+            System.exit(1);
         }
         long end2 = System.currentTimeMillis();
         LOGGER.info("Total execution Time in seconds: "+ (double) (end2-start2)/1000);

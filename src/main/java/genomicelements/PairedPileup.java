@@ -25,12 +25,20 @@ public class PairedPileup {
         referencePos = normalLocus.getPosition();
     }
 
+    public PairedPileup(LocusInfo normalLocus) {
+        this.normalLocus = normalLocus;
+        this.tumorLocus = null;
+        refenceSequenceName = normalLocus.getSequenceName();
+        referenceSequenceIdx = normalLocus.getSequenceIndex();
+        referencePos = normalLocus.getPosition();
+    }
+
     public List<RecordAndOffset> getNormalPileup(){
         return normalLocus.getRecordAndOffsets();
     }
 
     public List<RecordAndOffset> getTumorPileup(){
-        return tumorLocus.getRecordAndOffsets();
+        return tumorLocus == null ? null : tumorLocus.getRecordAndOffsets();
     }
 
     public int totalSize(){
@@ -49,4 +57,7 @@ public class PairedPileup {
         return referencePos;
     }
 
+    public boolean isOnlyNormal(){
+        return tumorLocus == null;
+    }
 }

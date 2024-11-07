@@ -61,7 +61,9 @@ public class VariationClassifier {
      */
     public void callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile, SimpleFeature region) throws IOException {
         try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, region);
-            IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(refGenome));){
+            IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(refGenome))){
+            //Retrieve signals from their normal sample even if there is no coverage in the tumor sample
+            pairPileupReader.setReturnNormal(true);
             callVariation(pairPileupReader, referenceWalker, mode, vcfFile);
         }
     }
@@ -77,7 +79,9 @@ public class VariationClassifier {
      */
     public void callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile) throws IOException {
         try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome);
-            IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(refGenome));){
+            IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(refGenome))){
+            //Retrieve signals from their normal sample even if there is no coverage in the tumor sample
+            pairPileupReader.setReturnNormal(true);
             callVariation(pairPileupReader, referenceWalker, mode, vcfFile);
         }
     }
@@ -113,11 +117,6 @@ public class VariationClassifier {
                                            Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep) {
         for (CalledVariation var : variationInPos){
             // Anonymize only potential germlines if seen in both datasets, at least once in each, or more than once if only found in the normal tissue mappings
-            //DEBUG
-            if(var.getPos() == 14605214){
-                System.out.println("& " + var.toString());
-            }
-            //DEBUG
             if (!SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(var.getSomaticVariationType())//) continue;
                     && !SomaticVariationType.NORMAL_ONLY_VARIANT.equals(var.getSomaticVariationType())) continue;
             if (!somaticVariantsToKeep.isEmpty()){
@@ -126,26 +125,19 @@ public class VariationClassifier {
                 CalledVariation validatedSomaticAtPos = validatedSomaticsAtSeq.get(var.getPos());
                 if(validatedSomaticAtPos!=null && validatedSomaticAtPos.equals(var)) continue;
             }
-            //System.out.println("# " + var.toString());
             //DEBUG
-            //LOGGER.info(var.toString());
+            //System.out.println("# " + var.toString());
             //DEBUG
             Map<String, Integer> supportingReads = var.getSupportingReads();
             for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
                 String[] keyElems = entry.getKey().split(READ_PAIR_NAME_SEPARATOR);
                 String readName = keyElems[0];
-                //DEBUG
-                if(readName.equals("f72f0062496b0bab486a8823fd8f8916") || readName.equals("69035cefc2254546ac7789f9c998d3cf")){
-                    System.out.println("&& " + var.toString());
-                }
-                //DEBUG
                 int pairIdx = Integer.parseInt(keyElems[1]);
                 Map<Integer, List<CalledVariation>> potentialGermlinesInReadPair = potentialGermlinesPerRead.computeIfAbsent(readName, v -> new HashMap<>());
                 List<CalledVariation> potentialGermlinesInRead = potentialGermlinesInReadPair.computeIfAbsent(pairIdx, v -> new ArrayList<>());
                 potentialGermlinesInRead.add(var);
             }
         }
-        //System.out.flush();
     }
 
     /**
@@ -165,21 +157,17 @@ public class VariationClassifier {
         byte refBase = referenceWalker.getSubsequenceAt(contig, refPos, refPos).getBases()[0];
         classifyPileupVariation(contig, refPos, normalPileup, seenReads, refBase, variationPerPos, referenceWalker,true);
         classifyPileupVariation(contig, refPos, tumorPileup, seenReads, refBase, variationPerPos, referenceWalker,false);
-        // return variationPerPos;
     }
 
     private void classifyPileupVariation(String sequenceName, int refPosition, List<RecordAndOffset> pileup, Set<String> seenReads, byte referenceBase,
                                          Map<Integer, List<CalledVariation>> variationPerPos, IndexedFastaSequenceFile referenceWalker, boolean isNormalDataset) {
+        // In case normal pileup is also queried, to avoid null tumor pileups are not accessed
+        if(pileup==null) return;
         // May be removing the read;pair name of seenReads after it reaches he last position in pileup
         // or adding the CIGAR to seen reads string
         for (RecordAndOffset pileupRecord : pileup){
             String readName = pileupRecord.getReadName();
             SAMRecord samRecord = pileupRecord.getRecord();
-            //DEBUG
-            if(isNormalDataset && sequenceName.equals("8") && (samRecord.getStart() >= 14000000 && samRecord.getEnd() <= 15000000)){
-                System.out.println("$ " + readName);
-            }
-            //DEBUG
             variationPerPos.computeIfAbsent(refPosition, v -> new ArrayList<>());
             if (samRecord.getReadUnmappedFlag()) continue;
             //This may be extended to support other types of reads (e.g. long reads)
@@ -243,22 +231,13 @@ public class VariationClassifier {
                 if (variationExists) calledVar = variationInPos.get(indexSearch);
                 calledVar.addSupportingRead(pairReadName, inReadPos);
                 processSomaticType(variationInPos, calledVar, variationExists, isNormalDataset);
-                //DEBUG
-                if(samRecord.getReadName().equals("f72f0062496b0bab486a8823fd8f8916") || samRecord.getReadName().equals("69035cefc2254546ac7789f9c998d3cf")){
-                    System.out.println("% " + calledVar.toString());
-                }
-                //DEBUG
             }
-            // Fix error with estimating ends of slices for read sequence
             if(op.consumesReferenceBases()){
                 currentCigarLength += cigarElement.getLength();
             }
             if(op.consumesReadBases()){
                 readConsumedBaseNumber += cigarElement.getLength();
             }
-            // if(CigarOperator.D.equals(op)){
-            //    readConsumedBaseNumber -= cigarElement.getLength();
-            //}
         }
     }
 

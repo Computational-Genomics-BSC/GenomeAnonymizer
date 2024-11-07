@@ -46,10 +46,6 @@ public class ShortAnonymizedRead implements AnonymizedRead{
         if (!isSupplementaryOrSecondary) setSequenceArray(samRec);
     }
 
-//    public ShortAnonymizedRead fromSAMRecord(SAMRecord samRec) {
-//        return new ShortAnonymizedRead(samRec, false);
-//    }
-
     @Override
     public void anonymizeVariantsInRead() {
         // DEBUG
@@ -84,12 +80,7 @@ public class ShortAnonymizedRead implements AnonymizedRead{
 
     public void modifyBaseInRead(int inReadPosition, byte asciiBase){
         int inArrayPosition = inReadPosition - 1;
-        // DEBUG
-//        if (inArrayPosition==100 && sequenceArray.length==95){
-//            System.out.println("# Read=" + this.readName + " seq=" + Arrays.toString(sequenceArray) + " inArrayPos=" + inArrayPosition + " base=" + asciiBase + " pair=" + pair);
-//        }
         assert inArrayPosition < sequenceArray.length: "In read position is bigger than the length of the read sequence: readpos=" + inReadPosition + " seq_length=" + sequenceArray.length;
-        // DEBUG
         sequenceArray[inArrayPosition] = asciiBase;
     }
 
@@ -101,14 +92,29 @@ public class ShortAnonymizedRead implements AnonymizedRead{
     private int modifyIndel(int inReadPosition, CalledVariation var) {
         int addedOffset = 0;
         int inArrayPosition = inReadPosition - 1;
+        //DEBUG
+//        if(readName.equals("e064a13f1bd6b357f76262ae9b7bf68f") && pair == PAIR_2_IDX){
+//            System.out.println("original_pos=" + inArrayPosition);
+//        }
+        //DEBUG
         int varLength = var.getLength();
         byte [] newSequenceArray;
         byte[] newQualitiesArray;
         if (CalledVariation.VariantType.INS.equals(var.getVariantType())){
             // Deletes the insertion array
-            newSequenceArray = removeInsertion(sequenceArray, inArrayPosition, varLength);
-            newQualitiesArray = removeInsertion(qualitiesArray, inArrayPosition, varLength);
+            //DEBUG
+//            if(readName.equals("e064a13f1bd6b357f76262ae9b7bf68f") && pair == PAIR_2_IDX){
+//                System.out.println("before remove call=" + inArrayPosition);
+//            }
+            //DEBUG
+            newSequenceArray = removeInsertion(sequenceArray, inArrayPosition, varLength, var);
+            newQualitiesArray = removeInsertion(qualitiesArray, inArrayPosition, varLength, var);
             addedOffset = -varLength;
+            //DEBUG
+//            if(readName.equals("e064a13f1bd6b357f76262ae9b7bf68f") && pair == PAIR_2_IDX){
+//                System.out.println("after remove call=" + inArrayPosition);
+//            }
+            //DEBUG
         }
         else if (CalledVariation.VariantType.DEL.equals(var.getVariantType())){
             newSequenceArray = removeDeletion(sequenceArray, inArrayPosition, varLength, var.getRefAllele());
@@ -141,9 +147,14 @@ public class ShortAnonymizedRead implements AnonymizedRead{
         return (byte) answer;
     }
 
-    private byte[] removeInsertion(byte[] original, int inArrayPosition, int varLength){
+    private byte[] removeInsertion(byte[] original, int inArrayPosition, int varLength, CalledVariation debugParam){
         byte[] answer = new byte[original.length - varLength];
         //System.arraycopy(original, 0, answer, 0, inArrayPosition);
+        //DEBUG
+//        if(inArrayPosition + 1 <0){
+//            System.out.println(debugParam + " inArrayPosition=" + inArrayPosition + " read=" + readName + " pair=" + pair);
+//        }
+        //DEBUG
         System.arraycopy(original, 0, answer, 0, inArrayPosition + 1);
         System.arraycopy(original, inArrayPosition + varLength, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
         //System.arraycopy(original, inArrayPosition + varLength + 1, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
