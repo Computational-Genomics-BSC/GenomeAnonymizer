@@ -40,9 +40,11 @@ public class VariationClassifier {
     public static final int SLIDING_WINDOW_LIMIT = 200;
 
     Map<String, Map<Integer, List<CalledVariation>>> potentialGermlinesPerRead;
+    boolean diffuseIndelCalls;
 
     public VariationClassifier(){
         potentialGermlinesPerRead = new HashMap<>();
+        diffuseIndelCalls = false;
     }
 
     public Map<String, Map<Integer, List<CalledVariation>>> getPotentialGermlinesPerRead() {
@@ -103,8 +105,13 @@ public class VariationClassifier {
             else{
                 processPotentialGermlines(variationPerPos.get(pos));
             }
+            if (p==SLIDING_WINDOW_LIMIT) {
+                p = 0;
+                if (diffuseIndelCalls){
+                    
+                }
+            }
             variationPerPos.remove(pos-SLIDING_WINDOW_LIMIT);
-            if (p==SLIDING_WINDOW_LIMIT) p = 0;
             p++;
         }
     }
@@ -231,6 +238,11 @@ public class VariationClassifier {
                 if (variationExists) calledVar = variationInPos.get(indexSearch);
                 calledVar.addSupportingRead(pairReadName, inReadPos);
                 processSomaticType(variationInPos, calledVar, variationExists, isNormalDataset);
+                //DEBUG
+                //if(samRecord.isSecondaryOrSupplementary() && calledVar.getSomaticVariationType().equals(SomaticVariationType.TUMORAL_NORMAL_VARIANT)){
+                //    System.out.println("$Found var: " + calledVar + " in suppl.=" + samRecord.getReadName());
+                //}
+                //DEBUG
             }
             if(op.consumesReferenceBases()){
                 currentCigarLength += cigarElement.getLength();
@@ -290,6 +302,10 @@ public class VariationClassifier {
         }
     }
 
+    public void setDiffuseIndelCalls(boolean diffuseIndelCalls) {
+        this.diffuseIndelCalls = diffuseIndelCalls;
+    }
+
     public static String getSpecificShortReadPairName(SAMRecord samRec, int pairIdx) {
         if (samRec.getAttribute("SA") != null){
             return samRec.getReadName() + READ_PAIR_NAME_SEPARATOR + pairIdx + READ_PAIR_NAME_SEPARATOR + generateAlignmentHash(samRec);
@@ -301,7 +317,6 @@ public class VariationClassifier {
 
     public static String getShortReadPairName(String readName, int pairIdx) {
         return readName + READ_PAIR_NAME_SEPARATOR + pairIdx;
-
     }
 
     private static String generateAlignmentHash(SAMRecord samRec) {

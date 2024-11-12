@@ -21,7 +21,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     public static final int TUMORAL_DATASET_IDX = 1;
     public static final int OUTPUT_FILE_NUMBER = 4;
 
-    Iterable<PairedPileup> reader;
     // Map containing all potential germlines (value: List), per pair (nested key, 0 or 1), per read (key)
     Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize;
     // Map collecting to-be-anonymized reads while they can be masked and written
@@ -31,7 +30,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     FastqWriter[][] writers;
     boolean removeUnmapped;
     boolean writersAreOpen;
-    private Map<String, Map<Integer, CalledVariation>> somaticVariantsToKeep;
 
     public ShortReadAnonymizer(Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize) {
         anonReadContainer = new HashMap<>();
@@ -41,7 +39,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         writers = new FastqWriter[OUTPUT_FILE_NUMBER/2][OUTPUT_FILE_NUMBER/2];
         removeUnmapped = true;
         writersAreOpen = false;
-        somaticVariantsToKeep = new HashMap<>();
     }
 
     @Override
@@ -185,10 +182,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     @Override
     public Map<String, ShortAnonymizedReadPair> getAnonymizedReadContainer() {
         return anonReadContainer;
-    }
-
-    public void setSomaticCalls(Map<String, Map<Integer, CalledVariation>> somaticCallsToKeep){
-        this.somaticVariantsToKeep = somaticCallsToKeep;
     }
 
     private void writeFastqRecord(ShortAnonymizedReadPair pairToWrite, boolean isNormalDataset){

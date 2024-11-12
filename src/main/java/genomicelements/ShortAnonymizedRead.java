@@ -68,10 +68,17 @@ public class ShortAnonymizedRead implements AnonymizedRead{
             }
         }
         if(!indelsToAnonymize.isEmpty()){
+            //DEBUG
+            //if(indelsToAnonymize.size()>1){
+            //    System.out.println(readName + " " + indelsToAnonymize);
+            //    System.exit(0);
+            //}
+            //DEBUG
             indelsToAnonymize.sort(Comparator.comparing(var -> var.getInReadPosition(this)));
             int offset = 0;
             for (CalledVariation var : indelsToAnonymize) {
                 int inReadPos = var.getInReadPosition(this);
+                //offset += modifyIndel(inReadPos + offset + 1, var);
                 offset += modifyIndel(inReadPos + offset, var);
             }
         }
@@ -103,16 +110,21 @@ public class ShortAnonymizedRead implements AnonymizedRead{
         if (CalledVariation.VariantType.INS.equals(var.getVariantType())){
             // Deletes the insertion array
             //DEBUG
-//            if(readName.equals("e064a13f1bd6b357f76262ae9b7bf68f") && pair == PAIR_2_IDX){
-//                System.out.println("before remove call=" + inArrayPosition);
-//            }
+            //if(readName.equals("7990d52d9859724cb58d1188107eea6a") && pair == PAIR_2_IDX){
+            //    System.out.println("before remove call: inArrayPosition=" + inArrayPosition + " -(varLength-1)=" + -(varLength-1)
+            //    );//+" (varLength-1)=" + (varLength-1));
+            //}
             //DEBUG
             newSequenceArray = removeInsertion(sequenceArray, inArrayPosition, varLength, var);
             newQualitiesArray = removeInsertion(qualitiesArray, inArrayPosition, varLength, var);
-            addedOffset = -varLength;
+            //addedOffset = -(varLength-1);
+            addedOffset = -(varLength);
             //DEBUG
-//            if(readName.equals("e064a13f1bd6b357f76262ae9b7bf68f") && pair == PAIR_2_IDX){
-//                System.out.println("after remove call=" + inArrayPosition);
+            // Deletes the insertion array
+            //DEBUG
+//            if(readName.equals("7990d52d9859724cb58d1188107eea6a") && pair == PAIR_2_IDX){
+//                System.out.println("after remove call: inArrayPosition=" + inArrayPosition + " -(varLength)=" + -(varLength-1) +
+//                        " (varLength-1)+1=" + (varLength-1)+1);
 //            }
             //DEBUG
         }
@@ -123,6 +135,7 @@ public class ShortAnonymizedRead implements AnonymizedRead{
             Arrays.fill(avgQualities, avgQ);
             newQualitiesArray = removeDeletion(qualitiesArray, inArrayPosition, varLength, avgQualities);
             addedOffset = varLength;
+            //addedOffset = (varLength+1);
         }
         else {
             // Placeholder for other types of variants
@@ -151,9 +164,10 @@ public class ShortAnonymizedRead implements AnonymizedRead{
         byte[] answer = new byte[original.length - varLength];
         //System.arraycopy(original, 0, answer, 0, inArrayPosition);
         //DEBUG
-//        if(inArrayPosition + 1 <0){
-//            System.out.println(debugParam + " inArrayPosition=" + inArrayPosition + " read=" + readName + " pair=" + pair);
-//        }
+        //if(inArrayPosition + 1 >= answer.length){
+        //    System.out.println(debugParam + " inArrayPosition=" + inArrayPosition + " read=" + readName + " pair=" + pair);
+        //    return original;
+        //}
         //DEBUG
         System.arraycopy(original, 0, answer, 0, inArrayPosition + 1);
         System.arraycopy(original, inArrayPosition + varLength, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);

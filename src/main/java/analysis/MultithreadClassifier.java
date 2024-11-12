@@ -37,11 +37,12 @@ public class MultithreadClassifier implements Runnable{
     public void run() {
         try {
             classifier.callVariation(normalPath, tumorPath, refGenome, mode, vcfFile, region);
+            LOGGER.info("Finished variation analysis of genomic region: SEQ=" + region.getContig() + " POS=" + region.getStart() + " END=" + region.getEnd());
         } catch (Exception e) {
             LOGGER.severe("Exception in thread for region: " + region.getContig() + " " + region.getStart() + " " + region.getEnd() +
                     " halting execution prematurely");
             LOGGER.severe(e.getMessage());
-            //System.exit(1);
+            System.exit(1);
         }
     }
 

@@ -119,22 +119,23 @@ public class GenomeAnonymizer {
         Collections.reverse(sequences);
         //int nNewPartitions = nThreads-currentPartitions;
         //int availableThreads = nThreads-sequences.size();
-        int availableThreads = nThreads;
+        //int availableThreads = nThreads;
         //System.out.println("init avail=" + availableThreads);
         int[] partitionsPerSequence = new int[sequences.size()];
         Arrays.fill(partitionsPerSequence, 1);
-        long basesPerThread = genomeSize/nThreads;
+        long basesPerThread = genomeSize/(nThreads* 10L);
         //long basesPerThread = availableThreads < sequences.size() ? sequences.get(availableThreads).getSize() :
         //        sequences.get(sequences.size() - 1).getSize();
+        //System.out.println(basesPerThread);
         //System.out.println("basesPerThread=" + basesPerThread);
         // Estimate threads to be assigned to each contig
         for(int i = 0; i < sequences.size(); i++){
-            if(availableThreads <= 0) break;
+            //if(availableThreads <= 0) break;
             partitionsPerSequence[i] += (int) (sequences.get(i).getSize() / basesPerThread);
-            availableThreads -= partitionsPerSequence[i];
+            //availableThreads -= partitionsPerSequence[i];
             //System.out.println("avail=" + availableThreads);
             //System.out.println("part per seq=" + partitionsPerSequence[i]);
-            assert (availableThreads>=0): "Available threads are lower than 0, this should not happen";
+            //assert (availableThreads>=0): "Available threads are lower than 0, this should not happen";
         }
         // Make propper contig partitions into the regions, based on n assigned threads
         for(int i = 0; i < sequences.size(); i++){
@@ -188,7 +189,7 @@ public class GenomeAnonymizer {
 //                    .toList();
 //        }
         //DEBUG
-        //regions.forEach(r-> System.out.println(r.getContig() + " " + r.getStart() + " " + r.getEnd()));
+        //regions.forEach(r-> System.out.println("# " + r.getContig() + " " + r.getStart() + " " + r.getEnd()));
         //System.exit(0);
         //DEBUG
         return regions;
