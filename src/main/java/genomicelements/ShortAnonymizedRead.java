@@ -91,7 +91,8 @@ public class ShortAnonymizedRead implements AnonymizedRead{
                 int inReadPos = var.getInReadPosition(this);
                 //offset += modifyIndel(inReadPos + offset + 1, var);
                 if(i==0) offset += modifyIndel(inReadPos, var);
-                else offset += modifyIndel((inReadPos + offset)-1, var);
+                else offset += modifyIndel((inReadPos + offset)+1, var);
+                //else offset += modifyIndel((inReadPos + offset)-1, var);
                 //if(i==0) offset--;
                 //DEBUG
                 if(getReadName().equals("6a129c2336afd2745c10a3b7ca407903") || getReadName().equals("f1f575b69219b650a8e9900e12c9acf8")){
