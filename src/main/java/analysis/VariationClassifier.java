@@ -107,13 +107,21 @@ public class VariationClassifier {
             }
             if (p==SLIDING_WINDOW_LIMIT) {
                 p = 0;
-                if (diffuseIndelCalls){
-                    
-                }
+//                if (diffuseIndelCalls){
+//
+//                }
             }
             variationPerPos.remove(pos-SLIDING_WINDOW_LIMIT);
             p++;
         }
+        //DEBUG
+        if(potentialGermlinesPerRead.containsKey("6a129c2336afd2745c10a3b7ca407903")){
+            Map<Integer, List<CalledVariation>> perIdx = potentialGermlinesPerRead.get("6a129c2336afd2745c10a3b7ca407903");
+            if(perIdx.containsKey(PAIR_2_IDX)){
+                System.out.println(perIdx.get(PAIR_2_IDX));
+            }
+        }
+        //DEBUG
     }
 
     private void processPotentialGermlines(List<CalledVariation> variationInPos) {
@@ -209,7 +217,8 @@ public class VariationClassifier {
             CigarOperator op = cigarElement.getOperator();
             if (op.isIndel()){
                 int currentRefPos = initRefPos + currentCigarLength-1;
-                int inReadPos = readConsumedBaseNumber == 0 ? 1 : readConsumedBaseNumber;
+                //int inReadPos = readConsumedBaseNumber == 0 ? 1 : readConsumedBaseNumber;
+                int inReadPos = samRecord.getReadPositionAtReferencePosition(currentRefPos);
                 int length = cigarElement.getLength()+1;
                 VariantType indelType;
                 int vcfStdEnd;
@@ -228,7 +237,8 @@ public class VariationClassifier {
                     inReadEnd = inReadPos + 1;
                 }
                 // Ends vary based on the functions to recover the alleles, whether they are inclusive or exclusive on interval ends
-                byte[] altAllele = Arrays.copyOfRange(sequenceBases, inReadPos-1, inReadEnd-1);
+                //byte[] altAllele = Arrays.copyOfRange(sequenceBases, inReadPos-1, inReadEnd-1);
+                byte[] altAllele = Arrays.copyOfRange(sequenceBases, inReadPos, inReadEnd);
                 byte[] refAllele = referenceWalker.getSubsequenceAt(sequenceName, currentRefPos, inRefend).getBases();
                 CalledVariation calledVar = new CalledVariation(sequenceName, currentRefPos, vcfStdEnd, indelType, length,
                         altAllele, refAllele);
@@ -239,9 +249,12 @@ public class VariationClassifier {
                 calledVar.addSupportingRead(pairReadName, inReadPos);
                 processSomaticType(variationInPos, calledVar, variationExists, isNormalDataset);
                 //DEBUG
-                //if(samRecord.isSecondaryOrSupplementary() && calledVar.getSomaticVariationType().equals(SomaticVariationType.TUMORAL_NORMAL_VARIANT)){
-                //    System.out.println("$Found var: " + calledVar + " in suppl.=" + samRecord.getReadName());
-                //}
+                if(samRecord.getReadName().equals("6a129c2336afd2745c10a3b7ca407903") || samRecord.getReadName().equals("f1f575b69219b650a8e9900e12c9acf8")){
+                    System.out.println("Read processed in variation discovery");
+                    //if(samRecord.isSecondaryOrSupplementary() && calledVar.getSomaticVariationType().equals(SomaticVariationType.TUMORAL_NORMAL_VARIANT)){
+                        System.out.println("$Found var: " + calledVar + " in suppl.=" + samRecord.getReadName() + " in_read_pos=" + inReadPos + " in_ref_pos=" + currentRefPos);
+                    //}
+                }
                 //DEBUG
             }
             if(op.consumesReferenceBases()){

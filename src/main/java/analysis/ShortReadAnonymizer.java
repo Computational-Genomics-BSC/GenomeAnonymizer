@@ -74,73 +74,57 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
      * @param isNormalDataset
      */
     private void anonymizeReadsInFile(SamReader samReader, boolean isNormalDataset) {
+        //DEBUG
+//        if(this.readGermlinesToAnonymize.containsKey("6a129c2336afd2745c10a3b7ca407903")){
+//            Map<Integer, List<CalledVariation>> perIdx = this.readGermlinesToAnonymize.get("6a129c2336afd2745c10a3b7ca407903");
+//            if(perIdx.containsKey(PAIR_2_IDX)){
+//                System.out.println("Before BAM iteration: " + perIdx.get(PAIR_2_IDX));
+//            }
+//        }
+        //DEBUG
         for (SAMRecord samRecord : samReader){
             String readName = samRecord.getReadName();
+            //DEBUG
+//            if(this.readGermlinesToAnonymize.containsKey("6a129c2336afd2745c10a3b7ca407903")){
+//                Map<Integer, List<CalledVariation>> perIdx = this.readGermlinesToAnonymize.get("6a129c2336afd2745c10a3b7ca407903");
+//                if(perIdx.containsKey(PAIR_2_IDX)){
+//                    System.out.println("In begining of BAM iteration: " + perIdx.get(PAIR_2_IDX));
+//                }
+//            }
+            //DEBUG
             if ((removeUnmapped && samRecord.getReadUnmappedFlag()) || !readGermlinesToAnonymize.containsKey(readName)) continue;
             // DEBUG
             //if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) System.out.println("# Found after first filter");
+//            if(samRecord.getReadName().equals("6a129c2336afd2745c10a3b7ca407903") || samRecord.getReadName().equals("f1f575b69219b650a8e9900e12c9acf8")) {
+//                System.out.println("Read is being processed in anonymization step: " + " " + samRecord.getPairedReadName());
+//            }
             // DEBUG
             ShortAnonymizedRead anonRead = new ShortAnonymizedRead(samRecord);
             ShortAnonymizedReadPair pair;
             if (!anonReadContainer.containsKey(readName)){
                 pair = new ShortAnonymizedReadPair(anonRead);
                 anonReadContainer.put(readName, pair);
-                // DEBUG
-                //if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) System.out.println("# Added first time");
-                // DEBUG
             }
             else{
                 pair = anonReadContainer.get(readName);
                 anonRead = pair.addOrUpdatePair(anonRead);
-                // DEBUG
-                //if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) System.out.println("# Added second time");
-                // DEBUG
             }
             int pairIdx = anonRead.getPairIdx();
             List<CalledVariation> variantsToAnonymizeInRead = readGermlinesToAnonymize.get(readName).getOrDefault(pairIdx, new ArrayList<>());
             // DEBUG
-//            if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) {
-//                System.out.println("# Variants to anonymize in read pair=" + (pairIdx+1) + " n=" + variantsToAnonymizeInRead.size());
+//            if(readName.equals("6a129c2336afd2745c10a3b7ca407903")) {
+//                System.out.println("# Variants to anonymize in read pair=" + (pairIdx+1) + " VARS=" + variantsToAnonymizeInRead);
 //            }
             // DEBUG
+//            boolean added = false;
+//            if (anonRead.variantsToAnonymizeIsEmpty() && !variantsToAnonymizeInRead.isEmpty()) {
+//                added = anonRead.addAllVariantsToAnonymize(variantsToAnonymizeInRead);
+//            }
             if (anonRead.variantsToAnonymizeIsEmpty() && !variantsToAnonymizeInRead.isEmpty()) anonRead.addAllVariantsToAnonymize(variantsToAnonymizeInRead);
-            // DEBUG
-//            if(readName.equals("DCT4KXP1:304:C18LHACXX:2:1116:3428:30651")) {
-//                System.out.println("# pair=" + (anonRead.getPairIdx()+1));
-//                if(anonRead.getVariantsToAnonymize().get("SNV") != null) {
-//                    System.out.println("# SNVs to anonymize: " + anonRead.getVariantsToAnonymize().get("SNV").size());
-//                    for(CalledVariation v:anonRead.getVariantsToAnonymize().get("SNV")){
-//                        System.out.println(v.toString());
-//                    }
-//                }
-////                if(anonRead.getVariantsToAnonymize().get("INDEL") != null){
-////                    System.out.println("# INDELs to anonymize: " + anonRead.getVariantsToAnonymize().get("INDEL").size());
-////                    for(CalledVariation v:anonRead.getVariantsToAnonymize().get("INDEL")){
-////                        System.out.println(v.toString());
-////                    }
-////                }
-////
-//            }
-            // DEBUG
             anonRead.updateIfPossible(samRecord);
             if(!anonRead.isSupplementaryOrSecondary() && !anonRead.isAnonymized()) {
                 anonRead.anonymizeVariantsInRead();
-                // DEBUG
-//                if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459") && pairIdx==1) {
-//                    System.out.println("# Variants anonymized pair2: " + anonRead.isAnonymized());
-//                    //System.out.println("# INDELs to anonymize: " + anonRead.getVariantsToAnonymize().get("INDEL").size());
-//                }
-//                if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459") && pairIdx==0) {
-//                    System.out.println("# Variants anonymized pair1: " + anonRead.isAnonymized());
-//                    //System.out.println("# INDELs to anonymize: " + anonRead.getVariantsToAnonymize().get("INDEL").size());
-//                }
-                // DEBUG
             }
-            // DEBUG
-//            if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) {
-//                System.out.println("# Read pair " + pair.getReadName() + " is writable=" + pair.isWriteable());
-//            }
-            // DEBUG
             if (pair.isWriteable()){
                 writeFastqRecord(pair, isNormalDataset);
                 readGermlinesToAnonymize.remove(readName);

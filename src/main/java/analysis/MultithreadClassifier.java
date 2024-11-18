@@ -49,6 +49,9 @@ public class MultithreadClassifier implements Runnable{
     public String getContig(){
         return this.region.getContig();
     }
+    public int getStart(){return this.region.getStart();}
+    public int getEnd(){return this.region.getEnd();}
+
 
     public Map<String, Map<Integer, List<CalledVariation>>> getAnswer(){
         assert(classifier.getPotentialGermlinesPerRead().size() == 1): "The result of this classifier is incorrect: "

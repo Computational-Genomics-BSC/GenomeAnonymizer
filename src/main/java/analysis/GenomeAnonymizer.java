@@ -17,6 +17,9 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.logging.SimpleFormatter;
 
+import static genomicelements.ShortAnonymizedReadPair.PAIR_1_IDX;
+import static genomicelements.ShortAnonymizedReadPair.PAIR_2_IDX;
+
 
 public class GenomeAnonymizer {
 
@@ -63,12 +66,12 @@ public class GenomeAnonymizer {
         Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize =
                 callVariationInParallel(normalPath, tumorPath, refGenome, mode, vcfFile, partitions, nThreads);
         long end1 = System.currentTimeMillis();
-        LOGGER.info("Elapsed Time in seconds for variation calling: "+ (double) (end1-start1)/1000);
+        LOGGER.info("Variation calling phase finished in: "+ (double) (end1-start1)/1000 + " seconds");
         long start2 = System.currentTimeMillis();
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm, readGermlinesToAnonymize);
         anonymizer.anonymizeReads(normalPath, tumorPath, refGenome, outputPrefix, false);
         long end2 = System.currentTimeMillis();
-        LOGGER.info("Elapsed Time in seconds for anonymization: "+ (double) (end2-start2)/1000);
+        LOGGER.info("Anonymization phase finished in: "+ (double) (end2-start2)/1000 + " seconds");
     }
 
     private Map<String, Map<Integer, List<CalledVariation>>> callVariationInParallel(String normalPath, String tumorPath, String refGenome,
@@ -91,11 +94,58 @@ public class GenomeAnonymizer {
         for(MultithreadClassifier classifier : mClassifiers){
             String contig = classifier.getContig();
             Map<String, Map<Integer, List<CalledVariation>>> germlinesInPartitionReads = classifier.getAnswer();
+            //DEBUG
+            if(germlinesInPartitionReads.containsKey("6a129c2336afd2745c10a3b7ca407903")){
+                Map<Integer, List<CalledVariation>> perIdx = germlinesInPartitionReads.get("6a129c2336afd2745c10a3b7ca407903");
+                if(perIdx.containsKey(PAIR_2_IDX)){
+                    System.out.println("In partition result aggregation: " + perIdx.get(PAIR_2_IDX));
+                }
+            }
+            //DEBUG
             //System.out.println("# readGermlinesInPartition=" + germlinesInPartitionReads.size());
             //Map<Integer, List<CalledVariation>> germlinesInContig = readGermlinesToAnonymize.computeIfAbsent(contig, v -> new HashMap<>());
-            readGermlinesToAnonymize.putAll(germlinesInPartitionReads);
+            //readGermlinesToAnonymize.putAll(germlinesInPartitionReads);
+            for (var entryByReadName : germlinesInPartitionReads.entrySet()){
+                //Map<Integer, List<CalledVariation>> readVariationsByPair = readGermlinesToAnonymize.computeIfAbsent(entry.getKey(), v -> entry.getValue());
+                String readName = entryByReadName.getKey();
+                Map<Integer, List<CalledVariation>>  newReadVariationsByPair = entryByReadName.getValue();
+                if(readGermlinesToAnonymize.containsKey(readName)){
+                    Map<Integer, List<CalledVariation>> currentReadVariationsByPair = readGermlinesToAnonymize.get(readName);
+                    for (var entryByPairIdx : newReadVariationsByPair.entrySet()){
+                        List<CalledVariation> currentVariationsInPair = currentReadVariationsByPair.computeIfAbsent(entryByPairIdx.getKey(), v -> new ArrayList<>());
+                        currentVariationsInPair.addAll(entryByPairIdx.getValue());
+                    }
+                }
+                else{
+                    readGermlinesToAnonymize.put(readName, newReadVariationsByPair);
+                }
+            }
             //System.out.println("# allReadGermlines up to now=" + readGermlinesToAnonymize.size());
+            //DEBUG
+            if(readGermlinesToAnonymize.containsKey("6a129c2336afd2745c10a3b7ca407903")){
+                Map<Integer, List<CalledVariation>> perIdx = readGermlinesToAnonymize.get("6a129c2336afd2745c10a3b7ca407903");
+                if(perIdx.containsKey(PAIR_2_IDX)){
+                    System.out.println("In result: " + perIdx.get(PAIR_2_IDX) + " after partition: " +
+                            classifier.getContig() + " " + classifier.getStart() + " " + classifier.getEnd());
+                }
+                else{
+                    System.out.println("Result dissapeared  after partition: "+
+                            classifier.getContig() + " " + classifier.getStart() + " " + classifier.getEnd());
+                }
+            }
+            //DEBUG
         }
+        //DEBUG
+        if(readGermlinesToAnonymize.containsKey("6a129c2336afd2745c10a3b7ca407903")){
+            Map<Integer, List<CalledVariation>> perIdx = readGermlinesToAnonymize.get("6a129c2336afd2745c10a3b7ca407903");
+            if(perIdx.containsKey(PAIR_2_IDX)){
+                System.out.println("In final result: " + perIdx.get(PAIR_2_IDX));
+            }
+            else{
+                System.out.println("Not present in final result");
+            }
+        }
+        //DEBUG
         return readGermlinesToAnonymize;
     }
 
@@ -279,7 +329,7 @@ public class GenomeAnonymizer {
             System.exit(1);
         }
         long end2 = System.currentTimeMillis();
-        LOGGER.info("Total execution Time in seconds: "+ (double) (end2-start2)/1000);
+        LOGGER.info("Completed execution in: "+ (double) (end2-start2)/1000 + " seconds");
 //        catch (ParseException e){
 //            System.err.println("Invalid arguments: " + e.getMessage());
 //        }

@@ -64,22 +64,41 @@ public class ShortAnonymizedRead implements AnonymizedRead{
             snvsToAnonymize.sort(Comparator.comparing(var -> var.getInReadPosition(this)));
             for (CalledVariation var : snvsToAnonymize) {
                 int inReadPos = var.getInReadPosition(this);
+                //DEBUG
+                if(getReadName().equals("6a129c2336afd2745c10a3b7ca407903") || getReadName().equals("f1f575b69219b650a8e9900e12c9acf8")){
+                    System.out.println("Read before SNV masking: " + this);
+                    //if(samRecord.isSecondaryOrSupplementary() && calledVar.getSomaticVariationType().equals(SomaticVariationType.TUMORAL_NORMAL_VARIANT)){
+                    System.out.println("$Found var: " + var + " in suppl.=" + " in_read_pos=" + inReadPos);
+                    //}
+                }
+                //DEBUG
                 modifyBaseInRead(inReadPos, var.getRefAllele()[0]);
+                //DEBUG
+                if(getReadName().equals("6a129c2336afd2745c10a3b7ca407903") || getReadName().equals("f1f575b69219b650a8e9900e12c9acf8")){
+                    System.out.println("Read after SNV masking: " + this);
+                    //if(samRecord.isSecondaryOrSupplementary() && calledVar.getSomaticVariationType().equals(SomaticVariationType.TUMORAL_NORMAL_VARIANT)){
+                    //System.out.println("$Found var: " + var + " in suppl.=" + " in_read_pos=" + inReadPos);
+                    //}
+                }
+                //DEBUG
             }
         }
         if(!indelsToAnonymize.isEmpty()){
-            //DEBUG
-            //if(indelsToAnonymize.size()>1){
-            //    System.out.println(readName + " " + indelsToAnonymize);
-            //    System.exit(0);
-            //}
-            //DEBUG
             indelsToAnonymize.sort(Comparator.comparing(var -> var.getInReadPosition(this)));
             int offset = 0;
-            for (CalledVariation var : indelsToAnonymize) {
+            for (int i = 0; i < indelsToAnonymize.size(); i++) {
+                CalledVariation var = indelsToAnonymize.get(i);
                 int inReadPos = var.getInReadPosition(this);
                 //offset += modifyIndel(inReadPos + offset + 1, var);
-                offset += modifyIndel(inReadPos + offset, var);
+                if(i==0) offset += modifyIndel(inReadPos, var);
+                else offset += modifyIndel((inReadPos + offset)-1, var);
+                //if(i==0) offset--;
+                //DEBUG
+                if(getReadName().equals("6a129c2336afd2745c10a3b7ca407903") || getReadName().equals("f1f575b69219b650a8e9900e12c9acf8")){
+                    System.out.println("Read after INDEL masking: " + this);
+                    System.out.println("$Found var: " + var + " in suppl.=" + " org_in_read_pos=" + inReadPos + " new_offset=" + offset);
+                }
+                //DEBUG
             }
         }
         isAnonymized = true;
