@@ -23,6 +23,7 @@ import static genomicelements.ShortAnonymizedReadPair.PAIR_2_IDX;
 
 public class GenomeAnonymizer {
 
+    public static final String VERSION = "0.0.2";
     private static final Logger LOGGER = logConfigure();
 
 
@@ -92,21 +93,8 @@ public class GenomeAnonymizer {
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
         executorService.shutdown();
         for(MultithreadClassifier classifier : mClassifiers){
-            String contig = classifier.getContig();
             Map<String, Map<Integer, List<CalledVariation>>> germlinesInPartitionReads = classifier.getAnswer();
-            //DEBUG
-            if(germlinesInPartitionReads.containsKey("6a129c2336afd2745c10a3b7ca407903")){
-                Map<Integer, List<CalledVariation>> perIdx = germlinesInPartitionReads.get("6a129c2336afd2745c10a3b7ca407903");
-                if(perIdx.containsKey(PAIR_2_IDX)){
-                    System.out.println("In partition result aggregation: " + perIdx.get(PAIR_2_IDX));
-                }
-            }
-            //DEBUG
-            //System.out.println("# readGermlinesInPartition=" + germlinesInPartitionReads.size());
-            //Map<Integer, List<CalledVariation>> germlinesInContig = readGermlinesToAnonymize.computeIfAbsent(contig, v -> new HashMap<>());
-            //readGermlinesToAnonymize.putAll(germlinesInPartitionReads);
             for (var entryByReadName : germlinesInPartitionReads.entrySet()){
-                //Map<Integer, List<CalledVariation>> readVariationsByPair = readGermlinesToAnonymize.computeIfAbsent(entry.getKey(), v -> entry.getValue());
                 String readName = entryByReadName.getKey();
                 Map<Integer, List<CalledVariation>>  newReadVariationsByPair = entryByReadName.getValue();
                 if(readGermlinesToAnonymize.containsKey(readName)){
@@ -120,32 +108,7 @@ public class GenomeAnonymizer {
                     readGermlinesToAnonymize.put(readName, newReadVariationsByPair);
                 }
             }
-            //System.out.println("# allReadGermlines up to now=" + readGermlinesToAnonymize.size());
-            //DEBUG
-            if(readGermlinesToAnonymize.containsKey("6a129c2336afd2745c10a3b7ca407903")){
-                Map<Integer, List<CalledVariation>> perIdx = readGermlinesToAnonymize.get("6a129c2336afd2745c10a3b7ca407903");
-                if(perIdx.containsKey(PAIR_2_IDX)){
-                    System.out.println("In result: " + perIdx.get(PAIR_2_IDX) + " after partition: " +
-                            classifier.getContig() + " " + classifier.getStart() + " " + classifier.getEnd());
-                }
-                else{
-                    System.out.println("Result dissapeared  after partition: "+
-                            classifier.getContig() + " " + classifier.getStart() + " " + classifier.getEnd());
-                }
-            }
-            //DEBUG
         }
-        //DEBUG
-        if(readGermlinesToAnonymize.containsKey("6a129c2336afd2745c10a3b7ca407903")){
-            Map<Integer, List<CalledVariation>> perIdx = readGermlinesToAnonymize.get("6a129c2336afd2745c10a3b7ca407903");
-            if(perIdx.containsKey(PAIR_2_IDX)){
-                System.out.println("In final result: " + perIdx.get(PAIR_2_IDX));
-            }
-            else{
-                System.out.println("Not present in final result");
-            }
-        }
-        //DEBUG
         return readGermlinesToAnonymize;
     }
 
@@ -202,42 +165,6 @@ public class GenomeAnonymizer {
                 currentFirst += partitionSize + 1;
             }
         }
-//        if(nThreads>sequences.size()) {
-//            Collections.sort(sequences, Comparator.comparing(FastaSequenceIndexEntry::getSize));
-//            Collections.reverse(sequences);
-//            //int nNewPartitions = nThreads-currentPartitions;
-//            int availableThreads = nThreads-sequences.size();
-//            int[] partitionsPerSequence = new int[sequences.size()];
-//            Arrays.fill(partitionsPerSequence, 1);
-//            long basesPerThread = genomeSize/nThreads;
-//            // Estimate threads to be assigned to each contig
-//            for(int i = 0; i < sequences.size(); i++){
-//                partitionsPerSequence[i] += (int) (sequences.get(i).getSize() / basesPerThread);
-//                availableThreads -= partitionsPerSequence[i];
-//                assert (availableThreads>=0): "Available threads are lower than 0, this should not happen";
-//                if(availableThreads==0) break;
-//            }
-//            // Make propper contig partitions into the regions, based on n assigned threads
-//            for(int i = 0; i < sequences.size(); i++){
-//                FastaSequenceIndexEntry currentContig = sequences.get(i);
-//                String contig = currentContig.getContig();
-//                int contigLength = (int) currentContig.getSize();
-//                int partitionSize = contigLength / partitionsPerSequence[i];
-//                int currentFirst = 1;
-//                for(int j = 0; j < partitionsPerSequence[i]; j++){
-//                    //Be careful with very large chromosomes, with humans there should not be a problem
-//                    int currentLast = j == partitionsPerSequence[i]-1 ? (int) currentContig.getSize() : currentFirst + 1 + partitionSize;
-//                    SimpleFeature region = new SimpleFeature(contig, currentFirst, currentLast);
-//                    regions.add(region);
-//                    currentFirst += partitionSize;
-//                }
-//            }
-//        }
-//        else{
-//            regions = sequences.stream()
-//                    .map(sequenceIndexEntry -> new SimpleFeature(sequenceIndexEntry.getContig(), 1, (int) sequenceIndexEntry.getSize()))
-//                    .toList();
-//        }
         //DEBUG
         //regions.forEach(r-> System.out.println("# " + r.getContig() + " " + r.getStart() + " " + r.getEnd()));
         //System.exit(0);
@@ -292,7 +219,7 @@ public class GenomeAnonymizer {
             CommandLine commandLine = parser.parse(options, args);
             if(args.length==0 || commandLine.hasOption("h")){
                 HelpFormatter formatter = new HelpFormatter();
-                String header = "GenomeAnonymizer";
+                String header = "GenomeAnonymizer" + " " + VERSION;
                 String footer = "";
                 if(args.length==0) footer = "No arguments provided. Displaying default help message.";
                 // TODO: Change when it is set to be run as a jar, or container
