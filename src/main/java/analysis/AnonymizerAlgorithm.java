@@ -16,7 +16,7 @@ public interface AnonymizerAlgorithm {
 
     public void queryReadsToExclude(String normalPath, String tumorPath, List<SimpleFeature> partitions, int threads) throws Exception;
 
-    public void setReadGermlinesToAnonymize(Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize);
+    public void setReadGermlinesToAnonymize(Map<String, List<CalledVariation>> readGermlinesToAnonymize);
 
     public void anonymizeReads(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed)throws IOException;
 

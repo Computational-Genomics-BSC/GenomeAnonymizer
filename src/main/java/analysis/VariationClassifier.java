@@ -40,7 +40,8 @@ public class VariationClassifier {
     public static final int SLIDING_WINDOW_LIMIT = 200;
 
     Set<String> readsToExclude;
-    Map<String, Map<Integer, List<CalledVariation>>> potentialGermlinesPerRead;
+    //Map<String, Map<Integer, List<CalledVariation>>> potentialGermlinesPerRead;
+    Map<String, List<CalledVariation>> potentialGermlinesPerRead;
     boolean diffuseIndelCalls;
 
     public VariationClassifier(){
@@ -49,7 +50,7 @@ public class VariationClassifier {
         readsToExclude = new HashSet<>();
     }
 
-    public Map<String, Map<Integer, List<CalledVariation>>> getPotentialGermlinesPerRead() {
+    public Map<String, List<CalledVariation>> getPotentialGermlinesPerRead() {
         return potentialGermlinesPerRead;
     }
 
@@ -137,8 +138,10 @@ public class VariationClassifier {
             if (samRecord.getReadUnmappedFlag()) continue;
             //This may be extended to support other types of reads (e.g. long reads)
             int pairIdx = samRecord.getFirstOfPairFlag() ? PAIR_1_IDX : PAIR_2_IDX;
-            // pairReadName represents the name of the read and which pair it is only
-            String pairReadName = getShortReadPairName(readName, pairIdx);
+            // pairReadName represents the name of the read, the pair, and the reference position of the alignment
+            //String pairReadName = getShortReadPairName(readName, pairIdx);
+            //String pairReadName = getShortReadAlignmentId(readName, pairIdx, refPosition);
+            String pairReadName = getShortReadAlignmentId(samRecord);
             // specificReadName represents the name of the read , pair, and which partial alignment (if any) it comes from
             String specificReadName = getSpecificShortReadPairName(samRecord, pairIdx);
             //
@@ -198,14 +201,6 @@ public class VariationClassifier {
                 if (variationExists) calledVar = variationInPos.get(indexSearch);
                 calledVar.addSupportingRead(pairReadName, inReadPos);
                 processSomaticType(variationInPos, calledVar, variationExists, isNormalDataset);
-                //DEBUG
-                if(samRecord.getReadName().equals("6a129c2336afd2745c10a3b7ca407903") || samRecord.getReadName().equals("f1f575b69219b650a8e9900e12c9acf8")){
-                    System.out.println("Read processed in variation discovery");
-                    //if(samRecord.isSecondaryOrSupplementary() && calledVar.getSomaticVariationType().equals(SomaticVariationType.TUMORAL_NORMAL_VARIANT)){
-                        System.out.println("$Found var: " + calledVar + " in suppl.=" + samRecord.getReadName() + " in_read_pos=" + inReadPos + " in_ref_pos=" + currentRefPos);
-                    //}
-                }
-                //DEBUG
             }
             if(op.consumesReferenceBases()){
                 currentCigarLength += cigarElement.getLength();
@@ -269,6 +264,11 @@ public class VariationClassifier {
         processPotentialGermlines(variationInPos, new HashMap<>());
     }
 
+    /**
+     * Retrieves the calls to be anonymized for each read alignment, uniquely by read name, pair and position
+     * @param variationInPos
+     * @param somaticVariantsToKeep
+     */
     private void processPotentialGermlines(List<CalledVariation> variationInPos,
                                            Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep) {
         for (CalledVariation var : variationInPos){
@@ -286,12 +286,13 @@ public class VariationClassifier {
             //DEBUG
             Map<String, Integer> supportingReads = var.getSupportingReads();
             for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
-                String[] keyElems = entry.getKey().split(READ_PAIR_NAME_SEPARATOR);
-                String readName = keyElems[0];
-                int pairIdx = Integer.parseInt(keyElems[1]);
-                Map<Integer, List<CalledVariation>> potentialGermlinesInReadPair = potentialGermlinesPerRead.computeIfAbsent(readName, v -> new HashMap<>());
-                List<CalledVariation> potentialGermlinesInRead = potentialGermlinesInReadPair.computeIfAbsent(pairIdx, v -> new ArrayList<>());
-                potentialGermlinesInRead.add(var);
+//                String[] keyElems = entry.getKey().split(READ_PAIR_NAME_SEPARATOR);
+//                String readName = keyElems[0];
+//                int pairIdx = Integer.parseInt(keyElems[1]);
+                String readAlnName = entry.getKey();
+                List<CalledVariation> potentialGermlinesInReadAlignment = potentialGermlinesPerRead
+                        .computeIfAbsent(readAlnName, v -> new ArrayList<>());
+                potentialGermlinesInReadAlignment.add(var);
             }
         }
     }
@@ -300,22 +301,34 @@ public class VariationClassifier {
         this.diffuseIndelCalls = diffuseIndelCalls;
     }
 
-    public static String getSpecificShortReadPairName(SAMRecord samRec, int pairIdx) {
-        if (samRec.getAttribute("SA") != null){
-            return samRec.getReadName() + READ_PAIR_NAME_SEPARATOR + pairIdx + READ_PAIR_NAME_SEPARATOR + generateAlignmentHash(samRec);
-        }
-        else{
-            return samRec.getReadName() + READ_PAIR_NAME_SEPARATOR + pairIdx;
-        }
+//    public static String getShortReadPairName(String readName, int pairIdx) {
+//        return readName + READ_PAIR_NAME_SEPARATOR + pairIdx;
+//    }
+
+    //Provides a unique ID for each read alignment
+    public static String getShortReadAlignmentId(String readName, int pairIdx, int refPos){
+        return readName + DEFAULT_ID_NAME_SEPARATOR + pairIdx + DEFAULT_ID_NAME_SEPARATOR + refPos;
     }
 
-    public static String getShortReadPairName(String readName, int pairIdx) {
-        return readName + READ_PAIR_NAME_SEPARATOR + pairIdx;
+    public static String getShortReadAlignmentId(SAMRecord alignment){
+        int pairIdx = alignment.getFirstOfPairFlag() ? PAIR_1_IDX : PAIR_2_IDX;
+        String baseName = getShortReadAlignmentId(alignment.getReadName(), pairIdx, alignment.getAlignmentStart());
+        String complement = generateAlignmentHash(alignment);
+        return baseName + DEFAULT_ID_NAME_SEPARATOR + complement;
+    }
+
+    public static String getSpecificShortReadPairName(SAMRecord samRec, int pairIdx) {
+        if (samRec.getAttribute("SA") != null){
+            return samRec.getReadName() + DEFAULT_ID_NAME_SEPARATOR + pairIdx + DEFAULT_ID_NAME_SEPARATOR + generateAlignmentHash(samRec);
+        }
+        else{
+            return samRec.getReadName() + DEFAULT_ID_NAME_SEPARATOR + pairIdx;
+        }
     }
 
     private static String generateAlignmentHash(SAMRecord samRec) {
         long answer = 17;
-        answer = 37*answer + samRec.getCigar().toString().hashCode(); //samRec.getCigarString().hashCode();
+        answer = 37*answer + samRec.getCigar().toString().hashCode();
         answer = 37*answer + samRec.getBaseQualityString().hashCode();
         answer = 37*answer + samRec.getReadString().hashCode();
         return String.valueOf(answer);

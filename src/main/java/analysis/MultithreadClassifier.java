@@ -59,7 +59,7 @@ public class MultithreadClassifier implements Runnable{
     public int getEnd(){return this.region.getEnd();}
 
 
-    public Map<String, Map<Integer, List<CalledVariation>>> getAnswer(){
+    public Map<String, List<CalledVariation>>  getAnswer(){
         assert(classifier.getPotentialGermlinesPerRead().size() == 1): "The result of this classifier is incorrect: "
                 + region.getContig() + " " + region.getStart() + " " + region.getEnd();
         //return classifier.getPotentialGermlinesPerRead().getOrDefault(region.getContig(), new HashMap<>());

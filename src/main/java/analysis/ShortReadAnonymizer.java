@@ -18,14 +18,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
+import static genomicelements.ShortAnonymizedReadPair.*;
 
 /**
  * AnonymizerAlgorithm implementation for short read data
  * @author Nicolas Gaitan
  */
-
-import static genomicelements.ShortAnonymizedReadPair.*;
-
 public class ShortReadAnonymizer implements AnonymizerAlgorithm{
 
     private static final Logger LOGGER = Logger.getLogger(ShortReadAnonymizer.class.getName());
@@ -34,9 +32,10 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     public static final int TUMORAL_DATASET_IDX = 1;
     public static final int OUTPUT_FILE_NUMBER = 4;
 
+    //Set that contaains all the reads that will be excluded from the result (e.g. Unmapped and MAPQ=0)
     Set<String> readsToExclude;
     // Map containing all potential germlines (value: List), per pair (nested key, 0 or 1), per read (key)
-    Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize;
+    Map<String, List<CalledVariation>> readGermlinesToAnonymize;
     // Map collecting to-be-anonymized reads while they can be masked and written
     Map<String, ShortAnonymizedReadPair> anonReadContainer;
     Set<String> anonReadNames;
@@ -56,7 +55,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         writersAreOpen = false;
     }
 
-    public void setReadGermlinesToAnonymize(Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize) {
+    public void setReadGermlinesToAnonymize(Map<String, List<CalledVariation>> readGermlinesToAnonymize) {
         this.readGermlinesToAnonymize = readGermlinesToAnonymize;
     }
 
@@ -70,16 +69,14 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         for(SimpleFeature partition : partitions){
             for(String path : paths){
                 CompletableFuture<Set<String>> future = CompletableFuture.supplyAsync (() -> {
-                    Set<String> answer = new HashSet<>();
+                    Set<String> answer;
                     try {
                         answer = queryReadsToExcludeInPartition(path, factory, partition);
                     }
                     catch (IOException e) {
                         LOGGER.severe("Exception in thread querying reads to exclude in region: "
-                                + partition.getContig() + " " + partition.getStart() + " " + partition.getEnd() +
-                                " halting execution prematurely");
-                        LOGGER.severe(e.getMessage());
-                        System.exit(1);
+                                + partition.getContig() + " " + partition.getStart() + " " + partition.getEnd());
+                        throw new RuntimeException(e);
                     }
                     return answer;
                 }, exec);
@@ -96,7 +93,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         catch (Exception e){
             LOGGER.severe("Exception when retrieving excluded reads from thread halting execution prematurely");
             LOGGER.severe(e.getMessage());
-            System.exit(1);
+            throw new RuntimeException(e);
         }
         allFutures.join();
         exec.shutdown();
@@ -155,31 +152,9 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
      * @param isNormalDataset
      */
     private void anonymizeReadsInFile(SamReader samReader, boolean isNormalDataset) {
-        //DEBUG
-//        if(this.readGermlinesToAnonymize.containsKey("6a129c2336afd2745c10a3b7ca407903")){
-//            Map<Integer, List<CalledVariation>> perIdx = this.readGermlinesToAnonymize.get("6a129c2336afd2745c10a3b7ca407903");
-//            if(perIdx.containsKey(PAIR_2_IDX)){
-//                System.out.println("Before BAM iteration: " + perIdx.get(PAIR_2_IDX));
-//            }
-//        }
-        //DEBUG
         for (SAMRecord samRecord : samReader){
             String readName = samRecord.getReadName();
-            //DEBUG
-//            if(this.readGermlinesToAnonymize.containsKey("6a129c2336afd2745c10a3b7ca407903")){
-//                Map<Integer, List<CalledVariation>> perIdx = this.readGermlinesToAnonymize.get("6a129c2336afd2745c10a3b7ca407903");
-//                if(perIdx.containsKey(PAIR_2_IDX)){
-//                    System.out.println("In begining of BAM iteration: " + perIdx.get(PAIR_2_IDX));
-//                }
-//            }
-            //DEBUG
             if ((removeUnmapped && samRecord.getReadUnmappedFlag()) || !readGermlinesToAnonymize.containsKey(readName)) continue;
-            // DEBUG
-            //if(readName.equals("DCT4KXP1:304:C18LHACXX:1:1104:18204:16459")) System.out.println("# Found after first filter");
-//            if(samRecord.getReadName().equals("6a129c2336afd2745c10a3b7ca407903") || samRecord.getReadName().equals("f1f575b69219b650a8e9900e12c9acf8")) {
-//                System.out.println("Read is being processed in anonymization step: " + " " + samRecord.getPairedReadName());
-//            }
-            // DEBUG
             ShortAnonymizedRead anonRead = new ShortAnonymizedRead(samRecord);
             ShortAnonymizedReadPair pair;
             if (!anonReadContainer.containsKey(readName)){
@@ -192,15 +167,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
             }
             int pairIdx = anonRead.getPairIdx();
             List<CalledVariation> variantsToAnonymizeInRead = readGermlinesToAnonymize.get(readName).getOrDefault(pairIdx, new ArrayList<>());
-            // DEBUG
-//            if(readName.equals("6a129c2336afd2745c10a3b7ca407903")) {
-//                System.out.println("# Variants to anonymize in read pair=" + (pairIdx+1) + " VARS=" + variantsToAnonymizeInRead);
-//            }
-            // DEBUG
-//            boolean added = false;
-//            if (anonRead.variantsToAnonymizeIsEmpty() && !variantsToAnonymizeInRead.isEmpty()) {
-//                added = anonRead.addAllVariantsToAnonymize(variantsToAnonymizeInRead);
-//            }
             if (anonRead.variantsToAnonymizeIsEmpty() && !variantsToAnonymizeInRead.isEmpty()) anonRead.addAllVariantsToAnonymize(variantsToAnonymizeInRead);
             anonRead.updateIfPossible(samRecord);
             if(!anonRead.isSupplementaryOrSecondary() && !anonRead.isAnonymized()) {
@@ -214,6 +180,71 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
             }
         }
     }
+
+
+//    @Override
+//    public void anonymizeReads(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed) throws IOException {
+//        //IndexedFastaSequenceFile referenceWalker = null;
+//        SamReader normalSamReader = null;
+//        SamReader tumoralSamReader = null;
+//        try {
+//            //Open streams and anonymize
+//            //referenceWalker = new IndexedFastaSequenceFile(new File(refGenome));
+//            SamReaderFactory factory = SamReaderFactory.makeDefault();
+//            normalSamReader = factory.open(new File(normalPath));
+//            tumoralSamReader = factory.open(new File(tumorPath));
+//            writers = new FastqWriter[OUTPUT_FILE_NUMBER / 2][OUTPUT_FILE_NUMBER / 2];
+//            createOutputStreams(outputPrefix, compressed);
+//            anonymizeReadsInFile(normalSamReader, true);
+//            anonymizeReadsInFile(tumoralSamReader, false);
+//            writeUnmodifiedReads(normalPath, tumorPath, outputPrefix, compressed);
+//        } finally {
+//            // Close every stream
+//            //assert referenceWalker != null;
+//            assert writers != null;
+//            //referenceWalker.close();
+//            normalSamReader.close();
+//            tumoralSamReader.close();
+//            closeOutputStreams();
+//        }
+//    }
+
+
+//
+//    /**
+//     *
+//     * @param samReader
+//     * @param isNormalDataset
+//     */
+//    private void anonymizeReadsInFile(SamReader samReader, boolean isNormalDataset) {
+//        for (SAMRecord samRecord : samReader){
+//            String readName = samRecord.getReadName();
+//            if ((removeUnmapped && samRecord.getReadUnmappedFlag()) || !readGermlinesToAnonymize.containsKey(readName)) continue;
+//            ShortAnonymizedRead anonRead = new ShortAnonymizedRead(samRecord);
+//            ShortAnonymizedReadPair pair;
+//            if (!anonReadContainer.containsKey(readName)){
+//                pair = new ShortAnonymizedReadPair(anonRead);
+//                anonReadContainer.put(readName, pair);
+//            }
+//            else{
+//                pair = anonReadContainer.get(readName);
+//                anonRead = pair.addOrUpdatePair(anonRead);
+//            }
+//            int pairIdx = anonRead.getPairIdx();
+//            List<CalledVariation> variantsToAnonymizeInRead = readGermlinesToAnonymize.get(readName).getOrDefault(pairIdx, new ArrayList<>());
+//            if (anonRead.variantsToAnonymizeIsEmpty() && !variantsToAnonymizeInRead.isEmpty()) anonRead.addAllVariantsToAnonymize(variantsToAnonymizeInRead);
+//            anonRead.updateIfPossible(samRecord);
+//            if(!anonRead.isSupplementaryOrSecondary() && !anonRead.isAnonymized()) {
+//                anonRead.anonymizeVariantsInRead();
+//            }
+//            if (pair.isWriteable()){
+//                writeFastqRecord(pair, isNormalDataset);
+//                readGermlinesToAnonymize.remove(readName);
+//                anonReadContainer.remove(readName);
+//                anonReadNames.add(readName);
+//            }
+//        }
+//    }
 
     public void writeUnmodifiedReads(String normalPath, String tumorPath, String outputPrefix, boolean compressed) throws IOException{
         if(!writersAreOpen) openOutputStreams();

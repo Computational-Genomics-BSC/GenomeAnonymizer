@@ -1,13 +1,12 @@
 package genomicelements;
 
-import htsjdk.samtools.SAMRecord;
 import htsjdk.samtools.fastq.FastqRecord;
 
 public class ShortAnonymizedReadPair implements AnonymizedReadContainer{
 
     public static final int PAIR_1_IDX = 0;
     public static final int PAIR_2_IDX = 1;
-    public static final String READ_PAIR_NAME_SEPARATOR = ";";
+    public static final String DEFAULT_ID_NAME_SEPARATOR = ";";
 
     private String readName;
     ShortAnonymizedRead pair1 = null;
