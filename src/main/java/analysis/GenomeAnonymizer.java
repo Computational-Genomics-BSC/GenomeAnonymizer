@@ -17,9 +17,10 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.logging.SimpleFormatter;
 
-import static genomicelements.ShortAnonymizedReadPair.PAIR_1_IDX;
-import static genomicelements.ShortAnonymizedReadPair.PAIR_2_IDX;
-
+/**
+ * Main class that executes the anonymization method on sequencing data
+ * @author Nicolas Gaitan
+ */
 
 public class GenomeAnonymizer {
 
@@ -48,40 +49,36 @@ public class GenomeAnonymizer {
      * @throws IOException
      */
     public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed,
-                    String algorithm, String mode, String vcfFile, int nThreads) throws IOException {
-        //anonymizer.setRemoveUnmapped(false);
+                    String algorithm, String mode, String vcfFile, int nThreads) throws Exception {
         LOGGER.info("Beginning anonymization in " + mode + " mode");
-        //System.out.println("Beginning anonymization in " + mode + " mode");
-        long start1 = System.currentTimeMillis();
-        //Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize = new HashMap<>();
-//        if (nThreads==1){
-//            VariationClassifier classifier = new VariationClassifier();
-//            classifier.callVariation(normalPath, tumorPath, refGenome, mode, vcfFile);
-//            readGermlinesToAnonymize = classifier.getPotentialGermlinesPerRead();
-//        }
-//        else{
-//            List<SimpleFeature> partitions = getPartitions(refGenome, nThreads);
-//            readGermlinesToAnonymize = callVariationInParallel(normalPath, tumorPath, refGenome, mode, vcfFile, partitions, nThreads);
-//        }
+        AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm);
         List<SimpleFeature> partitions = getPartitions(refGenome, nThreads);
+        anonymizer.queryReadsToExclude(normalPath, tumorPath, partitions, nThreads);
+        Set<String> readsToExclude = anonymizer.getReadsToExclude();
+        //DEBUG
+//        readsToExclude.forEach(System.out::println);
+//        System.exit(0);
+        //DEBUG
+        long start1 = System.currentTimeMillis();
         Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize =
-                callVariationInParallel(normalPath, tumorPath, refGenome, mode, vcfFile, partitions, nThreads);
+                callVariationInParallel(normalPath, tumorPath, refGenome, mode, vcfFile, partitions, readsToExclude, nThreads);
         long end1 = System.currentTimeMillis();
         LOGGER.info("Variation calling phase finished in: "+ (double) (end1-start1)/1000 + " seconds");
         long start2 = System.currentTimeMillis();
-        AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm, readGermlinesToAnonymize);
+        anonymizer.setReadGermlinesToAnonymize(readGermlinesToAnonymize);
         anonymizer.anonymizeReads(normalPath, tumorPath, refGenome, outputPrefix, false);
         long end2 = System.currentTimeMillis();
         LOGGER.info("Anonymization phase finished in: "+ (double) (end2-start2)/1000 + " seconds");
     }
 
     private Map<String, Map<Integer, List<CalledVariation>>> callVariationInParallel(String normalPath, String tumorPath, String refGenome,
-                                                                                     String mode, String vcfFile, List<SimpleFeature> partitions, int nThreads) {
+                                                                                     String mode, String vcfFile, List<SimpleFeature> partitions,
+                                                                                     Set<String> readsToExclude, int nThreads) {
         Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize = new HashMap<>();
         MultithreadClassifier[] mClassifiers = new MultithreadClassifier[partitions.size()];
         for(int i = 0; i < partitions.size(); i++){
             SimpleFeature region = partitions.get(i);
-            mClassifiers[i] = new MultithreadClassifier(normalPath, tumorPath, refGenome, mode, vcfFile, region);
+            mClassifiers[i] = new MultithreadClassifier(normalPath, tumorPath, refGenome, mode, vcfFile, region, readsToExclude);
         }
         ExecutorService executorService = Executors.newFixedThreadPool(nThreads);
         List<CompletableFuture<Void>> futures = new ArrayList<>();
@@ -184,13 +181,13 @@ public class GenomeAnonymizer {
      * @throws IOException
      */
     public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed,
-                    String algorithm, int nThreads) throws IOException {
+                    String algorithm, int nThreads) throws Exception {
         run(normalPath, tumorPath, refGenome, outputPrefix, compressed, algorithm, DEFAULT_RUN_MODE_FUNCTIONALITY, "", nThreads);
     }
 
-    private static AnonymizerAlgorithm getAnonymizer(String algorithm, Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize) {
+    private static AnonymizerAlgorithm getAnonymizer(String algorithm) {
         AnonymizerAlgorithm anonymizer = null;
-        if (AnonymizerAlgorithm.SHORT_READ_ALGORITHM.equals(algorithm)) anonymizer = new ShortReadAnonymizer(readGermlinesToAnonymize);
+        if (AnonymizerAlgorithm.SHORT_READ_ALGORITHM.equals(algorithm)) anonymizer = new ShortReadAnonymizer();
         assert anonymizer != null: "No Anonymizer class impl was instantiated";
         return anonymizer;
     }

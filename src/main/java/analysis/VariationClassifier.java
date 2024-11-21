@@ -39,16 +39,22 @@ public class VariationClassifier {
 
     public static final int SLIDING_WINDOW_LIMIT = 200;
 
+    Set<String> readsToExclude;
     Map<String, Map<Integer, List<CalledVariation>>> potentialGermlinesPerRead;
     boolean diffuseIndelCalls;
 
     public VariationClassifier(){
         potentialGermlinesPerRead = new HashMap<>();
         diffuseIndelCalls = false;
+        readsToExclude = new HashSet<>();
     }
 
     public Map<String, Map<Integer, List<CalledVariation>>> getPotentialGermlinesPerRead() {
         return potentialGermlinesPerRead;
+    }
+
+    public void setReadsToExclude(Set<String> readsToExclude){
+        this.readsToExclude = readsToExclude;
     }
 
     /**
@@ -63,24 +69,6 @@ public class VariationClassifier {
      */
     public void callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile, SimpleFeature region) throws IOException {
         try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, region);
-            IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(refGenome))){
-            //Retrieve signals from their normal sample even if there is no coverage in the tumor sample
-            pairPileupReader.setReturnNormal(true);
-            callVariation(pairPileupReader, referenceWalker, mode, vcfFile);
-        }
-    }
-
-    /**
-     * Call for discovering variation over the complete genome
-     * @param normalPath
-     * @param tumorPath
-     * @param refGenome
-     * @param mode
-     * @param vcfFile
-     * @throws IOException
-     */
-    public void callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile) throws IOException {
-        try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome);
             IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(refGenome))){
             //Retrieve signals from their normal sample even if there is no coverage in the tumor sample
             pairPileupReader.setReturnNormal(true);
@@ -114,45 +102,6 @@ public class VariationClassifier {
             variationPerPos.remove(pos-SLIDING_WINDOW_LIMIT);
             p++;
         }
-        //DEBUG
-        if(potentialGermlinesPerRead.containsKey("6a129c2336afd2745c10a3b7ca407903")){
-            Map<Integer, List<CalledVariation>> perIdx = potentialGermlinesPerRead.get("6a129c2336afd2745c10a3b7ca407903");
-            if(perIdx.containsKey(PAIR_2_IDX)){
-                System.out.println(perIdx.get(PAIR_2_IDX));
-            }
-        }
-        //DEBUG
-    }
-
-    private void processPotentialGermlines(List<CalledVariation> variationInPos) {
-        processPotentialGermlines(variationInPos, new HashMap<>());
-    }
-
-    private void processPotentialGermlines(List<CalledVariation> variationInPos,
-                                           Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep) {
-        for (CalledVariation var : variationInPos){
-            // Anonymize only potential germlines if seen in both datasets, at least once in each, or more than once if only found in the normal tissue mappings
-            if (!SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(var.getSomaticVariationType())//) continue;
-                    && !SomaticVariationType.NORMAL_ONLY_VARIANT.equals(var.getSomaticVariationType())) continue;
-            if (!somaticVariantsToKeep.isEmpty()){
-                Map<Integer, CalledVariation> validatedSomaticsAtSeq = somaticVariantsToKeep.get(var.getSeqName());
-                if(validatedSomaticsAtSeq==null) continue;
-                CalledVariation validatedSomaticAtPos = validatedSomaticsAtSeq.get(var.getPos());
-                if(validatedSomaticAtPos!=null && validatedSomaticAtPos.equals(var)) continue;
-            }
-            //DEBUG
-            //System.out.println("# " + var.toString());
-            //DEBUG
-            Map<String, Integer> supportingReads = var.getSupportingReads();
-            for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
-                String[] keyElems = entry.getKey().split(READ_PAIR_NAME_SEPARATOR);
-                String readName = keyElems[0];
-                int pairIdx = Integer.parseInt(keyElems[1]);
-                Map<Integer, List<CalledVariation>> potentialGermlinesInReadPair = potentialGermlinesPerRead.computeIfAbsent(readName, v -> new HashMap<>());
-                List<CalledVariation> potentialGermlinesInRead = potentialGermlinesInReadPair.computeIfAbsent(pairIdx, v -> new ArrayList<>());
-                potentialGermlinesInRead.add(var);
-            }
-        }
     }
 
     /**
@@ -176,12 +125,13 @@ public class VariationClassifier {
 
     private void classifyPileupVariation(String sequenceName, int refPosition, List<RecordAndOffset> pileup, Set<String> seenReads, byte referenceBase,
                                          Map<Integer, List<CalledVariation>> variationPerPos, IndexedFastaSequenceFile referenceWalker, boolean isNormalDataset) {
-        // In case normal pileup is also queried, to avoid null tumor pileups are not accessed
+        // In case single normal pileup is queried alone, to guarantee that null tumor pileups are not accessed
         if(pileup==null) return;
         // May be removing the read;pair name of seenReads after it reaches he last position in pileup
         // or adding the CIGAR to seen reads string
         for (RecordAndOffset pileupRecord : pileup){
             String readName = pileupRecord.getReadName();
+            if(readsToExclude.contains(readName)) continue;
             SAMRecord samRecord = pileupRecord.getRecord();
             variationPerPos.computeIfAbsent(refPosition, v -> new ArrayList<>());
             if (samRecord.getReadUnmappedFlag()) continue;
@@ -311,6 +261,37 @@ public class VariationClassifier {
                 if (SomaticVariationType.TUMORAL_SINGLE_READ_VARIANT.equals(calledVarType)){
                     calledVar.setSomaticVariationType(SomaticVariationType.TUMORAL_ONLY_VARIANT);
                 }
+            }
+        }
+    }
+
+    private void processPotentialGermlines(List<CalledVariation> variationInPos) {
+        processPotentialGermlines(variationInPos, new HashMap<>());
+    }
+
+    private void processPotentialGermlines(List<CalledVariation> variationInPos,
+                                           Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep) {
+        for (CalledVariation var : variationInPos){
+            // Anonymize only potential germlines if seen in both datasets, at least once in each, or more than once if only found in the normal tissue mappings
+            if (!SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(var.getSomaticVariationType())//) continue;
+                    && !SomaticVariationType.NORMAL_ONLY_VARIANT.equals(var.getSomaticVariationType())) continue;
+            if (!somaticVariantsToKeep.isEmpty()){
+                Map<Integer, CalledVariation> validatedSomaticsAtSeq = somaticVariantsToKeep.get(var.getSeqName());
+                if(validatedSomaticsAtSeq==null) continue;
+                CalledVariation validatedSomaticAtPos = validatedSomaticsAtSeq.get(var.getPos());
+                if(validatedSomaticAtPos!=null && validatedSomaticAtPos.equals(var)) continue;
+            }
+            //DEBUG
+            //System.out.println("# " + var.toString());
+            //DEBUG
+            Map<String, Integer> supportingReads = var.getSupportingReads();
+            for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
+                String[] keyElems = entry.getKey().split(READ_PAIR_NAME_SEPARATOR);
+                String readName = keyElems[0];
+                int pairIdx = Integer.parseInt(keyElems[1]);
+                Map<Integer, List<CalledVariation>> potentialGermlinesInReadPair = potentialGermlinesPerRead.computeIfAbsent(readName, v -> new HashMap<>());
+                List<CalledVariation> potentialGermlinesInRead = potentialGermlinesInReadPair.computeIfAbsent(pairIdx, v -> new ArrayList<>());
+                potentialGermlinesInRead.add(var);
             }
         }
     }

@@ -2,25 +2,39 @@ package analysis;
 
 import genomicelements.*;
 import htsjdk.samtools.SAMRecord;
+import htsjdk.samtools.SAMRecordIterator;
 import htsjdk.samtools.SamReader;
 import htsjdk.samtools.SamReaderFactory;
 import htsjdk.samtools.fastq.FastqRecord;
 import htsjdk.samtools.fastq.FastqWriter;
 import htsjdk.samtools.fastq.FastqWriterFactory;
 import htsjdk.samtools.util.SequenceUtil;
+import htsjdk.tribble.SimpleFeature;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.logging.Logger;
+
+/**
+ * AnonymizerAlgorithm implementation for short read data
+ * @author Nicolas Gaitan
+ */
 
 import static genomicelements.ShortAnonymizedReadPair.*;
 
 public class ShortReadAnonymizer implements AnonymizerAlgorithm{
 
+    private static final Logger LOGGER = Logger.getLogger(ShortReadAnonymizer.class.getName());
+
     public static final int NORMAL_DATASET_IDX = 0;
     public static final int TUMORAL_DATASET_IDX = 1;
     public static final int OUTPUT_FILE_NUMBER = 4;
 
+    Set<String> readsToExclude;
     // Map containing all potential germlines (value: List), per pair (nested key, 0 or 1), per read (key)
     Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize;
     // Map collecting to-be-anonymized reads while they can be masked and written
@@ -31,14 +45,81 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     boolean removeUnmapped;
     boolean writersAreOpen;
 
-    public ShortReadAnonymizer(Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize) {
+    public ShortReadAnonymizer() {
+        readsToExclude = new HashSet<>();
         anonReadContainer = new HashMap<>();
-        this.readGermlinesToAnonymize = readGermlinesToAnonymize;
+        readGermlinesToAnonymize = new HashMap<>();
         anonReadNames = new HashSet<>();
         outputFiles = new File[OUTPUT_FILE_NUMBER/2][OUTPUT_FILE_NUMBER/2];
         writers = new FastqWriter[OUTPUT_FILE_NUMBER/2][OUTPUT_FILE_NUMBER/2];
         removeUnmapped = true;
         writersAreOpen = false;
+    }
+
+    public void setReadGermlinesToAnonymize(Map<String, Map<Integer, List<CalledVariation>>> readGermlinesToAnonymize) {
+        this.readGermlinesToAnonymize = readGermlinesToAnonymize;
+    }
+
+    public void queryReadsToExclude(String normalPath, String tumorPath, List<SimpleFeature> partitions, int threads) throws Exception{
+        String[] paths = new String[2];
+        paths[0] = normalPath;
+        paths[1] = tumorPath;
+        SamReaderFactory factory = SamReaderFactory.makeDefault();
+        ExecutorService exec = Executors.newFixedThreadPool(threads);
+        List<CompletableFuture<Set<String>>> futures = new ArrayList<>();
+        for(SimpleFeature partition : partitions){
+            for(String path : paths){
+                CompletableFuture<Set<String>> future = CompletableFuture.supplyAsync (() -> {
+                    Set<String> answer = new HashSet<>();
+                    try {
+                        answer = queryReadsToExcludeInPartition(path, factory, partition);
+                    }
+                    catch (IOException e) {
+                        LOGGER.severe("Exception in thread querying reads to exclude in region: "
+                                + partition.getContig() + " " + partition.getStart() + " " + partition.getEnd() +
+                                " halting execution prematurely");
+                        LOGGER.severe(e.getMessage());
+                        System.exit(1);
+                    }
+                    return answer;
+                }, exec);
+                futures.add(future);
+            }
+        }
+        CompletableFuture<Void> allFutures = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+        try{
+            for (CompletableFuture<Set<String>> future : futures) {
+                Set<String> answer = future.get();
+                readsToExclude.addAll(answer);
+            }
+        }
+        catch (Exception e){
+            LOGGER.severe("Exception when retrieving excluded reads from thread halting execution prematurely");
+            LOGGER.severe(e.getMessage());
+            System.exit(1);
+        }
+        allFutures.join();
+        exec.shutdown();
+    }
+
+    private Set<String> queryReadsToExcludeInPartition(String filePath, SamReaderFactory factory,  SimpleFeature partition) throws IOException{
+        Set<String> readsToExcludeInPartition = new HashSet<>();
+        try(SamReader reader = factory.open(new File(filePath))){
+            SAMRecordIterator it = reader.query(partition.getContig(), partition.getStart(), partition.getEnd(), false);
+            while (it.hasNext()) {
+                SAMRecord samRecord = it.next();
+                if(samRecord.getReadUnmappedFlag() ||
+                        (samRecord.getMappingQuality()==0 && !samRecord.isSecondaryOrSupplementary())){
+                    readsToExcludeInPartition.add(samRecord.getReadName());
+                }
+            }
+        }
+        return readsToExcludeInPartition;
+    }
+
+    @Override
+    public Set<String> getReadsToExclude() {
+        return readsToExclude;
     }
 
     @Override
@@ -163,7 +244,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         }
     }
 
-    @Override
     public Map<String, ShortAnonymizedReadPair> getAnonymizedReadContainer() {
         return anonReadContainer;
     }
