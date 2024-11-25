@@ -6,7 +6,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
 
 import static utils.Operations.estimateEuclideanDistance;
 
@@ -38,6 +37,7 @@ public class CalledVariation {
         this.somaticVariationType = SomaticVariationType.UNCLASSIFIED;
         this.hasDiffused = false;
         this.isLinkedToAnotherGermline = false;
+        //Holds the reads that supported this call as keys, and their 1-based position in-read for SNVs, or 0 based index in-CIGAR for indels and SVs
         this.supportingReads = new HashMap<>();
     }
 

@@ -1,0 +1,155 @@
+package genomicelements;
+
+import htsjdk.samtools.Cigar;
+import htsjdk.samtools.CigarElement;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.List;
+
+public class ReadAlignmentBaseImpl implements ReadAlignment{
+
+    private String readAlignmentId;
+    private String readName;
+    private String sequenceName;
+    private int start;
+    private int end;
+    private int length;
+    private byte[] sequenceArray;
+    private byte[] qualitiesArray;
+    private int mapQ;
+    private Cigar cigar;
+    boolean isSupplementary;
+    boolean isSecondary;
+
+
+    public ReadAlignmentBaseImpl(String readName, String sequenceName, int start, int end, boolean isSupplementary, int mapQ, Cigar cigar) {
+        this.readAlignmentId = generateReadAlignmentId(readName);
+        this.readName = readName;
+        this.sequenceName = sequenceName;
+        this.start = start;
+        this.end = end;
+        this.isSupplementary = isSupplementary;
+        this.mapQ = mapQ;
+        this.cigar = cigar;
+    }
+
+    @Override
+    public String getReadAlignmentId() {
+        return readAlignmentId;
+    }
+
+    public void setReadAlignmentId(String readAlignmentId) {
+        this.readAlignmentId = readAlignmentId;
+    }
+
+    @Override
+    public String getReadName() {
+        return readName;
+    }
+
+    public void setReadName(String readName) {
+        this.readName = readName;
+    }
+
+    @Override
+    public String getSequenceName() {
+        return sequenceName;
+    }
+
+    public void setSequenceName(String sequenceName) {
+        this.sequenceName = sequenceName;
+    }
+
+    @Override
+    public int getStart() {
+        return start;
+    }
+
+    public void setStart(int start) {
+        this.start = start;
+    }
+
+    @Override
+    public int getEnd() {
+        return end;
+    }
+
+    public void setEnd(int end) {
+        this.end = end;
+    }
+
+    @Override
+    public int getLength() {
+        return length;
+    }
+
+    public void setLength(int length) {
+        this.length = length;
+    }
+
+    @Override
+    public byte[] getSequenceArray() {
+        return sequenceArray;
+    }
+
+    public void setSequenceArray(byte[] sequenceArray) {
+        this.sequenceArray = sequenceArray;
+    }
+
+    @Override
+    public byte[] getQualitiesArray() {
+        return qualitiesArray;
+    }
+
+    @Override
+    public String getSequence() {
+        return new String(this.sequenceArray, StandardCharsets.UTF_8);
+    }
+
+    @Override
+    public String getQualities() {
+        return Arrays.toString(this.qualitiesArray);
+    }
+
+    @Override
+    public int getMappingQuality() {
+        return mapQ;
+    }
+
+    @Override
+    public Cigar getCigar() {
+        return cigar;
+    }
+
+    public List<CigarElement> getCigarElements(){
+        return cigar.getCigarElements();
+    }
+
+    public void setQualitiesArray(byte[] qualitiesArray) {
+        this.qualitiesArray = qualitiesArray;
+    }
+
+    @Override
+    public boolean isSupplementary() {
+        return isSupplementary;
+    }
+
+    public void setSupplementary(boolean supplementary) {
+        isSupplementary = supplementary;
+    }
+
+    @Override
+    public boolean isSecondary() {
+        return isSecondary;
+    }
+
+    public void setSecondary(boolean secondary) {
+        isSecondary = secondary;
+    }
+
+    // Read Id depends on the type of read that is aligned (e.g. Sequencing platform)
+    public static String generateReadAlignmentId(String readName){
+        return readName;
+    }
+}

@@ -18,6 +18,8 @@ import java.util.logging.Logger;
 
 import static analysis.GenomeAnonymizer.SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY;
 import static genomicelements.ShortAnonymizedReadPair.*;
+import static genomicelements.ShortReadAlignment.generateAlignmentHash;
+import static genomicelements.ShortReadAlignment.generateReadId;
 import static io.VCFReader.readVCF;
 
 
@@ -141,8 +143,9 @@ public class VariationClassifier {
             // pairReadName represents the name of the read, the pair, and the reference position of the alignment
             //String pairReadName = getShortReadPairName(readName, pairIdx);
             //String pairReadName = getShortReadAlignmentId(readName, pairIdx, refPosition);
-            String pairReadName = getShortReadAlignmentId(samRecord);
+            String pairReadName = generateReadId(samRecord);
             // specificReadName represents the name of the read , pair, and which partial alignment (if any) it comes from
+            // TODO: Delete the now unnecesary additional Id, merge with pairReadName
             String specificReadName = getSpecificShortReadPairName(samRecord, pairIdx);
             //
             if (!seenReads.contains(specificReadName)){
@@ -166,7 +169,8 @@ public class VariationClassifier {
         int readConsumedBaseNumber = 0;
         String sequenceName = samRecord.getContig();
         byte[] sequenceBases = samRecord.getReadBases();
-        for (CigarElement cigarElement : cigarElems){
+        for (int i = 0; i < cigarElems.size(); i++){
+            CigarElement cigarElement = cigarElems.get(i);
             CigarOperator op = cigarElement.getOperator();
             if (op.isIndel()){
                 int currentRefPos = initRefPos + currentCigarLength-1;
@@ -199,7 +203,8 @@ public class VariationClassifier {
                 int indexSearch = variationInPos.indexOf(calledVar);
                 boolean variationExists = indexSearch != -1;
                 if (variationExists) calledVar = variationInPos.get(indexSearch);
-                calledVar.addSupportingRead(pairReadName, inReadPos);
+                // Saves the CIGAR index of the INDEL signal
+                calledVar.addSupportingRead(pairReadName, i);
                 processSomaticType(variationInPos, calledVar, variationExists, isNormalDataset);
             }
             if(op.consumesReferenceBases()){
@@ -305,17 +310,6 @@ public class VariationClassifier {
 //        return readName + READ_PAIR_NAME_SEPARATOR + pairIdx;
 //    }
 
-    //Provides a unique ID for each read alignment
-    public static String getShortReadAlignmentId(String readName, int pairIdx, int refPos){
-        return readName + DEFAULT_ID_NAME_SEPARATOR + pairIdx + DEFAULT_ID_NAME_SEPARATOR + refPos;
-    }
-
-    public static String getShortReadAlignmentId(SAMRecord alignment){
-        int pairIdx = alignment.getFirstOfPairFlag() ? PAIR_1_IDX : PAIR_2_IDX;
-        String baseName = getShortReadAlignmentId(alignment.getReadName(), pairIdx, alignment.getAlignmentStart());
-        String complement = generateAlignmentHash(alignment);
-        return baseName + DEFAULT_ID_NAME_SEPARATOR + complement;
-    }
 
     public static String getSpecificShortReadPairName(SAMRecord samRec, int pairIdx) {
         if (samRec.getAttribute("SA") != null){
@@ -324,13 +318,5 @@ public class VariationClassifier {
         else{
             return samRec.getReadName() + DEFAULT_ID_NAME_SEPARATOR + pairIdx;
         }
-    }
-
-    private static String generateAlignmentHash(SAMRecord samRec) {
-        long answer = 17;
-        answer = 37*answer + samRec.getCigar().toString().hashCode();
-        answer = 37*answer + samRec.getBaseQualityString().hashCode();
-        answer = 37*answer + samRec.getReadString().hashCode();
-        return String.valueOf(answer);
     }
 }
