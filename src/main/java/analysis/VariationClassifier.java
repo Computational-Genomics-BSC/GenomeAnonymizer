@@ -230,6 +230,7 @@ public class VariationClassifier {
         int indexSearch = variationInPos.indexOf(calledVar);
         boolean variationExists = indexSearch != -1;
         if (variationExists) calledVar = variationInPos.get(indexSearch);
+        //TODO: Check and fix inReadPosition if wrongly estimated in supplementaries
         calledVar.addSupportingRead(pairReadName, inReadPosition);
         processSomaticType(variationInPos, calledVar, variationExists, isNormalDataset);
     }

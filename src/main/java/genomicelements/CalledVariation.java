@@ -98,7 +98,7 @@ public class CalledVariation {
     }
 
     public int getInReadPosition(AnonymizedRead anonRead){
-        return supportingReads.get(anonRead.getUniqueReadName());
+        return supportingReads.get(anonRead.getReadAlignmentId());
     }
 
     public String getSeqName() {

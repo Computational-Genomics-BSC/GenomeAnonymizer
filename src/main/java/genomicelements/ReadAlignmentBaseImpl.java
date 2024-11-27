@@ -2,6 +2,7 @@ package genomicelements;
 
 import htsjdk.samtools.Cigar;
 import htsjdk.samtools.CigarElement;
+import htsjdk.samtools.SAMFileHeader;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -21,6 +22,7 @@ public class ReadAlignmentBaseImpl implements ReadAlignment{
     private Cigar cigar;
     boolean isSupplementary;
     boolean isSecondary;
+    private SAMFileHeader header;
 
 
     public ReadAlignmentBaseImpl(String readName, String sequenceName, int start, int end, boolean isSupplementary, int mapQ, Cigar cigar) {
@@ -41,6 +43,14 @@ public class ReadAlignmentBaseImpl implements ReadAlignment{
 
     public void setReadAlignmentId(String readAlignmentId) {
         this.readAlignmentId = readAlignmentId;
+    }
+
+    public void setHeader(SAMFileHeader header){
+        this.header = header;
+    }
+
+    public SAMFileHeader getHeader(){
+        return header;
     }
 
     @Override

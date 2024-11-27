@@ -1,88 +1,205 @@
 package genomicelements;
 
+import htsjdk.samtools.*;
+import htsjdk.samtools.util.SequenceUtil;
+
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public class ShortAnonymizedReadAlignment implements AnonymizedRead{
 
     private ShortReadAlignment readAlignment;
+    private byte[] referenceSequence;
     private boolean isAnonymized;
     private byte[] anonymizedSequenceArray;
     private byte[] anonymizedQualitiesArray;
+    List<CigarElement> anonymizedCigarElements;
+    private Cigar anonymizedCigar;
     private List<CalledVariation> SNVsToAnonymize;
     private List<CalledVariation> indelsToAnonymize;
     private List<CalledVariation> SVsToAnonymize;
 
     public ShortAnonymizedReadAlignment(ShortReadAlignment readAlignment) {
+        this.readAlignment = readAlignment;
         this.isAnonymized = false;
         this.anonymizedSequenceArray = new byte[0];
         this.anonymizedQualitiesArray = new byte[0];
-        SNVsToAnonymize = new ArrayList<>();
-        indelsToAnonymize = new ArrayList<>();
-        SVsToAnonymize = new ArrayList<>();
+        this.anonymizedCigarElements = new ArrayList<>();
+        this.SNVsToAnonymize = new ArrayList<>();
+        this.indelsToAnonymize = new ArrayList<>();
+        this.SVsToAnonymize = new ArrayList<>();
     }
 
+    public void setReferenceSequence(byte[] referenceSequence) {
+        // 1-based memoized reference sequence, corresponding to the contig to which this read is mapped
+        this.referenceSequence = referenceSequence;
+    }
 
     public void anonymizeVariants() {
-        if (SNVsToAnonymize.isEmpty()){
+        //This should not happen, because now alignments that dont have variants to anonymize should
+        // be processed only as ReadAlignment objects
+        // TODO: Erase after checking this is not happening
+        if (SNVsToAnonymize.isEmpty() && indelsToAnonymize.isEmpty()){
             isAnonymized = true;
+            System.out.println("This should not happen, because now alignments that dont have variants to" +
+                    " anonymize should be processed only as ReadAlignment objects");
             return;
         }
-        if(!SNVsToAnonymize.isEmpty()) {
-            SNVsToAnonymize.sort(Comparator.comparing(var -> var.getInReadPosition(this)));
-            for (CalledVariation var : SNVsToAnonymize) {
-                int inReadPos = var.getInReadPosition(this);
-                modifyBaseInRead(inReadPos, var.getRefAllele()[0]);
+        int originalSeqLength = getOriginalSequenceArray().length;
+        int expectedSize = estimateNewReadSize(originalSeqLength);
+        anonymizedSequenceArray = new byte[expectedSize];
+        anonymizedQualitiesArray = new byte[expectedSize];
+        byte avgQual = getAverageOfBytes(getOriginalQualitiesArray());
+        List<CigarElement> originalCigarElements = readAlignment.getCigarElements();
+        //Invariant as the anonymized read will map to the exact start coordinate as the original
+        final int alnStart = getStart();
+        int alnOrgEnd = getEnd();
+        //1 - based coordinate
+        //TODO: Either decrease this value by 1, or index reference sequence 1-based
+        int currentRefAlnPos = alnStart-1;
+        //Should be the same if we fill or remove bases from the end of the read
+        //int alnNewEnd = 0;
+        //Holds the position over the original read
+        int i = 0;
+        //Holds the position over the anonymized read
+        int j = 0;
+        //Holds the current index of the CIGAR alignment elements
+        int c = 0;
+        //SNV Operations (value: byte as new base) to perform using the original read index
+        byte[] SNVops = processSNVoperations(originalSeqLength);
+        //Indel Operations (value: number of bases to remove or add) to perform using the CIGAR index
+        int[] indelOps = processIndelOps(originalCigarElements.size());
+        while(c < originalCigarElements.size()){
+            CigarElement cigarElem = originalCigarElements.get(c);
+            CigarOperator currentCigarOp = cigarElem.getOperator();
+            int opLength = cigarElem.getLength();
+            int indelOp = indelOps[c];
+            if(indelOp > 0){
+                makeAdditiveChange(j, currentRefAlnPos, avgQual, indelOp);
+                //i++;
+                j += indelOp;
+                currentRefAlnPos += indelOp;
+            }
+            else if(indelOp < 0){
+                //makeSubstractiveChange();
+                i += Math.abs(indelOp);
+                //j++;
+                //currentRefAlnPos++;
+            }
+            else{
+                if(CigarOperator.M.equals(currentCigarOp)){
+                    for(int x = 0; x < opLength; x++){
+                        byte snvOp = SNVops[i];
+                        if(snvOp > 0){
+                            anonymizedSequenceArray[j] = snvOp;
+                        }
+                        else{
+                            anonymizedSequenceArray[j] = getOriginalSequenceArray()[i];
+                        }
+                        anonymizedQualitiesArray[j] = getOriginalQualitiesArray()[i];
+                        i++;
+                        j++;
+                        currentRefAlnPos++;
+                    }
+                    //anonymizedCigarElements.add(new CigarElement(opLength, currentCigarOp));
+                }
+                else if(currentCigarOp.consumesReadBases()){
+                    for(int x = 0; x < opLength; x++){
+                        anonymizedSequenceArray[j] = getOriginalSequenceArray()[i];
+                        anonymizedQualitiesArray[j] = getOriginalQualitiesArray()[i];
+                        i++;
+                        j++;
+                    }
+                    //anonymizedCigarElements.add(new CigarElement(opLength, currentCigarOp));
+                    //i++;
+                    //j++;
+                    //currentRefAlnPos += opLength;
+                }
+                else{
+                    currentRefAlnPos += opLength;
+                    //anonymizedCigarElements.add(new CigarElement(opLength, currentCigarOp));
+                }
+                anonymizedCigarElements.add(new CigarElement(opLength, currentCigarOp));
             }
         }
-        if(!indelsToAnonymize.isEmpty()){
-            indelsToAnonymize.sort(Comparator.comparing(var -> var.getInReadPosition(this)));
-            int offset = 0;
-            for (int i = 0; i < indelsToAnonymize.size(); i++) {
-                CalledVariation var = indelsToAnonymize.get(i);
-                int inReadPos = var.getInReadPosition(this);
-                if(i==0) offset += modifyIndel(inReadPos, var);
-                else offset += modifyIndel((inReadPos + offset)+1, var);
-            }
-        }
+        generateDefinitiveCigar();
         isAnonymized = true;
     }
 
-    public void modifyBaseInRead(int inReadPosition, byte asciiBase){
-        int inArrayPosition = inReadPosition - 1;
-        anonymizedSequenceArray[inArrayPosition] = asciiBase;
+    private void makeAdditiveChange(int initPos, int refInitPos, byte avgQual, int length) {
+        int j = initPos;
+        int r = refInitPos;
+        for(int l = 0; l < length; l++){
+            anonymizedSequenceArray[j] = referenceSequence[r];
+            anonymizedQualitiesArray[j] = avgQual;
+            j++;
+            r++;
+        }
+        anonymizedCigarElements.add(new CigarElement(length, CigarOperator.M));
     }
 
-    public void modifyBaseAndQualityInRead(int inReadPosition, byte asciiBase, byte asciiBaseQuality){
-        modifyBaseInRead(inReadPosition, asciiBase);
-        anonymizedQualitiesArray[inReadPosition] = asciiBaseQuality;
+    private int estimateNewReadSize(int originalSeqLength) {
+        int newSize = originalSeqLength;
+        for(CalledVariation indel : indelsToAnonymize) {
+            CalledVariation.VariantType variantType = indel.getVariantType();
+            if (CalledVariation.VariantType.DEL.equals(variantType)) {
+                newSize += indel.getLength() - 1;
+            }
+            if (CalledVariation.VariantType.INS.equals(variantType)) {
+                newSize -= indel.getLength() - 1;
+            }
+            //TODO: Account for SVs (SoftClips at first)
+        }
+        return newSize;
     }
 
-//    private int modifyIndel(int inReadPosition, CalledVariation var) {
-//        int addedOffset = 0;
-//        int inArrayPosition = inReadPosition - 1;
-//        int varLength = var.getLength();
-//        byte [] newSequenceArray;
-//        byte[] newQualitiesArray;
-//        if (CalledVariation.VariantType.INS.equals(var.getVariantType())){
-//            newSequenceArray = removeInsertion(sequenceArray, inArrayPosition, varLength, var);
-//            newQualitiesArray = removeInsertion(qualitiesArray, inArrayPosition, varLength, var);
-//            addedOffset = -(varLength);
-//        }
-//        else if (CalledVariation.VariantType.DEL.equals(var.getVariantType())){
-//            newSequenceArray = removeDeletion(sequenceArray, inArrayPosition, varLength, var.getRefAllele());
-//            byte[] avgQualities = new byte[var.getRefAllele().length];
-//            byte avgQ = getAverageOfBytes(qualitiesArray);
-//            Arrays.fill(avgQualities, avgQ);
-//            newQualitiesArray = removeDeletion(qualitiesArray, inArrayPosition, varLength, avgQualities);
-//            addedOffset = varLength;
-//        }
-//        else {
-//            // Placeholder for other types of variants
-//            newSequenceArray = sequenceArray;
-//            newQualitiesArray = qualitiesArray;
-//        }
-//        return addedOffset;
-//    }
+    private byte[] processSNVoperations(int originalSeqLength) {
+        byte[] snvOps = new byte[originalSeqLength];
+        for (CalledVariation snv : SNVsToAnonymize){
+            int snvOpPosition = snv.getInReadPosition(this)-1;
+            //Change to retrieve from memoized ref genome
+            byte op = snv.getRefAllele()[0];
+            snvOps[snvOpPosition] = op;
+        }
+        return snvOps;
+    }
+
+    private int[] processIndelOps(int originalCigarLength) {
+        int[] indelOps = new int[originalCigarLength];
+        for (CalledVariation indel : indelsToAnonymize){
+            //TODO: Account for SVs (SoftClips at first)
+            int indelOpPos = indel.getInReadPosition(this);
+            int op = CalledVariation.VariantType.INS.equals(indel.getVariantType()) ?
+                    -(indel.getLength()-1) : indel.getLength()-1;
+            indelOps[indelOpPos] = op;
+        }
+        return indelOps;
+    }
+
+    private void generateDefinitiveCigar() {
+        List<CigarElement> fixedCigarElements = new ArrayList<>();
+        boolean previousMerged = false;
+        CigarElement currentElement = null;
+        CigarElement nextElement;
+        CigarOperator currentOp;
+        for(int i = 0; i < anonymizedCigarElements.size()-1; i++){
+            if(!previousMerged) currentElement = anonymizedCigarElements.get(i);
+            else previousMerged = false;
+            currentOp = currentElement.getOperator();
+            nextElement = anonymizedCigarElements.get(i+1);
+            CigarOperator nextOp = nextElement.getOperator();
+            if(nextOp.equals(currentOp)){
+                currentElement = new CigarElement(currentElement.getLength() + nextElement.getLength(),
+                        currentOp);
+                previousMerged = true;
+            }
+            else{
+                fixedCigarElements.add(currentElement);
+            }
+        }
+        anonymizedCigarElements = fixedCigarElements;
+        anonymizedCigar = new Cigar(anonymizedCigarElements);
+    }
 
     public byte getAverageOfBytes(byte[] array){
         int sum = 0;
@@ -95,31 +212,46 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         return (byte) answer;
     }
 
-    private byte[] removeInsertion(byte[] original, int inArrayPosition, int varLength, CalledVariation debugParam){
-        byte[] answer = new byte[original.length - varLength];
-        //System.arraycopy(original, 0, answer, 0, inArrayPosition);
-        //DEBUG
-        //if(inArrayPosition + 1 >= answer.length){
-        //    System.out.println(debugParam + " inArrayPosition=" + inArrayPosition + " read=" + readName + " pair=" + pair);
-        //    return original;
-        //}
-        //DEBUG
-        System.arraycopy(original, 0, answer, 0, inArrayPosition + 1);
-        System.arraycopy(original, inArrayPosition + varLength, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
-        //System.arraycopy(original, inArrayPosition + varLength + 1, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
+    public SAMRecord getAnonymizedSamRecord(){
+        SAMFileHeader header = readAlignment.getHeader();
+        SAMRecord answer = new SAMRecord(header);
+        answer.setAlignmentStart(getStart());
+        answer.setReadBases(anonymizedSequenceArray);
+        answer.setBaseQualities(anonymizedQualitiesArray);
+        answer.setReadName(getReadName());
+        answer.setMappingQuality(getMappingQuality());
+        answer.setCigar(anonymizedCigar);
+        List<SAMRecord.SAMTagAndValue> readAlnOriginalTags = readAlignment.getTags();
+        for(SAMRecord.SAMTagAndValue tagAndValue : readAlnOriginalTags){
+            answer.setAttribute(tagAndValue.tag, tagAndValue.value);
+        }
+        // getStart and getEnd are 1-based, adjust accordingly, currently referenceSequence is 0-based
+        byte[] refSequenceAln = Arrays.copyOfRange(referenceSequence, answer.getStart()-1, answer.getEnd());
+        SequenceUtil.calculateMdAndNmTags(answer, refSequenceAln, true, true);
+        // TODO: Erase after checking this is not correct
+        // TEST
+        List<SAMValidationError> cigarErrors = answer.validateCigar(-1);
+        if(cigarErrors!=null){
+            for (SAMValidationError err : cigarErrors){
+                System.out.println("CIGAR validation error on SAM Record: " +
+                        answer.toString() + " Error message: "
+                        + err.getMessage());
+            }
+        }
+        List<SAMValidationError> validationErrors = answer.isValid();
+        if(validationErrors!=null){
+            for (SAMValidationError err : validationErrors){
+                System.out.println("Validation error on SAM Record: " +
+                        answer + " Error message: "
+                        + err.getMessage());
+            }
+        }
+        // TEST
         return answer;
     }
 
-    private byte[] removeDeletion(byte[] original, int inArrayPosition, int varLength, byte[] newContent){
-        byte[] answer = new byte[original.length + varLength];
-        System.arraycopy(original, 0, answer, 0, inArrayPosition+1);
-        //System.arraycopy(original, 0, answer, 0, inArrayPosition + 1);
-        assert (varLength == newContent.length): "Length of reference is not equal to varLength";
-        //System.arraycopy(newContent, 1, answer, inArrayPosition + 1, varLength-1);
-        System.arraycopy(newContent, 0, answer, inArrayPosition, varLength);
-        //System.arraycopy(original, inArrayPosition + 1, answer, inArrayPosition + varLength-1, original.length - inArrayPosition - 1);
-        System.arraycopy(original, inArrayPosition + 1, answer, inArrayPosition + varLength, original.length - inArrayPosition - 1);
-        return answer;
+    public String getReadAlignmentId() {
+        return readAlignment.getReadAlignmentId();
     }
 
     public String getReadName() {
@@ -132,6 +264,14 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
 
     public int getPairIdx() {
         return readAlignment.getPairIdx();
+    }
+
+    public byte[] getOriginalSequenceArray(){
+        return readAlignment.getSequenceArray();
+    }
+
+    public byte[] getOriginalQualitiesArray(){
+        return readAlignment.getQualitiesArray();
     }
 
     public void setVariantsToAnonymize(List<CalledVariation> variants) {
@@ -178,12 +318,32 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         return readAlignment.getEnd();
     }
 
+    public int getMappingQuality(){
+        return readAlignment.getMappingQuality();
+    }
+
     public boolean isSupplementary() {
         return readAlignment.isSupplementary;
     }
 
     public boolean isAnonymized() {
         return isAnonymized;
+    }
+
+    @Override
+    public String toString(){
+        StringBuilder builder = new StringBuilder();
+        builder.append("ReadName=").append(getReadName());
+        builder.append(" ReadID=").append(getReadId());
+        builder.append(" Start=").append(getStart());
+        builder.append(" End=").append(getEnd());
+        builder.append(" OrgSeq=").append(new String(getOriginalSequenceArray(), StandardCharsets.UTF_8));
+        builder.append(" AnonSeq=").append(new String(anonymizedSequenceArray, StandardCharsets.UTF_8));
+        builder.append(" OrgQual=").append(Arrays.toString(getOriginalQualitiesArray()));
+        builder.append(" AnonQual=").append(Arrays.toString(anonymizedQualitiesArray));
+        builder.append(" CIGAR=").append(anonymizedCigar.toString());
+        builder.append(" TAGS=").append(readAlignment.getTags());
+        return builder.toString();
     }
 
     /**
@@ -200,5 +360,68 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
 //        //String qualitySequence = new String(qualitiesArray, StandardCharsets.UTF_8);
 //        String comment = "";
 //        return new FastqRecord(name, sequenceArray, comment, qualitiesArray);
+//    }
+
+//    public void modifyBaseInRead(int inReadPosition, byte asciiBase){
+//        int inArrayPosition = inReadPosition - 1;
+//        anonymizedSequenceArray[inArrayPosition] = asciiBase;
+//    }
+//
+//    public void modifyBaseAndQualityInRead(int inReadPosition, byte asciiBase, byte asciiBaseQuality){
+//        modifyBaseInRead(inReadPosition, asciiBase);
+//        anonymizedQualitiesArray[inReadPosition] = asciiBaseQuality;
+//    }
+
+//    private int modifyIndel(int inReadPosition, CalledVariation var) {
+//        int addedOffset = 0;
+//        int inArrayPosition = inReadPosition - 1;
+//        int varLength = var.getLength();
+//        byte [] newSequenceArray;
+//        byte[] newQualitiesArray;
+//        if (CalledVariation.VariantType.INS.equals(var.getVariantType())){
+//            newSequenceArray = removeInsertion(sequenceArray, inArrayPosition, varLength, var);
+//            newQualitiesArray = removeInsertion(qualitiesArray, inArrayPosition, varLength, var);
+//            addedOffset = -(varLength);
+//        }
+//        else if (CalledVariation.VariantType.DEL.equals(var.getVariantType())){
+//            newSequenceArray = removeDeletion(sequenceArray, inArrayPosition, varLength, var.getRefAllele());
+//            byte[] avgQualities = new byte[var.getRefAllele().length];
+//            byte avgQ = getAverageOfBytes(qualitiesArray);
+//            Arrays.fill(avgQualities, avgQ);
+//            newQualitiesArray = removeDeletion(qualitiesArray, inArrayPosition, varLength, avgQualities);
+//            addedOffset = varLength;
+//        }
+//        else {
+//            // Placeholder for other types of variants
+//            newSequenceArray = sequenceArray;
+//            newQualitiesArray = qualitiesArray;
+//        }
+//        return addedOffset;
+//    }
+//    private byte[] removeInsertion(byte[] original, int inArrayPosition, int varLength, CalledVariation debugParam){
+//        byte[] answer = new byte[original.length - varLength];
+//        //System.arraycopy(original, 0, answer, 0, inArrayPosition);
+//        //DEBUG
+//        //if(inArrayPosition + 1 >= answer.length){
+//        //    System.out.println(debugParam + " inArrayPosition=" + inArrayPosition + " read=" + readName + " pair=" + pair);
+//        //    return original;
+//        //}
+//        //DEBUG
+//        System.arraycopy(original, 0, answer, 0, inArrayPosition + 1);
+//        System.arraycopy(original, inArrayPosition + varLength, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
+//        //System.arraycopy(original, inArrayPosition + varLength + 1, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
+//        return answer;
+//    }
+//
+//    private byte[] removeDeletion(byte[] original, int inArrayPosition, int varLength, byte[] newContent){
+//        byte[] answer = new byte[original.length + varLength];
+//        System.arraycopy(original, 0, answer, 0, inArrayPosition+1);
+//        //System.arraycopy(original, 0, answer, 0, inArrayPosition + 1);
+//        assert (varLength == newContent.length): "Length of reference is not equal to varLength";
+//        //System.arraycopy(newContent, 1, answer, inArrayPosition + 1, varLength-1);
+//        System.arraycopy(newContent, 0, answer, inArrayPosition, varLength);
+//        //System.arraycopy(original, inArrayPosition + 1, answer, inArrayPosition + varLength-1, original.length - inArrayPosition - 1);
+//        System.arraycopy(original, inArrayPosition + 1, answer, inArrayPosition + varLength, original.length - inArrayPosition - 1);
+//        return answer;
 //    }
 }

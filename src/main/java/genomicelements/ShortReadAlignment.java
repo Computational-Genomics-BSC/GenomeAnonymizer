@@ -5,6 +5,7 @@ import htsjdk.samtools.SAMRecord;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 
 public class ShortReadAlignment extends ReadAlignmentBaseImpl implements ReadAlignment{
 
@@ -14,6 +15,7 @@ public class ShortReadAlignment extends ReadAlignmentBaseImpl implements ReadAli
 
     private int pairIdx;
     private boolean isReverse;
+    private List<SAMRecord.SAMTagAndValue> tags;
 
     public ShortReadAlignment(String readName, String sequenceName, int start, int end, boolean isSupplementary, int mapQ,
                               Cigar cigar, boolean isFirstOfPair, boolean isReverse) {
@@ -27,6 +29,8 @@ public class ShortReadAlignment extends ReadAlignmentBaseImpl implements ReadAli
         this(samRecord.getReadName(), samRecord.getContig(), samRecord.getStart(), samRecord.getEnd(), samRecord.isSecondaryOrSupplementary(),
                 samRecord.getMappingQuality(), samRecord.getCigar(), samRecord.getFirstOfPairFlag(), samRecord.getReadNegativeStrandFlag());
         this.setReadAlignmentId(generateReadId(samRecord));
+        this.setHeader(samRecord.getHeader());
+        this.setTags(samRecord.getAttributes());
     }
 
 
@@ -52,6 +56,14 @@ public class ShortReadAlignment extends ReadAlignmentBaseImpl implements ReadAli
 
     public void setPairIdx(int pairIdx) {
         this.pairIdx = pairIdx;
+    }
+
+    public List<SAMRecord.SAMTagAndValue> getTags(){
+        return tags;
+    }
+
+    public void setTags(List<SAMRecord.SAMTagAndValue> tags){
+        this.tags = tags;
     }
 
     @Override
