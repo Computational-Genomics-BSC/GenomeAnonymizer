@@ -1,7 +1,6 @@
 package analysis;
 
 import genomicelements.CalledVariation;
-import genomicelements.ShortAnonymizedReadPair;
 import htsjdk.samtools.SAMReadGroupRecord;
 import htsjdk.tribble.SimpleFeature;
 

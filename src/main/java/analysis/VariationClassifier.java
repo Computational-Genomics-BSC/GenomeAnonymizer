@@ -17,9 +17,7 @@ import java.util.*;
 import java.util.logging.Logger;
 
 import static analysis.GenomeAnonymizer.SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY;
-import static genomicelements.ShortAnonymizedReadPair.*;
-import static genomicelements.ShortReadAlignment.generateAlignmentHash;
-import static genomicelements.ShortReadAlignment.generateReadId;
+import static genomicelements.ShortReadAlignment.*;
 import static io.VCFReader.readVCF;
 
 
@@ -133,10 +131,9 @@ public class VariationClassifier {
         // or adding the CIGAR to seen reads string
         for (RecordAndOffset pileupRecord : pileup){
             String readName = pileupRecord.getReadName();
+            variationPerPos.computeIfAbsent(refPosition, v -> new ArrayList<>());
             if(readsToExclude.contains(readName)) continue;
             SAMRecord samRecord = pileupRecord.getRecord();
-            variationPerPos.computeIfAbsent(refPosition, v -> new ArrayList<>());
-            if (samRecord.getReadUnmappedFlag()) continue;
             //This may be extended to support other types of reads (e.g. long reads)
             int pairIdx = samRecord.getFirstOfPairFlag() ? PAIR_1_IDX : PAIR_2_IDX;
             // pairReadName represents the name of the read, the pair, and the reference position of the alignment

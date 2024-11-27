@@ -25,12 +25,14 @@ public class ReadAlignmentBaseImpl implements ReadAlignment{
     private SAMFileHeader header;
 
 
-    public ReadAlignmentBaseImpl(String readName, String sequenceName, int start, int end, boolean isSupplementary, int mapQ, Cigar cigar) {
+    public ReadAlignmentBaseImpl(String readName, String sequenceName, int start, int end,
+                                 boolean isSupplementary, int mapQ, Cigar cigar) {
         this.readAlignmentId = generateReadAlignmentId(readName);
         this.readName = readName;
         this.sequenceName = sequenceName;
         this.start = start;
         this.end = end;
+        this.length = end-start+1;
         this.isSupplementary = isSupplementary;
         this.mapQ = mapQ;
         this.cigar = cigar;

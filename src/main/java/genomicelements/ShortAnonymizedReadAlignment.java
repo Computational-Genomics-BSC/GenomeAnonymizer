@@ -94,6 +94,13 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
             else{
                 if(CigarOperator.M.equals(currentCigarOp)){
                     for(int x = 0; x < opLength; x++){
+                        //DEBUG
+//                        System.out.println("x="+ x);
+//                        System.out.println("i="+ i);
+//                        if(i==SNVops.length) {
+//                            System.out.println(originalCigarElements + " "+ currentCigarOp);
+//                        }
+                        //DEBUG
                         byte snvOp = SNVops[i];
                         if(snvOp > 0){
                             anonymizedSequenceArray[j] = snvOp;
@@ -126,6 +133,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
                 }
                 anonymizedCigarElements.add(new CigarElement(opLength, currentCigarOp));
             }
+            c++;
         }
         generateDefinitiveCigar();
         isAnonymized = true;
@@ -182,27 +190,29 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
     }
 
     private void generateDefinitiveCigar() {
-        List<CigarElement> fixedCigarElements = new ArrayList<>();
-        boolean previousMerged = false;
-        CigarElement currentElement = null;
-        CigarElement nextElement;
-        CigarOperator currentOp;
-        for(int i = 0; i < anonymizedCigarElements.size()-1; i++){
-            if(!previousMerged) currentElement = anonymizedCigarElements.get(i);
-            else previousMerged = false;
-            currentOp = currentElement.getOperator();
-            nextElement = anonymizedCigarElements.get(i+1);
-            CigarOperator nextOp = nextElement.getOperator();
-            if(nextOp.equals(currentOp)){
-                currentElement = new CigarElement(currentElement.getLength() + nextElement.getLength(),
-                        currentOp);
-                previousMerged = true;
+        if(anonymizedCigarElements.size()>1){
+            List<CigarElement> fixedCigarElements = new ArrayList<>();
+            boolean previousMerged = false;
+            CigarElement currentElement = null;
+            CigarElement nextElement;
+            CigarOperator currentOp;
+            for(int i = 0; i < anonymizedCigarElements.size()-1; i++){
+                if(!previousMerged) currentElement = anonymizedCigarElements.get(i);
+                else previousMerged = false;
+                currentOp = currentElement.getOperator();
+                nextElement = anonymizedCigarElements.get(i+1);
+                CigarOperator nextOp = nextElement.getOperator();
+                if(nextOp.equals(currentOp)){
+                    currentElement = new CigarElement(currentElement.getLength() + nextElement.getLength(),
+                            currentOp);
+                    previousMerged = true;
+                }
+                else{
+                    fixedCigarElements.add(currentElement);
+                }
             }
-            else{
-                fixedCigarElements.add(currentElement);
-            }
+            anonymizedCigarElements = fixedCigarElements;
         }
-        anonymizedCigarElements = fixedCigarElements;
         anonymizedCigar = new Cigar(anonymizedCigarElements);
     }
 
@@ -220,6 +230,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
     public SAMRecord getAnonymizedSamRecord(){
         SAMFileHeader header = readAlignment.getHeader();
         SAMRecord answer = new SAMRecord(header);
+        answer.setReferenceName(getSequenceName());
         answer.setAlignmentStart(getStart());
         answer.setReadBases(anonymizedSequenceArray);
         answer.setBaseQualities(anonymizedQualitiesArray);
@@ -231,6 +242,10 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
             answer.setAttribute(tagAndValue.tag, tagAndValue.value);
         }
         // getStart and getEnd are 1-based, adjust accordingly, currently referenceSequence is 0-based
+        //DEBUG
+        System.out.println("RefLength=" + referenceContigSequence.length + " start=" + (answer.getStart()-1) + " end=" +
+                answer.getEnd());
+        //DEBUG
         byte[] refSequenceAln = Arrays.copyOfRange(referenceContigSequence, answer.getStart()-1, answer.getEnd());
         SequenceUtil.calculateMdAndNmTags(answer, refSequenceAln, true, true);
         // TODO: Erase after checking this is not correct

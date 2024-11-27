@@ -28,6 +28,8 @@ public class ShortReadAlignment extends ReadAlignmentBaseImpl implements ReadAli
     public ShortReadAlignment(SAMRecord samRecord){
         this(samRecord.getReadName(), samRecord.getContig(), samRecord.getStart(), samRecord.getEnd(), samRecord.isSecondaryOrSupplementary(),
                 samRecord.getMappingQuality(), samRecord.getCigar(), samRecord.getFirstOfPairFlag(), samRecord.getReadNegativeStrandFlag());
+        this.setSequenceArray(samRecord.getReadBases());
+        this.setQualitiesArray(samRecord.getBaseQualities());
         this.setReadAlignmentId(generateReadId(samRecord));
         this.setHeader(samRecord.getHeader());
         this.setTags(samRecord.getAttributes());
