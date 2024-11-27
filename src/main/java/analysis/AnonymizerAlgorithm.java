@@ -14,13 +14,10 @@ public interface AnonymizerAlgorithm {
 
     public final static String SHORT_READ_ALGORITHM = SAMReadGroupRecord.PlatformValue.ILLUMINA.name();
 
-    public void queryReadsToExclude(String normalPath, String tumorPath, List<SimpleFeature> partitions, int threads) throws Exception;
-
+    public void queryReadsToExclude(String normalPath, String tumorPath, int threads) throws Exception;
+    public Set<String> getReadsToExclude();
+    public void setPartitions(List<SimpleFeature> partitions);
     public void setReadGermlinesToAnonymize(Map<String, List<CalledVariation>> readGermlinesToAnonymize);
-
     public void anonymizeReads(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed)throws IOException;
 
-    public void writeUnmodifiedReads(String normalPath, String tumorPath, String outputPrefix, boolean compressed)throws IOException;
-
-    public Set<String> getReadsToExclude();
 }

@@ -24,7 +24,7 @@ import static io.VCFReader.readVCF;
 
 
 /**
- * Class that offers methods to classify all variation from a sample over pileup positions
+ * Class used to classify all variation from a sample over pileup positions
  * @author Nicolas Gaitan
  */
 
@@ -42,7 +42,6 @@ public class VariationClassifier {
     public static final int SLIDING_WINDOW_LIMIT = 200;
 
     Set<String> readsToExclude;
-    //Map<String, Map<Integer, List<CalledVariation>>> potentialGermlinesPerRead;
     Map<String, List<CalledVariation>> potentialGermlinesPerRead;
     boolean diffuseIndelCalls;
 
@@ -295,9 +294,9 @@ public class VariationClassifier {
 //                String[] keyElems = entry.getKey().split(READ_PAIR_NAME_SEPARATOR);
 //                String readName = keyElems[0];
 //                int pairIdx = Integer.parseInt(keyElems[1]);
-                String readAlnName = entry.getKey();
+                String readAlnId = entry.getKey();
                 List<CalledVariation> potentialGermlinesInReadAlignment = potentialGermlinesPerRead
-                        .computeIfAbsent(readAlnName, v -> new ArrayList<>());
+                        .computeIfAbsent(readAlnId, v -> new ArrayList<>());
                 potentialGermlinesInReadAlignment.add(var);
             }
         }
@@ -306,10 +305,6 @@ public class VariationClassifier {
     public void setDiffuseIndelCalls(boolean diffuseIndelCalls) {
         this.diffuseIndelCalls = diffuseIndelCalls;
     }
-
-//    public static String getShortReadPairName(String readName, int pairIdx) {
-//        return readName + READ_PAIR_NAME_SEPARATOR + pairIdx;
-//    }
 
 
     public static String getSpecificShortReadPairName(SAMRecord samRec, int pairIdx) {

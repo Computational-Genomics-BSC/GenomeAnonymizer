@@ -52,7 +52,8 @@ public class GenomeAnonymizer {
         LOGGER.info("Beginning anonymization in " + mode + " mode");
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm);
         List<SimpleFeature> partitions = getPartitions(refGenome, nThreads);
-        anonymizer.queryReadsToExclude(normalPath, tumorPath, partitions, nThreads);
+        anonymizer.setPartitions(partitions);
+        anonymizer.queryReadsToExclude(normalPath, tumorPath, nThreads);
         Set<String> readsToExclude = anonymizer.getReadsToExclude();
         long start1 = System.currentTimeMillis();
         Map<String, List<CalledVariation>> readGermlinesToAnonymize =

@@ -8,8 +8,8 @@ import java.util.*;
 
 public class ShortAnonymizedReadAlignment implements AnonymizedRead{
 
-    private ShortReadAlignment readAlignment;
-    private byte[] referenceSequence;
+    private final ShortReadAlignment readAlignment;
+    private byte[] referenceContigSequence;
     private boolean isAnonymized;
     private byte[] anonymizedSequenceArray;
     private byte[] anonymizedQualitiesArray;
@@ -30,12 +30,17 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         this.SVsToAnonymize = new ArrayList<>();
     }
 
-    public void setReferenceSequence(byte[] referenceSequence) {
+    public void setReferenceContigSequence(byte[] referenceContigSequence) {
         // 1-based memoized reference sequence, corresponding to the contig to which this read is mapped
-        this.referenceSequence = referenceSequence;
+        this.referenceContigSequence = referenceContigSequence;
     }
 
-    public void anonymizeVariants() {
+    public void anonymizeVariants() throws IllegalStateException{
+        if(referenceContigSequence ==null){
+            throw new IllegalStateException("The ShortAnonymizedReadAlignment.anonymizeVariants was called" +
+                    "without setting the contigReferenceSequence first. setContigReferenceSequence, should always" +
+                    " be alled after the constructor.");
+        }
         //This should not happen, because now alignments that dont have variants to anonymize should
         // be processed only as ReadAlignment objects
         // TODO: Erase after checking this is not happening
@@ -130,7 +135,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         int j = initPos;
         int r = refInitPos;
         for(int l = 0; l < length; l++){
-            anonymizedSequenceArray[j] = referenceSequence[r];
+            anonymizedSequenceArray[j] = referenceContigSequence[r];
             anonymizedQualitiesArray[j] = avgQual;
             j++;
             r++;
@@ -226,7 +231,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
             answer.setAttribute(tagAndValue.tag, tagAndValue.value);
         }
         // getStart and getEnd are 1-based, adjust accordingly, currently referenceSequence is 0-based
-        byte[] refSequenceAln = Arrays.copyOfRange(referenceSequence, answer.getStart()-1, answer.getEnd());
+        byte[] refSequenceAln = Arrays.copyOfRange(referenceContigSequence, answer.getStart()-1, answer.getEnd());
         SequenceUtil.calculateMdAndNmTags(answer, refSequenceAln, true, true);
         // TODO: Erase after checking this is not correct
         // TEST
@@ -345,83 +350,4 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         builder.append(" TAGS=").append(readAlignment.getTags());
         return builder.toString();
     }
-
-    /**
-     * TO ERASE: DEPRECATED
-     */
-//    @Override
-//    public FastqRecord getFastqRecord() {
-//        if (isReverse){
-//            SequenceUtil.reverseComplement(sequenceArray);
-//            SequenceUtil.reverseQualities(qualitiesArray);
-//        }
-//        String name = this.readName;
-//        //String readSequence = new String(sequenceArray, StandardCharsets.UTF_8);
-//        //String qualitySequence = new String(qualitiesArray, StandardCharsets.UTF_8);
-//        String comment = "";
-//        return new FastqRecord(name, sequenceArray, comment, qualitiesArray);
-//    }
-
-//    public void modifyBaseInRead(int inReadPosition, byte asciiBase){
-//        int inArrayPosition = inReadPosition - 1;
-//        anonymizedSequenceArray[inArrayPosition] = asciiBase;
-//    }
-//
-//    public void modifyBaseAndQualityInRead(int inReadPosition, byte asciiBase, byte asciiBaseQuality){
-//        modifyBaseInRead(inReadPosition, asciiBase);
-//        anonymizedQualitiesArray[inReadPosition] = asciiBaseQuality;
-//    }
-
-//    private int modifyIndel(int inReadPosition, CalledVariation var) {
-//        int addedOffset = 0;
-//        int inArrayPosition = inReadPosition - 1;
-//        int varLength = var.getLength();
-//        byte [] newSequenceArray;
-//        byte[] newQualitiesArray;
-//        if (CalledVariation.VariantType.INS.equals(var.getVariantType())){
-//            newSequenceArray = removeInsertion(sequenceArray, inArrayPosition, varLength, var);
-//            newQualitiesArray = removeInsertion(qualitiesArray, inArrayPosition, varLength, var);
-//            addedOffset = -(varLength);
-//        }
-//        else if (CalledVariation.VariantType.DEL.equals(var.getVariantType())){
-//            newSequenceArray = removeDeletion(sequenceArray, inArrayPosition, varLength, var.getRefAllele());
-//            byte[] avgQualities = new byte[var.getRefAllele().length];
-//            byte avgQ = getAverageOfBytes(qualitiesArray);
-//            Arrays.fill(avgQualities, avgQ);
-//            newQualitiesArray = removeDeletion(qualitiesArray, inArrayPosition, varLength, avgQualities);
-//            addedOffset = varLength;
-//        }
-//        else {
-//            // Placeholder for other types of variants
-//            newSequenceArray = sequenceArray;
-//            newQualitiesArray = qualitiesArray;
-//        }
-//        return addedOffset;
-//    }
-//    private byte[] removeInsertion(byte[] original, int inArrayPosition, int varLength, CalledVariation debugParam){
-//        byte[] answer = new byte[original.length - varLength];
-//        //System.arraycopy(original, 0, answer, 0, inArrayPosition);
-//        //DEBUG
-//        //if(inArrayPosition + 1 >= answer.length){
-//        //    System.out.println(debugParam + " inArrayPosition=" + inArrayPosition + " read=" + readName + " pair=" + pair);
-//        //    return original;
-//        //}
-//        //DEBUG
-//        System.arraycopy(original, 0, answer, 0, inArrayPosition + 1);
-//        System.arraycopy(original, inArrayPosition + varLength, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
-//        //System.arraycopy(original, inArrayPosition + varLength + 1, answer, inArrayPosition + 1, answer.length - inArrayPosition - 1);
-//        return answer;
-//    }
-//
-//    private byte[] removeDeletion(byte[] original, int inArrayPosition, int varLength, byte[] newContent){
-//        byte[] answer = new byte[original.length + varLength];
-//        System.arraycopy(original, 0, answer, 0, inArrayPosition+1);
-//        //System.arraycopy(original, 0, answer, 0, inArrayPosition + 1);
-//        assert (varLength == newContent.length): "Length of reference is not equal to varLength";
-//        //System.arraycopy(newContent, 1, answer, inArrayPosition + 1, varLength-1);
-//        System.arraycopy(newContent, 0, answer, inArrayPosition, varLength);
-//        //System.arraycopy(original, inArrayPosition + 1, answer, inArrayPosition + varLength-1, original.length - inArrayPosition - 1);
-//        System.arraycopy(original, inArrayPosition + 1, answer, inArrayPosition + varLength, original.length - inArrayPosition - 1);
-//        return answer;
-//    }
 }
