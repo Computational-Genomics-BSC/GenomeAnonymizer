@@ -190,29 +190,30 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
     }
 
     private void generateDefinitiveCigar() {
-        if(anonymizedCigarElements.size()>1){
-            List<CigarElement> fixedCigarElements = new ArrayList<>();
-            boolean previousMerged = false;
-            CigarElement currentElement = null;
-            CigarElement nextElement;
-            CigarOperator currentOp;
-            for(int i = 0; i < anonymizedCigarElements.size()-1; i++){
-                if(!previousMerged) currentElement = anonymizedCigarElements.get(i);
-                else previousMerged = false;
-                currentOp = currentElement.getOperator();
-                nextElement = anonymizedCigarElements.get(i+1);
-                CigarOperator nextOp = nextElement.getOperator();
-                if(nextOp.equals(currentOp)){
-                    currentElement = new CigarElement(currentElement.getLength() + nextElement.getLength(),
-                            currentOp);
-                    previousMerged = true;
-                }
-                else{
-                    fixedCigarElements.add(currentElement);
-                }
+        List<CigarElement> fixedCigarElements = new ArrayList<>();
+        boolean previousMerged = false;
+        CigarElement currentElement = null;
+        CigarElement nextElement = anonymizedCigarElements.get(0);
+        CigarOperator currentOp;
+        //If there is only 1 element, nextElement will hold it and the cycle does not happen
+        for(int i = 0; i < anonymizedCigarElements.size()-1; i++){
+            if(!previousMerged) currentElement = anonymizedCigarElements.get(i);
+            else previousMerged = false;
+            currentOp = currentElement.getOperator();
+            nextElement = anonymizedCigarElements.get(i+1);
+            CigarOperator nextOp = nextElement.getOperator();
+            if(nextOp.equals(currentOp)){
+                currentElement = new CigarElement(currentElement.getLength() + nextElement.getLength(),
+                        currentOp);
+                previousMerged = true;
             }
-            anonymizedCigarElements = fixedCigarElements;
+            else{
+                fixedCigarElements.add(currentElement);
+            }
         }
+        if (!previousMerged) fixedCigarElements.add(nextElement);
+        else fixedCigarElements.add(currentElement);
+        anonymizedCigarElements = fixedCigarElements;
         anonymizedCigar = new Cigar(anonymizedCigarElements);
     }
 
@@ -242,10 +243,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
             answer.setAttribute(tagAndValue.tag, tagAndValue.value);
         }
         // getStart and getEnd are 1-based, adjust accordingly, currently referenceSequence is 0-based
-        //DEBUG
-        System.out.println("RefLength=" + referenceContigSequence.length + " start=" + (answer.getStart()-1) + " end=" +
-                answer.getEnd());
-        //DEBUG
         byte[] refSequenceAln = Arrays.copyOfRange(referenceContigSequence, answer.getStart()-1, answer.getEnd());
         SequenceUtil.calculateMdAndNmTags(answer, refSequenceAln, true, true);
         // TODO: Erase after checking this is not correct
@@ -262,7 +259,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         if(validationErrors!=null){
             for (SAMValidationError err : validationErrors){
                 System.out.println("Validation error on SAM Record: " +
-                        answer + " Error message: "
+                        answer + " AnonReadAln=" + this.toString() + " Error message: "
                         + err.getMessage());
             }
         }

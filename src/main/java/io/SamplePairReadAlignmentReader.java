@@ -1,5 +1,6 @@
 package io;
 
+import genomicelements.GenomicRegion;
 import genomicelements.PairedPileup;
 import htsjdk.samtools.SAMFileHeader;
 import htsjdk.samtools.SamReader;
@@ -41,7 +42,7 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         init(new File(normalFilePath), new File(tumorFilePath), new File(referenceGenome), null);
     }
 
-    public SamplePairReadAlignmentReader(String normalFilePath, String tumorFilePath, String referenceGenome, SimpleFeature region) throws IOException {
+    public SamplePairReadAlignmentReader(String normalFilePath, String tumorFilePath, String referenceGenome, GenomicRegion region) throws IOException {
         init(new File(normalFilePath), new File(tumorFilePath), new File(referenceGenome), region);
     }
 
@@ -52,7 +53,7 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
      * @param referenceGenome
      * @param region Can be any range of valid genomic regions, but is intended to be a list of one region for multithreading
      */
-    private void init(File normalFile, File tumorFile, File referenceGenome, SimpleFeature region)throws IOException {
+    private void init(File normalFile, File tumorFile, File referenceGenome, GenomicRegion region)throws IOException {
         SamReaderFactory normalSamFactory = SamReaderFactory.makeDefault();
         SamReaderFactory tumorSamFactory = SamReaderFactory.makeDefault();
         normalSamFactory.referenceSequence(referenceGenome);
@@ -67,7 +68,7 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
             assert (getNormalSamHeader().getSequenceDictionary().isSameDictionary(getTumorSamHeader().getSequenceDictionary())):
                     "Headers have different sequence dictionaries";
             IntervalList intervalList = new IntervalList(this.getNormalSamHeader());
-            Interval intervalRegion = new Interval(region.getContig(), region.getStart(), region.getEnd());
+            Interval intervalRegion = new Interval(region.getSequenceName(), region.getStart(), region.getEnd());
             intervalList.add(intervalRegion);
             //DEBUG
             //intervalList.forEach(v -> System.out.println(v.getContig() + " " + v.getStart() + " " + v.getEnd()));

@@ -1,6 +1,8 @@
 package analysis;
 
 import genomicelements.CalledVariation;
+import genomicelements.GenomicRegion;
+import genomicelements.GenomicRegionBaseImpl;
 import htsjdk.samtools.reference.FastaSequenceIndex;
 import htsjdk.samtools.reference.FastaSequenceIndexEntry;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
@@ -23,7 +25,7 @@ import java.util.logging.SimpleFormatter;
  */
 public class GenomeAnonymizer {
 
-    public static final String VERSION = "0.0.2";
+    public static final String VERSION = "0.0.3";
     private static final Logger LOGGER = logConfigure();
 
 
@@ -51,7 +53,7 @@ public class GenomeAnonymizer {
                     String algorithm, String mode, String vcfFile, int nThreads) throws Exception {
         LOGGER.info("Beginning anonymization in " + mode + " mode");
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm);
-        List<SimpleFeature> partitions = getPartitions(refGenome, nThreads);
+        List<GenomicRegion> partitions = getPartitions(refGenome, nThreads);
         anonymizer.setPartitions(partitions);
         anonymizer.queryReadsToExclude(normalPath, tumorPath, nThreads);
         Set<String> readsToExclude = anonymizer.getReadsToExclude();
@@ -68,12 +70,12 @@ public class GenomeAnonymizer {
     }
 
     private Map<String, List<CalledVariation>> callVariationInParallel(String normalPath, String tumorPath, String refGenome,
-                                                                                     String mode, String vcfFile, List<SimpleFeature> partitions,
+                                                                                     String mode, String vcfFile, List<GenomicRegion> partitions,
                                                                                      Set<String> readsToExclude, int nThreads) {
         Map<String, List<CalledVariation>> readGermlinesToAnonymize = new HashMap<>();
         MultithreadClassifier[] mClassifiers = new MultithreadClassifier[partitions.size()];
         for(int i = 0; i < partitions.size(); i++){
-            SimpleFeature region = partitions.get(i);
+            GenomicRegion region = partitions.get(i);
             mClassifiers[i] = new MultithreadClassifier(normalPath, tumorPath, refGenome, mode, vcfFile, region, readsToExclude);
         }
         ExecutorService executorService = Executors.newFixedThreadPool(nThreads);
@@ -102,18 +104,22 @@ public class GenomeAnonymizer {
         return readGermlinesToAnonymize;
     }
 
-    private List<SimpleFeature> getPartitions(String refGenome, int nThreads) throws IOException {
+    private List<GenomicRegion> getPartitions(String refGenome, int nThreads) throws IOException {
         IndexedFastaSequenceFile reference = new IndexedFastaSequenceFile(new File(refGenome));
         FastaSequenceIndex refIndexes = reference.getIndex();
         long genomeSize = 0;
         List<FastaSequenceIndexEntry> sequences = new ArrayList<>();
+        Map<String, Integer> refSequenceOrder = new HashMap<>();
+        int idx = 0;
         for (FastaSequenceIndexEntry refEntry : refIndexes){
             sequences.add(refEntry);
             genomeSize += refEntry.getSize();
+            refSequenceOrder.put(refEntry.getContig(), idx);
+            idx++;
         }
         reference.close();
         // long genomeSize = seqDict.getReferenceLength();
-        List<SimpleFeature> regions = new ArrayList<>();
+        List<GenomicRegion> regions = new ArrayList<>();
         Collections.sort(sequences, Comparator.comparing(FastaSequenceIndexEntry::getSize));
         //long basesPerThread = sequences.size() % 2 == 0 ? (sequences.get(sequences.size()/2).getSize() + sequences.get((sequences.size()/2)-1).getSize())/2 :
         //        sequences.get(sequences.size()/2).getSize();
@@ -136,13 +142,14 @@ public class GenomeAnonymizer {
         for(int i = 0; i < sequences.size(); i++){
             FastaSequenceIndexEntry currentContig = sequences.get(i);
             String contig = currentContig.getContig();
+            int contigIdx = refSequenceOrder.get(contig);
             int contigLength = (int) currentContig.getSize();
             int partitionSize = contigLength / partitionsPerSequence[i];
             int currentFirst = 1;
             for(int j = 0; j < partitionsPerSequence[i]; j++){
                 //Be careful with very large chromosomes, with humans there should not be a problem
                 int currentLast = j == partitionsPerSequence[i]-1 ? (int) currentContig.getSize() : currentFirst + partitionSize;
-                SimpleFeature region = new SimpleFeature(contig, currentFirst, currentLast);
+                GenomicRegion region = new GenomicRegionBaseImpl(contig, contigIdx, currentFirst, currentLast);
                 regions.add(region);
                 currentFirst += partitionSize + 1;
             }

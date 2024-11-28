@@ -2,6 +2,8 @@ package analysis;
 import genomicelements.CalledVariation;
 import genomicelements.CalledVariation.SomaticVariationType;
 import genomicelements.CalledVariation.VariantType;
+import genomicelements.GenomicRegion;
+import genomicelements.GenomicRegionBaseImpl;
 import genomicelements.PairedPileup;
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
@@ -67,7 +69,7 @@ public class VariationClassifier {
      * @param region
      * @throws IOException
      */
-    public void callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile, SimpleFeature region) throws IOException {
+    public void callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile, GenomicRegion region) throws IOException {
         try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, region);
             IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(refGenome))){
             //Retrieve signals from their normal sample even if there is no coverage in the tumor sample

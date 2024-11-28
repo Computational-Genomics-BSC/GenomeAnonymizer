@@ -1,9 +1,7 @@
 package analysis;
 
 import genomicelements.CalledVariation;
-import htsjdk.tribble.SimpleFeature;
-
-import java.util.HashMap;
+import genomicelements.GenomicRegion;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -23,11 +21,11 @@ public class MultithreadClassifier implements Runnable{
     private String refGenome;
     private String mode;
     private String vcfFile;
-    private SimpleFeature region;
+    private GenomicRegion region;
     private Set<String> readsToExclude;
 
     public MultithreadClassifier(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile,
-                                 SimpleFeature region, Set<String> readsToExclude){
+                                 GenomicRegion region, Set<String> readsToExclude){
         this.normalPath = normalPath;
         this.tumorPath = tumorPath;
         this.refGenome = refGenome;
@@ -42,18 +40,18 @@ public class MultithreadClassifier implements Runnable{
         try {
             if(!readsToExclude.isEmpty()) classifier.setReadsToExclude(readsToExclude);
             classifier.callVariation(normalPath, tumorPath, refGenome, mode, vcfFile, region);
-            LOGGER.info("Finished variation analysis of genomic region: SEQ=" + region.getContig() + " POS=" + region.getStart() + " END=" + region.getEnd());
+            LOGGER.info("Finished variation analysis of genomic region: SEQ=" + region.getSequenceName() + " POS=" + region.getStart() + " END=" + region.getEnd());
         } catch (Exception e) {
             LOGGER.severe("Exception in thread classifying variants in region: "
-                    + region.getContig() + " " + region.getStart() + " " + region.getEnd() +
+                    + region.getSequenceName() + " " + region.getStart() + " " + region.getEnd() +
                     " halting execution prematurely");
             LOGGER.severe(e.getMessage());
             System.exit(1);
         }
     }
 
-    public String getContig(){
-        return this.region.getContig();
+    public String getSequenceName(){
+        return this.region.getSequenceName();
     }
     public int getStart(){return this.region.getStart();}
     public int getEnd(){return this.region.getEnd();}
@@ -61,7 +59,7 @@ public class MultithreadClassifier implements Runnable{
 
     public Map<String, List<CalledVariation>>  getAnswer(){
         assert(classifier.getPotentialGermlinesPerRead().size() == 1): "The result of this classifier is incorrect: "
-                + region.getContig() + " " + region.getStart() + " " + region.getEnd();
+                + region.getSequenceName() + " " + region.getStart() + " " + region.getEnd();
         //return classifier.getPotentialGermlinesPerRead().getOrDefault(region.getContig(), new HashMap<>());
         return classifier.getPotentialGermlinesPerRead();
     }
