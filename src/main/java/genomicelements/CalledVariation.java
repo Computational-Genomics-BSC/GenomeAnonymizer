@@ -167,7 +167,7 @@ public class CalledVariation {
                     this.variantType.equals(var2.variantType) &&
                     this.pos == var2.pos &&
                     this.end == var2.end &&
-                    this.length == var2.length &&
+                    //this.length == var2.length &&
                     Arrays.equals(this.allele, var2.allele);
             //DEBUG
 //            if(pos==73824164 && SomaticVariationType.NOT_SOMATIC.equals(this.somaticVariationType)){

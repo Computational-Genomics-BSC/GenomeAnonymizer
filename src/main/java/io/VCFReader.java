@@ -19,7 +19,7 @@ public class VCFReader {
                 Map<Integer, CalledVariation> perPosMap = somaticCallsToKeep.computeIfAbsent(calledVar.getSeqName(), v -> new HashMap<>());
                 perPosMap.put(calledVar.getPos(), calledVar);
                 //DEBUG
-                //System.out.println("& Variant=" + calledVar);
+//                System.out.println("& Variant=" + calledVar);
                 //DEBUG
             }
         }

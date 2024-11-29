@@ -44,10 +44,12 @@ public class VariationClassifier {
     Set<String> readsToExclude;
     Map<String, List<CalledVariation>> potentialGermlinesPerRead;
     boolean diffuseIndelCalls;
+    boolean anonymizePotentialLeaksInVCFSomatics;
 
     public VariationClassifier(){
         potentialGermlinesPerRead = new HashMap<>();
         diffuseIndelCalls = false;
+        setAnonymizePotentialLeaks(false);
         readsToExclude = new HashSet<>();
     }
 
@@ -59,6 +61,9 @@ public class VariationClassifier {
         this.readsToExclude = readsToExclude;
     }
 
+    public void setAnonymizePotentialLeaks(boolean anonymize){
+        this.anonymizePotentialLeaksInVCFSomatics = anonymize;
+    }
     /**
      * Call for discovering variation over a specific genomic region
      * @param normalPath
@@ -174,27 +179,34 @@ public class VariationClassifier {
                 int currentRefPos = initRefPos + currentCigarLength-1;
                 //int inReadPos = readConsumedBaseNumber == 0 ? 1 : readConsumedBaseNumber;
                 int inReadPos = samRecord.getReadPositionAtReferencePosition(currentRefPos);
-                int length = cigarElement.getLength()+1;
+                int length = cigarElement.getLength();
                 VariantType indelType;
                 int vcfStdEnd;
                 int inRefend;
                 int inReadEnd;
+                byte[] altAllele;
                 if (CigarOperator.I.equals(op)){
                     indelType = VariantType.INS;
                     inRefend = currentRefPos;// + 1;
                     vcfStdEnd = inRefend + 1;
-                    inReadEnd = inReadPos + length - 1;
+                    inReadEnd = inReadPos + length + 1;
+                    altAllele = new byte[1+length];
                 }
                 else{
                     indelType = VariantType.DEL;
-                    inRefend = currentRefPos + length - 1;
+                    inRefend = currentRefPos + length;
                     vcfStdEnd = inRefend;
                     inReadEnd = inReadPos + 1;
+                    altAllele = new byte[1];
                 }
                 // Ends vary based on the functions to recover the alleles, whether they are inclusive or exclusive on interval ends
                 //byte[] altAllele = Arrays.copyOfRange(sequenceBases, inReadPos-1, inReadEnd-1);
-                byte[] altAllele = Arrays.copyOfRange(sequenceBases, inReadPos, inReadEnd);
                 byte[] refAllele = referenceWalker.getSubsequenceAt(sequenceName, currentRefPos, inRefend).getBases();
+                altAllele[0] = refAllele[0];
+                if (CigarOperator.I.equals(op)){
+                    System.arraycopy(sequenceBases, inReadPos, altAllele, 1, altAllele.length - 1);
+                }
+                //altAllele = Arrays.copyOfRange(sequenceBases, inReadPos, inReadEnd);
                 CalledVariation calledVar = new CalledVariation(sequenceName, currentRefPos, vcfStdEnd, indelType, length,
                         altAllele, refAllele);
                 List<CalledVariation> variationInPos = variationPerPos.computeIfAbsent(currentRefPos, v -> new ArrayList<>());
@@ -276,29 +288,36 @@ public class VariationClassifier {
     private void processPotentialGermlines(List<CalledVariation> variationInPos,
                                            Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep) {
         for (CalledVariation var : variationInPos){
-            // Anonymize only potential germlines if seen in both datasets, at least once in each, or more than once if only found in the normal tissue mappings
-            if (!SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(var.getSomaticVariationType())//) continue;
-                    && !SomaticVariationType.NORMAL_ONLY_VARIANT.equals(var.getSomaticVariationType())) continue;
-            if (!somaticVariantsToKeep.isEmpty()){
-                Map<Integer, CalledVariation> validatedSomaticsAtSeq = somaticVariantsToKeep.get(var.getSeqName());
-                if(validatedSomaticsAtSeq==null) continue;
-                CalledVariation validatedSomaticAtPos = validatedSomaticsAtSeq.get(var.getPos());
-                if(validatedSomaticAtPos!=null && validatedSomaticAtPos.equals(var)) continue;
-            }
-            //DEBUG
-            //System.out.println("# " + var.toString());
-            //DEBUG
+            if(!anonymizeThisVariant(var, somaticVariantsToKeep)) continue;
             Map<String, Integer> supportingReads = var.getSupportingReads();
             for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
-//                String[] keyElems = entry.getKey().split(READ_PAIR_NAME_SEPARATOR);
-//                String readName = keyElems[0];
-//                int pairIdx = Integer.parseInt(keyElems[1]);
                 String readAlnId = entry.getKey();
                 List<CalledVariation> potentialGermlinesInReadAlignment = potentialGermlinesPerRead
                         .computeIfAbsent(readAlnId, v -> new ArrayList<>());
                 potentialGermlinesInReadAlignment.add(var);
             }
         }
+    }
+
+    private boolean anonymizeThisVariant(CalledVariation variant, Map<String, Map<Integer, CalledVariation>> somaticVariantsToKeep) {
+        boolean isValidatedSomatic = false;
+        // Anonymize only potential germlines if seen in both datasets, at least once in each, or more than once if only found in the normal tissue mappings
+        boolean isPotentialGermline = SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(variant.getSomaticVariationType()) ||
+                SomaticVariationType.NORMAL_ONLY_VARIANT.equals(variant.getSomaticVariationType());
+        //Avoid anonymizing somatic variants recorded in the VCF file
+        if (!somaticVariantsToKeep.isEmpty()){
+            if(somaticVariantsToKeep.containsKey(variant.getSeqName())){
+                Map<Integer, CalledVariation> validatedSomaticsAtSeq = somaticVariantsToKeep.get(variant.getSeqName());
+                if(validatedSomaticsAtSeq.containsKey(variant.getPos())){
+                    CalledVariation validatedSomaticAtPos = validatedSomaticsAtSeq.get(variant.getPos());
+                    if(validatedSomaticAtPos.equals(variant)) isValidatedSomatic = true;
+                }
+            }
+        }
+        if(isValidatedSomatic){
+            return isPotentialGermline && anonymizePotentialLeaksInVCFSomatics;
+        }
+        return isPotentialGermline;
     }
 
     public void setDiffuseIndelCalls(boolean diffuseIndelCalls) {

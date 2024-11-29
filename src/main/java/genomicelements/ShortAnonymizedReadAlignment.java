@@ -156,10 +156,10 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         for(CalledVariation indel : indelsToAnonymize) {
             CalledVariation.VariantType variantType = indel.getVariantType();
             if (CalledVariation.VariantType.DEL.equals(variantType)) {
-                newSize += indel.getLength() - 1;
+                newSize += indel.getLength();
             }
             if (CalledVariation.VariantType.INS.equals(variantType)) {
-                newSize -= indel.getLength() - 1;
+                newSize -= indel.getLength();
             }
             //TODO: Account for SVs (SoftClips at first)
         }
@@ -183,7 +183,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
             //TODO: Account for SVs (SoftClips at first)
             int indelOpPos = indel.getInReadPosition(this);
             int op = CalledVariation.VariantType.INS.equals(indel.getVariantType()) ?
-                    -(indel.getLength()-1) : indel.getLength()-1;
+                    -(indel.getLength()) : indel.getLength();
             indelOps[indelOpPos] = op;
         }
         return indelOps;
