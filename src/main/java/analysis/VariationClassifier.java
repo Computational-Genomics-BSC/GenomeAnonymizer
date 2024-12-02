@@ -3,24 +3,18 @@ import genomicelements.CalledVariation;
 import genomicelements.CalledVariation.SomaticVariationType;
 import genomicelements.CalledVariation.VariantType;
 import genomicelements.GenomicRegion;
-import genomicelements.GenomicRegionBaseImpl;
 import genomicelements.PairedPileup;
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.SAMRecord;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
 import htsjdk.samtools.util.SamLocusIterator.RecordAndOffset;
-import htsjdk.tribble.SimpleFeature;
 import io.SamplePairReadAlignmentReader;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.logging.Logger;
-
-import static analysis.GenomeAnonymizer.SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY;
 import static genomicelements.ShortReadAlignment.*;
-import static io.VCFReader.readVCF;
 
 
 /**
@@ -43,6 +37,7 @@ public class VariationClassifier {
 
     Set<String> readsToExclude;
     Map<String, List<CalledVariation>> potentialGermlinesPerRead;
+    Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep;
     boolean diffuseIndelCalls;
     boolean anonymizePotentialLeaksInVCFSomatics;
 
@@ -51,6 +46,7 @@ public class VariationClassifier {
         diffuseIndelCalls = false;
         setAnonymizePotentialLeaks(false);
         readsToExclude = new HashSet<>();
+        somaticVariantsToKeep = new HashMap<>();
     }
 
     public Map<String, List<CalledVariation>> getPotentialGermlinesPerRead() {
@@ -59,6 +55,10 @@ public class VariationClassifier {
 
     public void setReadsToExclude(Set<String> readsToExclude){
         this.readsToExclude = readsToExclude;
+    }
+
+    public void setVCFVariantsToKeep(Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep){
+        this.somaticVariantsToKeep = somaticVariantsToKeep;
     }
 
     public void setAnonymizePotentialLeaks(boolean anonymize){
@@ -86,20 +86,11 @@ public class VariationClassifier {
     public void callVariation(SamplePairReadAlignmentReader pairPileupReader, IndexedFastaSequenceFile referenceWalker, String mode, String vcfFile) throws IOException {
         Map<Integer, List<CalledVariation>> variationPerPos = new HashMap<>();
         Set<String> seenReads = new HashSet<>();
-        Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep = new HashMap<>();
-        if(SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)){
-            somaticVariantsToKeep = readVCF(vcfFile);
-        }
         int p = 1;
         for (PairedPileup pileup : pairPileupReader){
             int pos = pileup.getReferencePos();
             classifyVariationInPairedPileup(variationPerPos, pileup, seenReads, referenceWalker);
-            if(SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)) {
-                processPotentialGermlines(variationPerPos.get(pos), somaticVariantsToKeep);
-            }
-            else{
-                processPotentialGermlines(variationPerPos.get(pos));
-            }
+            processPotentialGermlines(variationPerPos.get(pos));
             if (p==SLIDING_WINDOW_LIMIT) {
                 p = 0;
 //                if (diffuseIndelCalls){
@@ -276,19 +267,13 @@ public class VariationClassifier {
         }
     }
 
-    private void processPotentialGermlines(List<CalledVariation> variationInPos) {
-        processPotentialGermlines(variationInPos, new HashMap<>());
-    }
-
     /**
      * Retrieves the calls to be anonymized for each read alignment, uniquely by read name, pair and position
      * @param variationInPos
-     * @param somaticVariantsToKeep
      */
-    private void processPotentialGermlines(List<CalledVariation> variationInPos,
-                                           Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep) {
+    private void processPotentialGermlines(List<CalledVariation> variationInPos) {
         for (CalledVariation var : variationInPos){
-            if(!anonymizeThisVariant(var, somaticVariantsToKeep)) continue;
+            if(!anonymizeThisVariant(var)) continue;
             Map<String, Integer> supportingReads = var.getSupportingReads();
             for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
                 String readAlnId = entry.getKey();
@@ -299,7 +284,7 @@ public class VariationClassifier {
         }
     }
 
-    private boolean anonymizeThisVariant(CalledVariation variant, Map<String, Map<Integer, CalledVariation>> somaticVariantsToKeep) {
+    private boolean anonymizeThisVariant(CalledVariation variant) {
         boolean isValidatedSomatic = false;
         // Anonymize only potential germlines if seen in both datasets, at least once in each, or more than once if only found in the normal tissue mappings
         boolean isPotentialGermline = SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(variant.getSomaticVariationType()) ||

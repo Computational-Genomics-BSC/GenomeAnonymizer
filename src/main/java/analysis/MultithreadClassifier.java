@@ -60,7 +60,10 @@ public class MultithreadClassifier implements Runnable{
     public Map<String, List<CalledVariation>>  getAnswer(){
         assert(classifier.getPotentialGermlinesPerRead().size() == 1): "The result of this classifier is incorrect: "
                 + region.getSequenceName() + " " + region.getStart() + " " + region.getEnd();
-        //return classifier.getPotentialGermlinesPerRead().getOrDefault(region.getContig(), new HashMap<>());
         return classifier.getPotentialGermlinesPerRead();
+    }
+
+    public void setVCFVariantsToKeep(Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep){
+        classifier.setVCFVariantsToKeep(somaticVariantsToKeep);
     }
 }

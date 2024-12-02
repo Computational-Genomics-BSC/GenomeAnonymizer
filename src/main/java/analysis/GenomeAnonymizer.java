@@ -6,7 +6,6 @@ import genomicelements.GenomicRegionBaseImpl;
 import htsjdk.samtools.reference.FastaSequenceIndex;
 import htsjdk.samtools.reference.FastaSequenceIndexEntry;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
-import htsjdk.tribble.SimpleFeature;
 import org.apache.commons.cli.*;
 import java.io.File;
 import java.io.IOException;
@@ -18,6 +17,7 @@ import java.util.logging.ConsoleHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.logging.SimpleFormatter;
+import static io.VCFReader.readVCF;
 
 /**
  * Main class that executes the anonymization method on sequencing data
@@ -42,14 +42,13 @@ public class GenomeAnonymizer {
      * @param tumorPath
      * @param refGenome
      * @param outputPrefix
-     * @param compressed
      * @param algorithm
      * @param mode
      * @param vcfFile
      * @param nThreads
      * @throws IOException
      */
-    public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed,
+    public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix,
                     String algorithm, String mode, String vcfFile, int nThreads) throws Exception {
         LOGGER.info("Beginning anonymization in " + mode + " mode");
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm);
@@ -71,12 +70,15 @@ public class GenomeAnonymizer {
 
     private Map<String, List<CalledVariation>> callVariationInParallel(String normalPath, String tumorPath, String refGenome,
                                                                                      String mode, String vcfFile, List<GenomicRegion> partitions,
-                                                                                     Set<String> readsToExclude, int nThreads) {
+                                                                                     Set<String> readsToExclude, int nThreads) throws IOException {
         Map<String, List<CalledVariation>> readGermlinesToAnonymize = new HashMap<>();
         MultithreadClassifier[] mClassifiers = new MultithreadClassifier[partitions.size()];
+        Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep = new HashMap<>();
+        if(SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)) somaticVariantsToKeep = readVCF(vcfFile);
         for(int i = 0; i < partitions.size(); i++){
             GenomicRegion region = partitions.get(i);
             mClassifiers[i] = new MultithreadClassifier(normalPath, tumorPath, refGenome, mode, vcfFile, region, readsToExclude);
+            mClassifiers[i].setVCFVariantsToKeep(somaticVariantsToKeep);
         }
         ExecutorService executorService = Executors.newFixedThreadPool(nThreads);
         List<CompletableFuture<Void>> futures = new ArrayList<>();
@@ -174,7 +176,7 @@ public class GenomeAnonymizer {
      */
     public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed,
                     String algorithm, int nThreads) throws Exception {
-        run(normalPath, tumorPath, refGenome, outputPrefix, compressed, algorithm, DEFAULT_RUN_MODE_FUNCTIONALITY, "", nThreads);
+        run(normalPath, tumorPath, refGenome, outputPrefix, algorithm, DEFAULT_RUN_MODE_FUNCTIONALITY, "", nThreads);
     }
 
     private static AnonymizerAlgorithm getAnonymizer(String algorithm) {
@@ -214,8 +216,8 @@ public class GenomeAnonymizer {
             if (SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)){
                 if(!commandLine.hasOption("v")) throw new ParseException("benchmark mode requires VCF file, but none was provided");
                 vcfFilePath = commandLine.getOptionValue("v");
-                appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, false,
-                        AnonymizerAlgorithm.SHORT_READ_ALGORITHM, SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, vcfFilePath, nThreads);
+                appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, AnonymizerAlgorithm.SHORT_READ_ALGORITHM,
+                        SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, vcfFilePath, nThreads);
             }
             else{
                 if(commandLine.hasOption("v")) LOGGER.warning("Mode is not set to benchmark, but vcf file was provided," +
