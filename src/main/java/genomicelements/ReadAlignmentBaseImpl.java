@@ -12,6 +12,7 @@ public class ReadAlignmentBaseImpl implements ReadAlignment{
 
     private String readAlignmentId;
     private String readName;
+    private int flags;
     private String sequenceName;
     private int start;
     private int end;
@@ -25,10 +26,11 @@ public class ReadAlignmentBaseImpl implements ReadAlignment{
     private SAMFileHeader header;
 
 
-    public ReadAlignmentBaseImpl(String readName, String sequenceName, int start, int end,
+    public ReadAlignmentBaseImpl(String readName, String sequenceName, int flags, int start, int end,
                                  boolean isSupplementary, int mapQ, Cigar cigar) {
         this.readAlignmentId = generateReadAlignmentId(readName);
         this.readName = readName;
+        this.flags = flags;
         this.sequenceName = sequenceName;
         this.start = start;
         this.end = end;
@@ -71,6 +73,26 @@ public class ReadAlignmentBaseImpl implements ReadAlignment{
 
     public void setSequenceName(String sequenceName) {
         this.sequenceName = sequenceName;
+    }
+
+    public int getFlags() {
+        return flags;
+    }
+
+    public void setFlags(int flags) {
+        this.flags = flags;
+    }
+
+    public int getMapQ() {
+        return mapQ;
+    }
+
+    public void setMapQ(int mapQ) {
+        this.mapQ = mapQ;
+    }
+
+    public void setCigar(Cigar cigar) {
+        this.cigar = cigar;
     }
 
     @Override

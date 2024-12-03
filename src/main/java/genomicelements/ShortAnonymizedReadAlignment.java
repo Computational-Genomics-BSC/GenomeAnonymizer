@@ -238,6 +238,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         answer.setReadName(getReadName());
         answer.setMappingQuality(getMappingQuality());
         answer.setCigar(anonymizedCigar);
+        answer.setFlags(readAlignment.getFlags());
         List<SAMRecord.SAMTagAndValue> readAlnOriginalTags = readAlignment.getTags();
         for(SAMRecord.SAMTagAndValue tagAndValue : readAlnOriginalTags){
             answer.setAttribute(tagAndValue.tag, tagAndValue.value);

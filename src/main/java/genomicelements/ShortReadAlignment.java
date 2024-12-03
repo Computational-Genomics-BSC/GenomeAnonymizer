@@ -17,22 +17,23 @@ public class ShortReadAlignment extends ReadAlignmentBaseImpl implements ReadAli
     private boolean isReverse;
     private List<SAMRecord.SAMTagAndValue> tags;
 
-    public ShortReadAlignment(String readName, String sequenceName, int start, int end, boolean isSupplementary, int mapQ,
+    public ShortReadAlignment(String readName, String sequenceName, int flags, int start, int end, boolean isSupplementary, int mapQ,
                               Cigar cigar, boolean isFirstOfPair, boolean isReverse) {
-        super(readName, sequenceName, start, end, isSupplementary, mapQ, cigar);
+        super(readName, sequenceName, flags, start, end, isSupplementary, mapQ, cigar);
         this.setReadAlignmentId(generateReadAlignmentId(readName));
         this.pairIdx = isFirstOfPair ? PAIR_1_IDX : PAIR_2_IDX;
         this.isReverse = isReverse;
     }
 
     public ShortReadAlignment(SAMRecord samRecord){
-        this(samRecord.getReadName(), samRecord.getContig(), samRecord.getStart(), samRecord.getEnd(), samRecord.isSecondaryOrSupplementary(),
+        this(samRecord.getReadName(), samRecord.getContig(), samRecord.getFlags(), samRecord.getStart(), samRecord.getEnd(), samRecord.isSecondaryOrSupplementary(),
                 samRecord.getMappingQuality(), samRecord.getCigar(), samRecord.getFirstOfPairFlag(), samRecord.getReadNegativeStrandFlag());
         this.setSequenceArray(samRecord.getReadBases());
         this.setQualitiesArray(samRecord.getBaseQualities());
         this.setReadAlignmentId(generateReadId(samRecord));
         this.setHeader(samRecord.getHeader());
         this.setTags(samRecord.getAttributes());
+
     }
 
 
