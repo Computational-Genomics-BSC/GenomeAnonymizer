@@ -41,15 +41,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
                     "without setting the contigReferenceSequence first. setContigReferenceSequence, should always" +
                     " be alled after the constructor.");
         }
-        //This should not happen, because now alignments that dont have variants to anonymize should
-        // be processed only as ReadAlignment objects
-        // TODO: Erase after checking this is not happening
-        if (SNVsToAnonymize.isEmpty() && indelsToAnonymize.isEmpty()){
-            isAnonymized = true;
-            System.out.println("This should not happen, because now alignments that dont have variants to" +
-                    " anonymize should be processed only as ReadAlignment objects");
-            return;
-        }
         int originalSeqLength = getOriginalSequenceArray().length;
         int expectedSize = estimateNewReadSize(originalSeqLength);
         anonymizedSequenceArray = new byte[expectedSize];
@@ -60,7 +51,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         final int alnStart = getStart();
         int alnOrgEnd = getEnd();
         //1 - based coordinate
-        //TODO: Either decrease this value by 1, or index reference sequence 1-based
         int currentRefAlnPos = alnStart-1;
         //Should be the same if we fill or remove bases from the end of the read
         //int alnNewEnd = 0;
@@ -246,24 +236,23 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         // getStart and getEnd are 1-based, adjust accordingly, currently referenceSequence is 0-based
         byte[] refSequenceAln = Arrays.copyOfRange(referenceContigSequence, answer.getStart()-1, answer.getEnd());
         SequenceUtil.calculateMdAndNmTags(answer, refSequenceAln, true, true);
-        // TODO: Erase after checking this is not correct
         // TEST
-        List<SAMValidationError> cigarErrors = answer.validateCigar(-1);
-        if(cigarErrors!=null){
-            for (SAMValidationError err : cigarErrors){
-                System.out.println("CIGAR validation error on SAM Record: " +
-                        answer.toString() + " Error message: "
-                        + err.getMessage());
-            }
-        }
-        List<SAMValidationError> validationErrors = answer.isValid();
-        if(validationErrors!=null){
-            for (SAMValidationError err : validationErrors){
-                System.out.println("Validation error on SAM Record: " +
-                        answer + " AnonReadAln=" + this.toString() + " Error message: "
-                        + err.getMessage());
-            }
-        }
+//        List<SAMValidationError> cigarErrors = answer.validateCigar(-1);
+//        if(cigarErrors!=null){
+//            for (SAMValidationError err : cigarErrors){
+//                System.out.println("CIGAR validation error on SAM Record: " +
+//                        answer.toString() + " Error message: "
+//                        + err.getMessage());
+//            }
+//        }
+//        List<SAMValidationError> validationErrors = answer.isValid();
+//        if(validationErrors!=null){
+//            for (SAMValidationError err : validationErrors){
+//                System.out.println("Validation error on SAM Record: " +
+//                        answer + " AnonReadAln=" + this.toString() + " Error message: "
+//                        + err.getMessage());
+//            }
+//        }
         // TEST
         return answer;
     }

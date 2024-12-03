@@ -52,4 +52,9 @@ public class GenomicRegionBaseImpl implements GenomicRegion{
     public void setSequenceIdx(int sequenceIdx) {
         this.sequenceIdx = sequenceIdx;
     }
+
+    @Override
+    public String toString(){
+        return sequenceName + "\t" + start + "\t" + end;
+    }
 }

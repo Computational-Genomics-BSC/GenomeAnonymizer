@@ -36,6 +36,13 @@ public class GenomeAnonymizer {
     public final static String SAM_FILE = ".sam";
     public final static String CRAM_FILE = ".cram";
 
+    //Optional arguments as attributes
+    String vcfFile;
+    String bedFile;
+    String canvasN;
+    String canvasT;
+
+
     /**
      * Run anonymizer with the benchmark of somatic variants functionality. Any somatic variant will be sparred from anonymization
      * @param normalPath
@@ -44,12 +51,11 @@ public class GenomeAnonymizer {
      * @param outputPrefix
      * @param algorithm
      * @param mode
-     * @param vcfFile
      * @param nThreads
      * @throws IOException
      */
     public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix,
-                    String algorithm, String mode, String vcfFile, int nThreads) throws Exception {
+                    String algorithm, String mode, boolean merge, int nThreads) throws Exception {
         LOGGER.info("Beginning anonymization in " + mode + " mode");
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm);
         List<GenomicRegion> partitions = getPartitions(refGenome, nThreads);
@@ -63,6 +69,10 @@ public class GenomeAnonymizer {
         LOGGER.info("Variation calling phase finished in: "+ (double) (end1-start1)/1000 + " seconds");
         long start2 = System.currentTimeMillis();
         anonymizer.setReadGermlinesToAnonymize(readGermlinesToAnonymize);
+        if(merge){
+            anonymizer.setRegions(this.bedFile);
+            anonymizer.setCanvasFiles(this.canvasN, this.canvasT);
+        }
         anonymizer.anonymizeReads(normalPath, tumorPath, refGenome, outputPrefix, false);
         long end2 = System.currentTimeMillis();
         LOGGER.info("Anonymization phase finished in: "+ (double) (end2-start2)/1000 + " seconds");
@@ -163,21 +173,53 @@ public class GenomeAnonymizer {
         return regions;
     }
 
-    /**
-     * Run anonymization in default mode
-     * @param normalPath
-     * @param tumorPath
-     * @param refGenome
-     * @param outputPrefix
-     * @param compressed
-     * @param algorithm
-     * @param nThreads
-     * @throws IOException
-     */
-    public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed,
-                    String algorithm, int nThreads) throws Exception {
-        run(normalPath, tumorPath, refGenome, outputPrefix, algorithm, DEFAULT_RUN_MODE_FUNCTIONALITY, "", nThreads);
+    public String getVcfFile() {
+        return vcfFile;
     }
+
+    public void setVcfFile(String vcfFile) {
+        this.vcfFile = vcfFile;
+    }
+
+    public String getBedFile() {
+        return bedFile;
+    }
+
+    public void setBedFile(String bedFile) {
+        this.bedFile = bedFile;
+    }
+
+    public String getCanvasN() {
+        return canvasN;
+    }
+
+    public void setCanvasN(String canvasN) {
+        this.canvasN = canvasN;
+    }
+
+    public String getCanvasT() {
+        return canvasT;
+    }
+
+    public void setCanvasT(String canvasT) {
+        this.canvasT = canvasT;
+    }
+
+//    /**
+//     * Run anonymization in default mode
+//     * @param normalPath
+//     * @param tumorPath
+//     * @param refGenome
+//     * @param outputPrefix
+//     * @param compressed
+//     * @param algorithm
+//     * @param nThreads
+//     * @throws IOException
+//     */
+//    public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed,
+//                    String algorithm, int nThreads) throws Exception {
+//        run(normalPath, tumorPath, refGenome, outputPrefix, algorithm, DEFAULT_RUN_MODE_FUNCTIONALITY, nThreads);
+//    }
 
     private static AnonymizerAlgorithm getAnonymizer(String algorithm) {
         AnonymizerAlgorithm anonymizer = null;
@@ -201,7 +243,7 @@ public class GenomeAnonymizer {
                 String footer = "";
                 String cmdLineSyntax = "java -jar build/libs/GenomeAnonymizer-" + VERSION + ".jar";
                 if(args.length==0) footer = "No arguments provided. Displaying default help message.";
-                // TODO: Change when it is set to be run as a jar, or container
+                formatter.setOptionComparator(null);
                 formatter.printHelp(cmdLineSyntax, header, options, footer, true);
                 return;
                 //System.exit(0);
@@ -212,19 +254,36 @@ public class GenomeAnonymizer {
             String outputPrefix = commandLine.getOptionValue("o", removeSuffixIfExists(normalPath, BAM_FILE));
             int nThreads = Integer.parseInt(commandLine.getOptionValue("t", "4"));
             String mode = commandLine.getOptionValue("m", DEFAULT_RUN_MODE_FUNCTIONALITY);
-            String vcfFilePath;
+            boolean merge = false;
             if (SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)){
-                if(!commandLine.hasOption("v")) throw new ParseException("benchmark mode requires VCF file, but none was provided");
-                vcfFilePath = commandLine.getOptionValue("v");
+                if(!commandLine.hasOption("v")) throw new ParseException("benchmark mode requires VCF file, " +
+                        "but none was provided");
+                String vcfFilePath = commandLine.getOptionValue("v");
+                appInstance.setVcfFile(vcfFilePath);
+                if(commandLine.hasOption("merge")){
+                    if(!commandLine.hasOption("bed")) throw new ParseException("benchmark mode with merge requires BED file, " +
+                            "but none was provided");
+                    if(!commandLine.hasOption("canvasN")) throw new ParseException("benchmark mode with merge requires" +
+                            " canvas normal file, but none was provided");
+                    if(!commandLine.hasOption("canvasT")) throw new ParseException("benchmark mode with merge requires" +
+                            " canvas tumoral file, but none was provided");
+                    merge = true;
+                    String bedFilePath = commandLine.getOptionValue("bed");
+                    appInstance.setBedFile(bedFilePath);
+                    String canvasNFilePath = commandLine.getOptionValue("canvasN");
+                    appInstance.setCanvasN(canvasNFilePath);
+                    String canvasTFilePath = commandLine.getOptionValue("canvasT");
+                    appInstance.setCanvasT(canvasTFilePath);
+                }
                 appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, AnonymizerAlgorithm.SHORT_READ_ALGORITHM,
-                        SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, vcfFilePath, nThreads);
+                        SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, merge, nThreads);
             }
             else{
                 if(commandLine.hasOption("v")) LOGGER.warning("Mode is not set to benchmark, but vcf file was provided," +
                         " default mode will be run normally," +
                         " but variants recorded in the vcf will not be kept");
-                appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, false,
-                        AnonymizerAlgorithm.SHORT_READ_ALGORITHM, nThreads);
+                appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, AnonymizerAlgorithm.SHORT_READ_ALGORITHM,
+                        DEFAULT_RUN_MODE_FUNCTIONALITY, false, nThreads);
             }
         }
         catch (Exception e){
@@ -291,6 +350,34 @@ public class GenomeAnonymizer {
                 .build());
         options.addOption(Option.builder("v")
                 .desc("VCF file containing the variants to be kept  (.VCF), required for running the Anonymizer in benchmark mode")
+                .argName("FILE")
+                .hasArg(true)
+                //.required(false)
+                .build());
+        options.addOption(Option.builder("merge")
+                .desc("Option to cover the empty mapped regions of the anonymized output with reads from a canvas dataset" +
+                        "Caution: Only use this option with the benchmark mode" +
+                        "Requires: -bed: BED file with the sample regions" +
+                        " -canvasN && -canvasT: Read mapping datasets to cover the normal and tumoral outputs")
+                .argName("OPTION")
+                .hasArg(false)
+                //.required(false)
+                .build());
+        options.addOption(Option.builder("bed")
+                .desc("BED file where the regions from the original sample are defined, " +
+                        "and therefore will not be covered with the canvas")
+                .argName("FILE")
+                .hasArg(true)
+                //.required(false)
+                .build());
+        options.addOption(Option.builder("canvasN")
+                .desc("Dataset with read mappings to cover the normal dataset")
+                .argName("FILE")
+                .hasArg(true)
+                //.required(false)
+                .build());
+        options.addOption(Option.builder("canvasT")
+                .desc("Dataset with read mappings to cover the tumoral dataset")
                 .argName("FILE")
                 .hasArg(true)
                 //.required(false)

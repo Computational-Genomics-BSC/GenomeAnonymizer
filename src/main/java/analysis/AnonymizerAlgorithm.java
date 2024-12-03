@@ -20,4 +20,6 @@ public interface AnonymizerAlgorithm {
     public void setReadGermlinesToAnonymize(Map<String, List<CalledVariation>> readGermlinesToAnonymize);
     public void anonymizeReads(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed)throws IOException;
 
+    public void setRegions(String bedFilePath) throws IOException;
+    public void setCanvasFiles(String normalCanvasFileName, String tumoralCanvasFileName);
 }

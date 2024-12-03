@@ -3,6 +3,7 @@ package analysis;
 import genomicelements.*;
 import htsjdk.samtools.*;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
+import io.GenomicRegionBedReader;
 
 import java.io.File;
 import java.io.IOException;
@@ -38,6 +39,9 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     SAMFileHeader tumoralFileHeader;
     File normalOutputFile;
     File tumoralOutputFile;
+    File canvasNormal;
+    File canvasTumoral;
+    List<GenomicRegion> genomicRegions;
     SamReaderFactory factory;
     SAMFileWriter normalWriter;
     SAMFileWriter tumoralWriter;
@@ -146,6 +150,17 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         } finally {
             closeOutputStreams();
         }
+    }
+
+    @Override
+    public void setRegions(String bedFilePath) throws IOException {
+        this.genomicRegions = GenomicRegionBedReader.readGenomicRegionBED(bedFilePath);
+    }
+
+    @Override
+    public void setCanvasFiles(String normalCanvasFileName, String tumoralCanvasFileName) {
+        this.canvasNormal = new File(normalCanvasFileName);
+        this.canvasTumoral = new File(tumoralCanvasFileName);
     }
 
     private void openOutputStreams(String prefix){
