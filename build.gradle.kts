@@ -12,8 +12,8 @@ repositories {
 
 dependencies {
     implementation(fileTree(mapOf("dir" to "lib", "include" to listOf("*.jar"))))
-    //implementation("htsjdk-4.1.3")
-    //implementation("commons-cli:commons-cli:1.9")
+    // implementation("com.github.samtools:htsjdk:4.1.3")
+    // implementation("commons-cli:commons-cli:1.9.0")
     testImplementation(platform("org.junit:junit-bom:5.10.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
 }

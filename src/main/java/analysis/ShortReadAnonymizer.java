@@ -7,7 +7,10 @@ import io.GenomicRegionBedReader;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.BufferedOutputStream;
+import java.io.FileOutputStream;
 import java.util.*;
+import java.util.concurrent.Future;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -31,14 +34,10 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     List<GenomicRegion> partitions;
     //Set that contaains all the reads that will be excluded from the result (e.g. Unmapped and MAPQ=0)
     Set<String> readsToExclude;
-    // Written read alignments to avoid writing again
-    Set<String> writtenReadAlignments;
     // Map containing all potential germlines (value: List), per pair (nested key, 0 or 1), per read (key)
     Map<String, List<CalledVariation>> readGermlinesToAnonymize;
     SAMFileHeader normalFileHeader;
     SAMFileHeader tumoralFileHeader;
-    File normalOutputFile;
-    File tumoralOutputFile;
     File canvasNormal;
     File canvasTumoral;
     List<GenomicRegion> genomicRegions;
@@ -46,15 +45,14 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     SAMFileWriter normalWriter;
     SAMFileWriter tumoralWriter;
     boolean removeUnmapped;
-    boolean writersAreOpen;
 
     public ShortReadAnonymizer() {
         readsToExclude = new HashSet<>();
-        writtenReadAlignments = new HashSet<>();
         readGermlinesToAnonymize = new HashMap<>();
         factory = SamReaderFactory.makeDefault();
+        factory.setUseAsyncIo(true);
+        factory.setDefaultValidationStringency(ValidationStringency.SILENT);
         removeUnmapped = true;
-        writersAreOpen = false;
     }
 
     public void setPartitions(List<GenomicRegion> partitions) {
@@ -143,10 +141,35 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
     @Override
     public void anonymizeReads(String normalPath, String tumorPath, String refGenome, String outputPrefix,
                                boolean compressed) throws IOException {
-        try(IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(refGenome))) {
+        // TODO: Make sure the reference genome is the same for this.canvasTumoral and this.tumoralWriter and for this.canvasNormal and this.normalWriter
+        try {
             openOutputStreams(outputPrefix);
-            anonymizeReadsInFile(new File(normalPath), true, referenceWalker);
-            anonymizeReadsInFile(new File(tumorPath), false, referenceWalker);
+            ExecutorService exec = Executors.newFixedThreadPool(2);
+            Future<?> tumoralFuture = exec.submit(() -> {
+                try {
+                    mergeAnonymizedReads(new File(tumorPath), this.canvasTumoral, this.tumoralWriter, new File(refGenome));
+                } catch (Exception e) {
+                    LOGGER.severe("Exception in thread merging anonymized reads in tumoral dataset");
+                    LOGGER.severe(e.getMessage());
+                    throw new RuntimeException(e);
+                }
+            });
+            Future<?> normalFuture = exec.submit(() -> {
+                try {
+                    mergeAnonymizedReads(new File(normalPath), this.canvasNormal, this.normalWriter, new File(refGenome));
+                } catch (Exception e) {
+                    LOGGER.severe("Exception in thread merging anonymized reads in normal dataset");
+                    LOGGER.severe(e.getMessage());
+                    throw new RuntimeException(e);
+                }
+            });
+            exec.shutdown();
+            normalFuture.get();
+            tumoralFuture.get();
+        } catch (Exception e) {
+            LOGGER.severe("Exception when merging anonymized reads halting execution prematurely");
+            LOGGER.severe(e.getMessage());
+            throw new IOException(e);
         } finally {
             closeOutputStreams();
         }
@@ -163,14 +186,17 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         this.canvasTumoral = new File(tumoralCanvasFileName);
     }
 
-    private void openOutputStreams(String prefix){
-        normalOutputFile = new File(getBAMOutputName(prefix, NORMAL_DATASET_IDX));
-        tumoralOutputFile = new File(getBAMOutputName(prefix, TUMORAL_DATASET_IDX));
+    private void openOutputStreams(String prefix) throws IOException {
+        File normalOutputFile = new File(getBAMOutputName(prefix, NORMAL_DATASET_IDX));
+        File tumoralOutputFile = new File(getBAMOutputName(prefix, TUMORAL_DATASET_IDX));
         SAMFileWriterFactory factory = new SAMFileWriterFactory();
         factory.setCreateIndex(true);
+        factory.setCompressionLevel(1);
+        factory.setUseAsyncIo(true);
         normalWriter = factory.makeBAMWriter(normalFileHeader, true, normalOutputFile);
         tumoralWriter = factory.makeBAMWriter(tumoralFileHeader, true, tumoralOutputFile);
-        writersAreOpen = true;
+        normalWriter.setSortOrderChecking(false);
+        tumoralWriter.setSortOrderChecking(false);
     }
 
     public String getBAMOutputName(String outputPrefix, int datasetIdx){
@@ -181,58 +207,146 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         return outputPrefix + anonTag + datasetIdStr + extension;
     }
 
-    /**
-     * @param samFile
-     * @param isNormalDataset
-     * @param referenceGenome
-     */
-    private void anonymizeReadsInFile(File samFile, boolean isNormalDataset,
-                                      IndexedFastaSequenceFile referenceGenome) throws IOException{
-        String currentContig = "";
-        byte[] referenceContigSequence = new byte[0];
-        partitions = partitions.stream()
-                .sorted(Comparator.comparing(GenomicRegion::getSequenceIdx)
-                        .thenComparing(GenomicRegion::getStart))
-                .collect(Collectors.toList());
-        for(int i = 0; i < partitions.size(); i++){
-            GenomicRegion partition = partitions.get(i);
-            if(!currentContig.equals(partition.getSequenceName())){
-                currentContig = partition.getSequenceName();
-                referenceContigSequence = referenceGenome.getSequence(currentContig).getBases();
+    private void mergeAnonymizedReads(File samFile, File canvasSamFile, SAMFileWriter samWriter, File referenceGenomeFile) throws IOException {
+        IndexedFastaSequenceFile referenceGenome = new IndexedFastaSequenceFile(referenceGenomeFile);
+        SamReader canvasSamReader = null;
+        Set<String> canvasToExclude = new HashSet<>();
+        if (canvasSamFile != null) {
+            canvasSamReader = factory.referenceSequence(referenceGenomeFile).open(canvasSamFile);
+            canvasToExclude = extractCanvasReadsToExclude(canvasSamReader, this.genomicRegions);
+        }
+        Iterator<SAMRecord> canvasReads = canvasSamReader != null ? canvasSamReader.iterator()
+                : Collections.emptyIterator();
+        SamReader anonymizedSamReader = factory.open(samFile);
+        Iterator<SAMRecord> anonymizedReads = getAnonymizedReadsInFile(anonymizedSamReader, referenceGenome);
+        SAMRecord lastCanvasRead = null;
+        // Write the reads
+        while (anonymizedReads.hasNext()) {
+            SAMRecord anonymizedRead = anonymizedReads.next();
+            int contigIdx = anonymizedRead.getReferenceIndex();
+            // If the read contig is "*", set it to the maximum value to write the canvas reads first
+            if (contigIdx == -1) {
+                contigIdx = Integer.MAX_VALUE;
             }
-            try(SamReader samReader = factory.open(samFile)){
-                SAMRecordIterator it = samReader.query(partition.getSequenceName(), partition.getStart(),
-                        partition.getEnd(), false);
-                while (it.hasNext()) {
-                    SAMRecord samRecord = it.next();
-                    String readName = samRecord.getReadName();
-                    String readAlnId = generateReadId(samRecord);
-                    if(readsToExclude.contains(readName) ||
-                            writtenReadAlignments.contains(readAlnId)) continue;
-                    SAMRecord newSamRecord = samRecord;
-                    if(readGermlinesToAnonymize.containsKey(readAlnId)){
-                        ShortReadAlignment readAlignment = new ShortReadAlignment(samRecord);
-                        ShortAnonymizedReadAlignment anonymizedReadAlignment = new ShortAnonymizedReadAlignment(readAlignment);
-                        anonymizedReadAlignment.setReferenceContigSequence(referenceContigSequence);
-                        anonymizedReadAlignment.setVariantsToAnonymize(readGermlinesToAnonymize.get(readAlnId));
-                        anonymizedReadAlignment.anonymizeVariants();
-                        newSamRecord = anonymizedReadAlignment.getAnonymizedSamRecord();
+            // Write the canvas reads that are before the current anonymized read
+            while (canvasReads.hasNext() || lastCanvasRead != null) {
+                SAMRecord canvasRead = lastCanvasRead != null ? lastCanvasRead : canvasReads.next();
+                lastCanvasRead = null;
+                if (canvasRead.getReferenceIndex() < contigIdx || (canvasRead.getAlignmentStart() < anonymizedRead.getAlignmentStart() && canvasRead.getReferenceIndex() == contigIdx)) {
+                    if (canvasToExclude.contains(canvasRead.getReadName())) {
+                        continue;
                     }
-                    writeReadAlignment(newSamRecord, isNormalDataset, readAlnId);
+                    samWriter.addAlignment(canvasRead);
+                } else {
+                    lastCanvasRead = canvasRead;
+                    break;
                 }
             }
+            samWriter.addAlignment(anonymizedRead);
         }
+        // Iterate through the remaining canvas reads
+        while (canvasReads.hasNext() || lastCanvasRead != null) {
+            SAMRecord canvasRead = lastCanvasRead != null ? lastCanvasRead : canvasReads.next();
+            lastCanvasRead = null;
+            if (canvasToExclude.contains(canvasRead.getReadName())) {
+                continue;
+            }
+            samWriter.addAlignment(canvasRead);
+        }        
+        anonymizedSamReader.close();
+        if (canvasSamReader != null) {
+            canvasSamReader.close();
+        }
+        referenceGenome.close();
     }
 
-    private void writeReadAlignment(SAMRecord readAln, boolean isNormalDataset, String readAlnId){
-        if(isNormalDataset) normalWriter.addAlignment(readAln);
-        else tumoralWriter.addAlignment(readAln);
-        writtenReadAlignments.add(readAlnId);
+    private Set<String> extractCanvasReadsToExclude(SamReader canvasSamReader, Iterable<GenomicRegion> regions) {
+        Set<String> canvasToExclude = new HashSet<>();
+        for (GenomicRegion region : regions) {
+            SAMRecordIterator it = canvasSamReader.query(region.getSequenceName(), region.getStart(), region.getEnd(),
+                    false);
+            while (it.hasNext()) {
+                SAMRecord samRecord = it.next();
+                canvasToExclude.add(samRecord.getReadName());
+            }
+            it.close();
+        }
+        return canvasToExclude;
+    }
+
+    private Iterator<SAMRecord> getAnonymizedReadsInFile(SamReader samReader, IndexedFastaSequenceFile referenceGenome) {
+        return new Iterator<SAMRecord>() {
+            String currentContig = "";
+            byte[] referenceContigSequence = new byte[0];
+            Iterator<GenomicRegion> partitionIterator = partitions.stream()
+                    .sorted(Comparator.comparing(GenomicRegion::getSequenceIdx)
+                            .thenComparing(GenomicRegion::getStart))
+                    .iterator();
+            SAMRecordIterator it = null;
+            // Written read alignments to avoid writing again
+            Set<String> returnedReads = new HashSet<>();
+            SAMRecord samRecordToReturn = getNextSAMRecord();
+
+            @Override
+            public boolean hasNext() {
+                return samRecordToReturn != null;
+            }
+
+            @Override
+            public SAMRecord next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                SAMRecord samRecord = samRecordToReturn;
+                samRecordToReturn = getNextSAMRecord();
+                return samRecord;
+            }
+
+            private SAMRecord getNextSAMRecord() {
+                SAMRecord samRecord = null;
+                String readAlnId = "";
+                while (samRecord == null) {
+                    while (it == null || !it.hasNext()) {
+                        if (it != null) {
+                            it.close();
+                        }
+                        if (partitionIterator.hasNext()) {
+                            GenomicRegion partition = partitionIterator.next();
+                            if (!currentContig.equals(partition.getSequenceName())) {
+                                currentContig = partition.getSequenceName();
+                                referenceContigSequence = referenceGenome.getSequence(currentContig).getBases();
+                            }
+                            it = samReader.query(partition.getSequenceName(), partition.getStart(),
+                                    partition.getEnd(), false);
+                        } else {
+                            // No more partitions to process
+                            return null;
+                        }
+                    }
+                    samRecord = it.next();
+                    String readName = samRecord.getReadName();
+                    readAlnId = generateReadId(samRecord);
+                    if (readsToExclude.contains(readName) || returnedReads.contains(readAlnId)) {
+                        samRecord = null;
+                    }
+                }
+                SAMRecord newSamRecord = samRecord;
+                if (readGermlinesToAnonymize.containsKey(readAlnId)) {
+                    ShortReadAlignment readAlignment = new ShortReadAlignment(samRecord);
+                    ShortAnonymizedReadAlignment anonymizedReadAlignment = new ShortAnonymizedReadAlignment(readAlignment);
+                    anonymizedReadAlignment.setReferenceContigSequence(referenceContigSequence);
+                    anonymizedReadAlignment.setVariantsToAnonymize(readGermlinesToAnonymize.get(readAlnId));
+                    anonymizedReadAlignment.anonymizeVariants();
+                    newSamRecord = anonymizedReadAlignment.getAnonymizedSamRecord();
+                }
+                returnedReads.add(readAlnId);
+                return newSamRecord;
+            }
+        };
     }
 
     private void closeOutputStreams(){
         normalWriter.close();
         tumoralWriter.close();
-        writersAreOpen = false;
     }
 }
