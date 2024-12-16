@@ -26,6 +26,8 @@ public class VariationClassifier {
 
     private static final Logger LOGGER = Logger.getLogger(VariationClassifier.class.getName());
 
+    private static final double SOFTCLIP_DISTANCE_THRESHOLD = 10;
+
     public static final char NULL_BASE = 'N';
     public static final Set<Character> ALPHABET = new HashSet<>(
             Arrays.asList(

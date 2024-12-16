@@ -264,7 +264,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         Set<String> canvasToExclude = new HashSet<>();
         for (GenomicRegion region : regions) {
             SAMRecordIterator it = canvasSamReader.query(region.getSequenceName(), region.getStart(), region.getEnd(),
-                    false);
+                    true);
             while (it.hasNext()) {
                 SAMRecord samRecord = it.next();
                 canvasToExclude.add(samRecord.getReadName());
