@@ -4,6 +4,7 @@ import genomicelements.*;
 import htsjdk.samtools.*;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
 import io.GenomicRegionBedReader;
+import utils.GlobalRandom;
 
 import java.io.File;
 import java.io.IOException;
@@ -16,6 +17,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
+import java.util.UUID;
 
 import static analysis.GenomeAnonymizer.BAM_FILE;
 import static genomicelements.ShortReadAlignment.generateReadId;
@@ -24,35 +26,34 @@ import static genomicelements.ShortReadAlignment.generateReadId;
  * AnonymizerAlgorithm implementation for short read data
  * @author Nicolas Gaitan
  */
-public class ShortReadAnonymizer implements AnonymizerAlgorithm{
+public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
     private static final Logger LOGGER = Logger.getLogger(ShortReadAnonymizer.class.getName());
 
     public static final int NORMAL_DATASET_IDX = 0;
     public static final int TUMORAL_DATASET_IDX = 1;
 
-    List<GenomicRegion> partitions;
-    //Set that contaains all the reads that will be excluded from the result (e.g. Unmapped and MAPQ=0)
-    Set<String> readsToExclude;
+    private List<GenomicRegion> partitions;
+    // Set that contains all the reads that will be excluded from the result (e.g. Unmapped and MAPQ=0)
+    private Set<String> readsToExclude;
     // Map containing all potential germlines (value: List), per pair (nested key, 0 or 1), per read (key)
-    Map<String, List<CalledVariation>> readGermlinesToAnonymize;
-    SAMFileHeader normalFileHeader;
-    SAMFileHeader tumoralFileHeader;
-    File canvasNormal;
-    File canvasTumoral;
-    List<GenomicRegion> genomicRegions;
-    SamReaderFactory factory;
-    SAMFileWriter normalWriter;
-    SAMFileWriter tumoralWriter;
-    boolean removeUnmapped;
+    private Map<String, List<CalledVariation>> readGermlinesToAnonymize;
+    private File canvasNormal;
+    private File canvasTumoral;
+    private List<GenomicRegion> genomicRegions;
+    private SamReaderFactory factory;
+    private SAMFileWriter normalWriter;
+    private SAMFileWriter tumoralWriter;
+    private int hash_salt;
 
     public ShortReadAnonymizer() {
         readsToExclude = new HashSet<>();
         readGermlinesToAnonymize = new HashMap<>();
         factory = SamReaderFactory.makeDefault();
         factory.setUseAsyncIo(true);
-        factory.setDefaultValidationStringency(ValidationStringency.SILENT);
-        removeUnmapped = true;
+        factory.validationStringency(ValidationStringency.SILENT);
+        // Initialize hash_salt with a random value
+        hash_salt = GlobalRandom.getInstance().nextInt();
     }
 
     public void setPartitions(List<GenomicRegion> partitions) {
@@ -63,14 +64,15 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         this.readGermlinesToAnonymize = readGermlinesToAnonymize;
     }
 
-    private void retrieveFileHeaders(String bamFile, boolean isNormalDataset) throws IOException {
-        try (SamReader samReader = SamReaderFactory.makeDefault()
-                .validationStringency(ValidationStringency.SILENT)
-                .open(new File(bamFile))) {
+    private SAMFileHeader retrieveFileHeaders(String bamFile) throws IOException {
+        try (SamReader samReader = factory.open(new File(bamFile))) {
             // Retrieve the SAMFileHeader
             SAMFileHeader header = samReader.getFileHeader();
-            if (isNormalDataset) normalFileHeader = header;
-            else tumoralFileHeader = header;
+            // Remove all read groups from the header
+            // Set the read group as the hash of the file name + salt
+            String readGroupId = Integer.toHexString((bamFile + hash_salt).hashCode());
+            header.setReadGroups(Collections.singletonList(new SAMReadGroupRecord(readGroupId)));
+            return header;
         }
     }
 
@@ -80,8 +82,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         paths[1] = tumorPath;
         ExecutorService exec = Executors.newFixedThreadPool(threads);
         List<CompletableFuture<Set<String>>> futures = new ArrayList<>();
-        retrieveFileHeaders(normalPath, true);
-        retrieveFileHeaders(tumorPath, false);
         //TODO: Check if it is possible to change partitions based on actual content
         // (Implement CoveredGenomicRegion), to improve runtime using parallelization
         for(GenomicRegion partition : partitions){
@@ -143,7 +143,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
                                boolean compressed) throws IOException {
         // TODO: Make sure the reference genome is the same for this.canvasTumoral and this.tumoralWriter and for this.canvasNormal and this.normalWriter
         try {
-            openOutputStreams(outputPrefix);
+            openOutputStreams(outputPrefix, normalPath, tumorPath);
             ExecutorService exec = Executors.newFixedThreadPool(2);
             Future<?> tumoralFuture = exec.submit(() -> {
                 try {
@@ -186,13 +186,15 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         this.canvasTumoral = new File(tumoralCanvasFileName);
     }
 
-    private void openOutputStreams(String prefix) throws IOException {
+    private void openOutputStreams(String prefix, String normalPath, String tumorPath) throws IOException {
         File normalOutputFile = new File(getBAMOutputName(prefix, NORMAL_DATASET_IDX));
         File tumoralOutputFile = new File(getBAMOutputName(prefix, TUMORAL_DATASET_IDX));
         SAMFileWriterFactory factory = new SAMFileWriterFactory();
         factory.setCreateIndex(true);
         factory.setCompressionLevel(1);
         factory.setUseAsyncIo(true);
+        SAMFileHeader normalFileHeader = retrieveFileHeaders(normalPath);
+        SAMFileHeader tumoralFileHeader = retrieveFileHeaders(tumorPath);
         normalWriter = factory.makeBAMWriter(normalFileHeader, true, normalOutputFile);
         tumoralWriter = factory.makeBAMWriter(tumoralFileHeader, true, tumoralOutputFile);
         normalWriter.setSortOrderChecking(false);
@@ -236,13 +238,13 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
                     if (canvasToExclude.contains(canvasRead.getReadName())) {
                         continue;
                     }
-                    samWriter.addAlignment(canvasRead);
+                    writeRead(samWriter, canvasRead);
                 } else {
                     lastCanvasRead = canvasRead;
                     break;
                 }
             }
-            samWriter.addAlignment(anonymizedRead);
+            writeRead(samWriter, anonymizedRead);
         }
         // Iterate through the remaining canvas reads
         while (canvasReads.hasNext() || lastCanvasRead != null) {
@@ -251,7 +253,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
             if (canvasToExclude.contains(canvasRead.getReadName())) {
                 continue;
             }
-            samWriter.addAlignment(canvasRead);
+            writeRead(samWriter, canvasRead);
         }        
         anonymizedSamReader.close();
         if (canvasSamReader != null) {
@@ -264,7 +266,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
         Set<String> canvasToExclude = new HashSet<>();
         for (GenomicRegion region : regions) {
             SAMRecordIterator it = canvasSamReader.query(region.getSequenceName(), region.getStart(), region.getEnd(),
-                    true);
+                    false);
             while (it.hasNext()) {
                 SAMRecord samRecord = it.next();
                 canvasToExclude.add(samRecord.getReadName());
@@ -272,6 +274,14 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm{
             it.close();
         }
         return canvasToExclude;
+    }
+
+    private void writeRead(SAMFileWriter samWriter, SAMRecord read) {
+        // Set the read name to the hash of the read name + salt
+        read.setReadName(UUID.nameUUIDFromBytes((read.getReadName() + hash_salt).getBytes()).toString());
+        // Set the read group to the same value as the read group of the header
+        read.setAttribute("RG", samWriter.getFileHeader().getReadGroups().get(0).getId());
+        samWriter.addAlignment(read);
     }
 
     private Iterator<SAMRecord> getAnonymizedReadsInFile(SamReader samReader, IndexedFastaSequenceFile referenceGenome) {

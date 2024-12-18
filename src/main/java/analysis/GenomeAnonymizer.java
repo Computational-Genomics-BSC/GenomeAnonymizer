@@ -3,6 +3,7 @@ package analysis;
 import genomicelements.CalledVariation;
 import genomicelements.GenomicRegion;
 import genomicelements.GenomicRegionBaseImpl;
+import utils.GlobalRandom;
 import htsjdk.samtools.reference.FastaSequenceIndex;
 import htsjdk.samtools.reference.FastaSequenceIndexEntry;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
@@ -52,11 +53,13 @@ public class GenomeAnonymizer {
      * @param algorithm
      * @param mode
      * @param nThreads
+     * @param randomSeed
      * @throws IOException
      */
     public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix,
-                    String algorithm, String mode, boolean merge, int nThreads) throws Exception {
+                    String algorithm, String mode, boolean merge, int nThreads, int randomSeed) throws Exception {
         LOGGER.info("Beginning anonymization in " + mode + " mode");
+        GlobalRandom.setSeed(randomSeed);
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm);
         List<GenomicRegion> partitions = getPartitions(refGenome, nThreads);
         anonymizer.setPartitions(partitions);
@@ -254,6 +257,7 @@ public class GenomeAnonymizer {
             String outputPrefix = commandLine.getOptionValue("o", removeSuffixIfExists(normalPath, BAM_FILE));
             int nThreads = Integer.parseInt(commandLine.getOptionValue("t", "4"));
             String mode = commandLine.getOptionValue("m", DEFAULT_RUN_MODE_FUNCTIONALITY);
+            int randomSeed = Integer.parseInt(commandLine.getOptionValue("s", "-1"));
             boolean merge = false;
             if (SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)){
                 if(!commandLine.hasOption("v")) throw new ParseException("benchmark mode requires VCF file, " +
@@ -276,14 +280,14 @@ public class GenomeAnonymizer {
                     appInstance.setCanvasT(canvasTFilePath);
                 }
                 appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, AnonymizerAlgorithm.SHORT_READ_ALGORITHM,
-                        SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, merge, nThreads);
+                        SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, merge, nThreads, randomSeed);
             }
             else{
                 if(commandLine.hasOption("v")) LOGGER.warning("Mode is not set to benchmark, but vcf file was provided," +
                         " default mode will be run normally," +
                         " but variants recorded in the vcf will not be kept");
                 appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, AnonymizerAlgorithm.SHORT_READ_ALGORITHM,
-                        DEFAULT_RUN_MODE_FUNCTIONALITY, false, nThreads);
+                        DEFAULT_RUN_MODE_FUNCTIONALITY, false, nThreads, randomSeed);
             }
         }
         catch (Exception e){
@@ -351,6 +355,12 @@ public class GenomeAnonymizer {
         options.addOption(Option.builder("v")
                 .desc("VCF file containing the variants to be kept  (.VCF), required for running the Anonymizer in benchmark mode")
                 .argName("FILE")
+                .hasArg(true)
+                //.required(false)
+                .build());
+        options.addOption(Option.builder("s")
+                .desc("Seed for random number generation. Use -1 for random seed. Default is -1")
+                .argName("INT")
                 .hasArg(true)
                 //.required(false)
                 .build());
