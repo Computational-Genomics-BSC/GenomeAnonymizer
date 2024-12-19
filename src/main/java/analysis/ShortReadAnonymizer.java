@@ -3,20 +3,16 @@ package analysis;
 import genomicelements.*;
 import htsjdk.samtools.*;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
-import io.GenomicRegionBedReader;
 import utils.GlobalRandom;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.BufferedOutputStream;
-import java.io.FileOutputStream;
 import java.util.*;
 import java.util.concurrent.Future;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
 import java.util.UUID;
 
 import static analysis.GenomeAnonymizer.BAM_FILE;
@@ -25,6 +21,7 @@ import static genomicelements.ShortReadAlignment.generateReadId;
 /**
  * AnonymizerAlgorithm implementation for short read data
  * @author Nicolas Gaitan
+ * @author Rodrigo Martin
  */
 public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
@@ -33,18 +30,18 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     public static final int NORMAL_DATASET_IDX = 0;
     public static final int TUMORAL_DATASET_IDX = 1;
 
-    private List<GenomicRegion> partitions;
+    private List<GenomicRegion> genomicPartitions;
     // Set that contains all the reads that will be excluded from the result (e.g. Unmapped and MAPQ=0)
     private Set<String> readsToExclude;
     // Map containing all potential germlines (value: List), per pair (nested key, 0 or 1), per read (key)
     private Map<String, List<CalledVariation>> readGermlinesToAnonymize;
     private File canvasNormal;
     private File canvasTumoral;
-    private List<GenomicRegion> genomicRegions;
+    private List<GenomicRegion> queryRegions;
     private SamReaderFactory factory;
     private SAMFileWriter normalWriter;
     private SAMFileWriter tumoralWriter;
-    private int hash_salt;
+    private int hashSalt;
 
     public ShortReadAnonymizer() {
         readsToExclude = new HashSet<>();
@@ -52,12 +49,13 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         factory = SamReaderFactory.makeDefault();
         factory.setUseAsyncIo(true);
         factory.validationStringency(ValidationStringency.SILENT);
+        queryRegions = new ArrayList<>();
         // Initialize hash_salt with a random value
-        hash_salt = GlobalRandom.getInstance().nextInt();
+        hashSalt = GlobalRandom.getInstance().nextInt();
     }
 
-    public void setPartitions(List<GenomicRegion> partitions) {
-        this.partitions = partitions;
+    public void setGenomicPartitions(List<GenomicRegion> genomicPartitions) {
+        this.genomicPartitions = genomicPartitions;
     }
 
     public void setReadGermlinesToAnonymize(Map<String, List<CalledVariation>> readGermlinesToAnonymize) {
@@ -70,7 +68,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             SAMFileHeader header = samReader.getFileHeader();
             // Remove all read groups from the header
             // Set the read group as the hash of the file name + salt
-            String readGroupId = Integer.toHexString((bamFile + hash_salt).hashCode());
+            String readGroupId = Integer.toHexString((bamFile + hashSalt).hashCode());
             header.setReadGroups(Collections.singletonList(new SAMReadGroupRecord(readGroupId)));
             return header;
         }
@@ -84,7 +82,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         List<CompletableFuture<Set<String>>> futures = new ArrayList<>();
         //TODO: Check if it is possible to change partitions based on actual content
         // (Implement CoveredGenomicRegion), to improve runtime using parallelization
-        for(GenomicRegion partition : partitions){
+        for(GenomicRegion partition : genomicPartitions){
             for(String path : paths){
                 CompletableFuture<Set<String>> future = CompletableFuture.supplyAsync (() -> {
                     Set<String> answer;
@@ -176,8 +174,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     }
 
     @Override
-    public void setRegions(String bedFilePath) throws IOException {
-        this.genomicRegions = GenomicRegionBedReader.readGenomicRegionBED(bedFilePath);
+    public void setQueryRegions(List<GenomicRegion> regions){
+        this.queryRegions = regions;
     }
 
     @Override
@@ -204,7 +202,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     public String getBAMOutputName(String outputPrefix, int datasetIdx){
         String anonTag = ".anonymized";
         String datasetIdStr = datasetIdx == NORMAL_DATASET_IDX ? ".N" : ".T";
-        //String extension = compressed ? ".BAM" : ".SAM";
         String extension = BAM_FILE;
         return outputPrefix + anonTag + datasetIdStr + extension;
     }
@@ -215,7 +212,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         Set<String> canvasToExclude = new HashSet<>();
         if (canvasSamFile != null) {
             canvasSamReader = factory.referenceSequence(referenceGenomeFile).open(canvasSamFile);
-            canvasToExclude = extractCanvasReadsToExclude(canvasSamReader, this.genomicRegions);
+            canvasToExclude = extractCanvasReadsToExclude(canvasSamReader, this.queryRegions);
         }
         Iterator<SAMRecord> canvasReads = canvasSamReader != null ? canvasSamReader.iterator()
                 : Collections.emptyIterator();
@@ -278,7 +275,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
     private void writeRead(SAMFileWriter samWriter, SAMRecord read) {
         // Set the read name to the hash of the read name + salt
-        read.setReadName(UUID.nameUUIDFromBytes((read.getReadName() + hash_salt).getBytes()).toString());
+        read.setReadName(UUID.nameUUIDFromBytes((read.getReadName() + hashSalt).getBytes()).toString());
         // Set the read group to the same value as the read group of the header
         read.setAttribute("RG", samWriter.getFileHeader().getReadGroups().get(0).getId());
         samWriter.addAlignment(read);
@@ -288,7 +285,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         return new Iterator<SAMRecord>() {
             String currentContig = "";
             byte[] referenceContigSequence = new byte[0];
-            Iterator<GenomicRegion> partitionIterator = partitions.stream()
+            Iterator<GenomicRegion> partitionIterator = genomicPartitions.stream()
                     .sorted(Comparator.comparing(GenomicRegion::getSequenceIdx)
                             .thenComparing(GenomicRegion::getStart))
                     .iterator();

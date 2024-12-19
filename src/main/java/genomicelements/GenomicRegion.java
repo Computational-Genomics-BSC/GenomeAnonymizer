@@ -1,10 +1,9 @@
 package genomicelements;
 
 public interface GenomicRegion {
-    String getSequenceName();
-    int getSequenceIdx();
-    int getStart();
-    int getEnd();
-
-
+    public String getSequenceName();
+    public int getSequenceIdx();
+    public int getStart();
+    public int getEnd();
+    public void setSequenceIdx(int sequenceIdx);
 }

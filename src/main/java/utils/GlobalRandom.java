@@ -4,6 +4,7 @@ import java.util.Random;
 
 /**
  * Singleton class to provide a global random number generator.
+ * @author Rodrigo Martin
  */
 public class GlobalRandom {
     private static Random RANDOM;

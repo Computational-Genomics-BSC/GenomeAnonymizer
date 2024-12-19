@@ -6,6 +6,10 @@ import htsjdk.samtools.util.SequenceUtil;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
+/**
+ * Class that generates anonymized versions of short read alignments, ready for writing
+ * @author Nicolas Gaitan
+ */
 public class ShortAnonymizedReadAlignment implements AnonymizedRead{
 
     private final ShortReadAlignment readAlignment;

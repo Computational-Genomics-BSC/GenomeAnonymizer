@@ -8,6 +8,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * Base implementation of a generic read alignment, only to be used for inheritance
+ * @author Nicolas Gaitan
+ */
 public class ReadAlignmentBaseImpl implements ReadAlignment{
 
     private String readAlignmentId;

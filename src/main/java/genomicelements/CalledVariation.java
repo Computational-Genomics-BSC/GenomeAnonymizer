@@ -1,7 +1,5 @@
 package genomicelements;
 
-import htsjdk.variant.variantcontext.VariantContext;
-
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -9,6 +7,11 @@ import java.util.Map;
 
 import static utils.Operations.estimateEuclideanDistance;
 
+/**
+ * Class that represents a genomic variation with supporting evidence,
+ * with the caveat that it is does not always represent a real genomic variant
+ * @author Nicolas Gaitan
+ */
 public class CalledVariation {
     public static final String GENERIC_TYPE_SNV = "SNV";
     public static final String GENERIC_TYPE_INDEL = "INDEL";
@@ -21,6 +24,8 @@ public class CalledVariation {
     private int length;
     private byte[] allele;
     private byte[] refAllele;
+    private BreakendSVRecord breakendRecord;
+    private ShorthandSVRecord shortHandRecord;
     private SomaticVariationType somaticVariationType;
     private boolean hasDiffused;
     private boolean isLinkedToAnotherGermline;
@@ -39,30 +44,9 @@ public class CalledVariation {
         this.isLinkedToAnotherGermline = false;
         //Holds the reads that supported this call as keys, and their 1-based position in-read for SNVs, or 0 based index in-CIGAR for indels and SVs
         this.supportingReads = new HashMap<>();
-    }
-
-    /**
-     * Constructor to create a CalledVarition object from the fields in a VariantContext from a VCF file
-     * @param varContext
-     */
-    public CalledVariation(VariantContext varContext){
-        this(varContext.getContig(), varContext.getStart(), varContext.getEnd(), VariantType.SNV, varContext.getLengthOnReference(),
-                varContext.getAlternateAllele(0).getBases(), new byte[0]);
-        this.setVariantType(getTypeFromVarContext(varContext));
-        if(VariantType.INS.equals(variantType)) setEnd(end+1);
-        this.somaticVariationType = SomaticVariationType.NOT_SOMATIC;
-        this.hasDiffused = false;
-        this.isLinkedToAnotherGermline = false;
-        this.supportingReads = new HashMap<>();
-    }
-
-    private VariantType getTypeFromVarContext(VariantContext context){
-        VariantType varType = VariantType.SNV;
-        if(context.isSNP()) varType = VariantType.SNV;
-        if(context.isSimpleDeletion()) varType = VariantType.DEL;
-        if(context.isSimpleInsertion()) varType = VariantType.INS;
-        if(context.isSymbolicOrSV()) varType = VariantType.SV;
-        return varType;
+        // OPTIONAL: Breakend and Shorthand record representations for SVs
+        this.breakendRecord = null;
+        this.shortHandRecord = null;
     }
 
     /*
@@ -77,12 +61,12 @@ public class CalledVariation {
         supportingReads.put(readId, varReadPos);
     }
 
-    public void setDiffusedStatus() {
-        this.hasDiffused = true;
+    public void setDiffusedStatus(boolean diffusedStatus) {
+        this.hasDiffused = diffusedStatus;
     }
 
-    public void setLinkToAnotherGermline() {
-        this.isLinkedToAnotherGermline = true;
+    public void setLinkToAnotherGermline(boolean isLinked) {
+        this.isLinkedToAnotherGermline = isLinked;
     }
 
     public boolean isCandidateForDiffusion() {
@@ -137,6 +121,10 @@ public class CalledVariation {
         this.end = end;
     }
 
+    public void setLength(int length) {
+        this.length = length;
+    }
+
     public void setVariantType(VariantType variantType) {
         this.variantType = variantType;
     }
@@ -155,6 +143,22 @@ public class CalledVariation {
 
     public void setSomaticVariationType(SomaticVariationType somaticVariationType) {
         this.somaticVariationType = somaticVariationType;
+    }
+
+    public BreakendSVRecord getBreakendRecord() {
+        return breakendRecord;
+    }
+
+    public void setBreakendRecord(BreakendSVRecord breakendRecord) {
+        this.breakendRecord = breakendRecord;
+    }
+
+    public ShorthandSVRecord getShortHandRecord() {
+        return shortHandRecord;
+    }
+
+    public void setShortHandRecord(ShorthandSVRecord shortHandRecord) {
+        this.shortHandRecord = shortHandRecord;
     }
 
     @Override
@@ -187,6 +191,10 @@ public class CalledVariation {
                 " length: " + length + " alt_allele: " + new String(allele, StandardCharsets.UTF_8) + " ref_allele: " + new String(refAllele, StandardCharsets.UTF_8) +
                 " somatic_variation_type: " + somaticVariationType;
     }
+
+    public record BreakendSVRecord(String prefix, String bracket, String contig, int pos, String suffix) {}
+
+    public record ShorthandSVRecord(String type, String[] extraInfo){}
 
     public enum VariantType {
         SNV(0, "SNV"),

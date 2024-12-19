@@ -24,13 +24,11 @@ public class MultithreadClassifier implements Runnable{
     private GenomicRegion region;
     private Set<String> readsToExclude;
 
-    public MultithreadClassifier(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile,
+    public MultithreadClassifier(String normalPath, String tumorPath, String refGenome,
                                  GenomicRegion region, Set<String> readsToExclude){
         this.normalPath = normalPath;
         this.tumorPath = tumorPath;
         this.refGenome = refGenome;
-        this.mode = mode;
-        this.vcfFile = vcfFile;
         this.region = region;
         this.readsToExclude = readsToExclude;
     }
@@ -39,7 +37,7 @@ public class MultithreadClassifier implements Runnable{
     public void run() {
         try {
             if(!readsToExclude.isEmpty()) classifier.setReadsToExclude(readsToExclude);
-            classifier.callVariation(normalPath, tumorPath, refGenome, mode, vcfFile, region);
+            classifier.callVariation(normalPath, tumorPath, refGenome, region);
             LOGGER.info("Finished variation analysis of genomic region: SEQ=" + region.getSequenceName() + " POS=" + region.getStart() + " END=" + region.getEnd());
         } catch (Exception e) {
             LOGGER.severe("Exception in thread classifying variants in region: "

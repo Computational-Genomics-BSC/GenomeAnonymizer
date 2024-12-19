@@ -7,6 +7,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * Represents a short read alignment
+ * @author Nicolas Gaitan
+ */
 public class ShortReadAlignment extends ReadAlignmentBaseImpl implements ReadAlignment{
 
     public static final int PAIR_1_IDX = 0;

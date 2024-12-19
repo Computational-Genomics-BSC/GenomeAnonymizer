@@ -1,5 +1,9 @@
 package genomicelements;
 
+/**
+ * Generic representation of a simple genomic region defined by coordinates on a reference
+ * @author Nicolas Gaitan
+ */
 public class GenomicRegionBaseImpl implements GenomicRegion{
     public String sequenceName;
     //Represents the order of a sequence relative to the reference genome

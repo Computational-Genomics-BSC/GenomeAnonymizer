@@ -5,6 +5,11 @@ import htsjdk.samtools.util.SamLocusIterator.LocusInfo;
 
 import java.util.List;
 
+/**
+ * Representation of a tuple of read alignment pileups, with one coming from a normal sample and the other from the tumor pair
+ * allowing deep comparison between both mappings
+ * @author Nicolas Gaitan
+ */
 public class PairedPileup {
 
     private LocusInfo normalLocus;

@@ -33,16 +33,21 @@ public class GenomeAnonymizer {
     public static final String DEFAULT_RUN_MODE_FUNCTIONALITY = "default";
     public static final String SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY = "benchmark";
 
+    public final static int DEFAULT_QUERY_REGION_LENGTH = 2000;
+    
     public final static String BAM_FILE = ".bam";
     public final static String SAM_FILE = ".sam";
     public final static String CRAM_FILE = ".cram";
+    private static final int MAX_QUERY_REGION_SIZE = 100000;
 
     //Optional arguments as attributes
-    String vcfFile;
-    String bedFile;
-    String canvasN;
-    String canvasT;
-
+    //String bedFile;
+    private int queryRegionLength = DEFAULT_QUERY_REGION_LENGTH;
+    private String canvasN;
+    private String canvasT;
+    private Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep;
+    private List<GenomicRegion> queryRegions;
+    private int randomSeed;
 
     /**
      * Run anonymizer with the benchmark of somatic variants functionality. Any somatic variant will be sparred from anonymization
@@ -53,27 +58,26 @@ public class GenomeAnonymizer {
      * @param algorithm
      * @param mode
      * @param nThreads
-     * @param randomSeed
      * @throws IOException
      */
     public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix,
-                    String algorithm, String mode, boolean merge, int nThreads, int randomSeed) throws Exception {
+                    String algorithm, String mode, boolean merge, int nThreads) throws Exception {
         LOGGER.info("Beginning anonymization in " + mode + " mode");
         GlobalRandom.setSeed(randomSeed);
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm);
         List<GenomicRegion> partitions = getPartitions(refGenome, nThreads);
-        anonymizer.setPartitions(partitions);
+        anonymizer.setGenomicPartitions(partitions);
         anonymizer.queryReadsToExclude(normalPath, tumorPath, nThreads);
         Set<String> readsToExclude = anonymizer.getReadsToExclude();
         long start1 = System.currentTimeMillis();
         Map<String, List<CalledVariation>> readGermlinesToAnonymize =
-                callVariationInParallel(normalPath, tumorPath, refGenome, mode, vcfFile, partitions, readsToExclude, nThreads);
+                callVariationInParallel(normalPath, tumorPath, refGenome, mode, partitions, readsToExclude, nThreads);
         long end1 = System.currentTimeMillis();
         LOGGER.info("Variation calling phase finished in: "+ (double) (end1-start1)/1000 + " seconds");
         long start2 = System.currentTimeMillis();
         anonymizer.setReadGermlinesToAnonymize(readGermlinesToAnonymize);
+        anonymizer.setQueryRegions(queryRegions);
         if(merge){
-            anonymizer.setRegions(this.bedFile);
             anonymizer.setCanvasFiles(this.canvasN, this.canvasT);
         }
         anonymizer.anonymizeReads(normalPath, tumorPath, refGenome, outputPrefix, false);
@@ -82,16 +86,14 @@ public class GenomeAnonymizer {
     }
 
     private Map<String, List<CalledVariation>> callVariationInParallel(String normalPath, String tumorPath, String refGenome,
-                                                                                     String mode, String vcfFile, List<GenomicRegion> partitions,
-                                                                                     Set<String> readsToExclude, int nThreads) throws IOException {
+                                                                                     String mode, List<GenomicRegion> partitions,
+                                                                                     Set<String> readsToExclude, int nThreads) {
         Map<String, List<CalledVariation>> readGermlinesToAnonymize = new HashMap<>();
         MultithreadClassifier[] mClassifiers = new MultithreadClassifier[partitions.size()];
-        Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep = new HashMap<>();
-        if(SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)) somaticVariantsToKeep = readVCF(vcfFile);
         for(int i = 0; i < partitions.size(); i++){
             GenomicRegion region = partitions.get(i);
-            mClassifiers[i] = new MultithreadClassifier(normalPath, tumorPath, refGenome, mode, vcfFile, region, readsToExclude);
-            mClassifiers[i].setVCFVariantsToKeep(somaticVariantsToKeep);
+            mClassifiers[i] = new MultithreadClassifier(normalPath, tumorPath, refGenome, region, readsToExclude);
+            mClassifiers[i].setVCFVariantsToKeep(this.somaticVariantsToKeep);
         }
         ExecutorService executorService = Executors.newFixedThreadPool(nThreads);
         List<CompletableFuture<Void>> futures = new ArrayList<>();
@@ -133,27 +135,26 @@ public class GenomeAnonymizer {
             idx++;
         }
         reference.close();
-        // long genomeSize = seqDict.getReferenceLength();
-        List<GenomicRegion> regions = new ArrayList<>();
-        Collections.sort(sequences, Comparator.comparing(FastaSequenceIndexEntry::getSize));
-        //long basesPerThread = sequences.size() % 2 == 0 ? (sequences.get(sequences.size()/2).getSize() + sequences.get((sequences.size()/2)-1).getSize())/2 :
-        //        sequences.get(sequences.size()/2).getSize();
+        // Sort queryRegions with the updated information on sequence order from the reference genome
+        queryRegions.forEach(v -> v.setSequenceIdx(refSequenceOrder.get(v.getSequenceName())));
+        queryRegions.sort(Comparator.comparingInt(GenomicRegion::getSequenceIdx)
+                .thenComparing(GenomicRegion::getStart));
+        // DEBUG
+//        queryRegions.forEach(r-> System.out.println(r.getSequenceName() + "\t" + r.getStart() + "\t" + r.getEnd()));
+//        System.exit(0);
+        // DEBUG
+        // Compute genome partitions
+        List<GenomicRegion> genomicRegions = new ArrayList<>();
+        sequences.sort(Comparator.comparing(FastaSequenceIndexEntry::getSize));
         Collections.reverse(sequences);
-        //int nNewPartitions = nThreads-currentPartitions;
-        //int availableThreads = nThreads-sequences.size();
-        //System.out.println("init avail=" + availableThreads);
         int[] partitionsPerSequence = new int[sequences.size()];
         Arrays.fill(partitionsPerSequence, 1);
         long basesPerThread = genomeSize/(nThreads* 10L);
-        //long basesPerThread = availableThreads < sequences.size() ? sequences.get(availableThreads).getSize() :
-        //        sequences.get(sequences.size() - 1).getSize();
         // Estimate threads to be assigned to each contig
         for(int i = 0; i < sequences.size(); i++){
-            //if(availableThreads <= 0) break;
             partitionsPerSequence[i] += (int) (sequences.get(i).getSize() / basesPerThread);
-            //availableThreads -= partitionsPerSequence[i];
         }
-        // Make propper contig partitions into the regions, based on n assigned threads
+        // Make propper contig partitions into the genomicRegions, based on n assigned threads
         for(int i = 0; i < sequences.size(); i++){
             FastaSequenceIndexEntry currentContig = sequences.get(i);
             String contig = currentContig.getContig();
@@ -165,32 +166,20 @@ public class GenomeAnonymizer {
                 //Be careful with very large chromosomes, with humans there should not be a problem
                 int currentLast = j == partitionsPerSequence[i]-1 ? (int) currentContig.getSize() : currentFirst + partitionSize;
                 GenomicRegion region = new GenomicRegionBaseImpl(contig, contigIdx, currentFirst, currentLast);
-                regions.add(region);
+                genomicRegions.add(region);
                 currentFirst += partitionSize + 1;
             }
         }
-        //DEBUG
-        //regions.forEach(r-> System.out.println("# " + r.getContig() + " " + r.getStart() + " " + r.getEnd()));
-        //System.exit(0);
-        //DEBUG
-        return regions;
+        return genomicRegions;
     }
 
-    public String getVcfFile() {
-        return vcfFile;
-    }
-
-    public void setVcfFile(String vcfFile) {
-        this.vcfFile = vcfFile;
-    }
-
-    public String getBedFile() {
-        return bedFile;
-    }
-
-    public void setBedFile(String bedFile) {
-        this.bedFile = bedFile;
-    }
+//    public String getBedFile() {
+//        return bedFile;
+//    }
+//
+//    public void setBedFile(String bedFile) {
+//        this.bedFile = bedFile;
+//    }
 
     public String getCanvasN() {
         return canvasN;
@@ -208,27 +197,87 @@ public class GenomeAnonymizer {
         this.canvasT = canvasT;
     }
 
-//    /**
-//     * Run anonymization in default mode
-//     * @param normalPath
-//     * @param tumorPath
-//     * @param refGenome
-//     * @param outputPrefix
-//     * @param compressed
-//     * @param algorithm
-//     * @param nThreads
-//     * @throws IOException
-//     */
-//    public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed,
-//                    String algorithm, int nThreads) throws Exception {
-//        run(normalPath, tumorPath, refGenome, outputPrefix, algorithm, DEFAULT_RUN_MODE_FUNCTIONALITY, nThreads);
-//    }
+    public void setSomaticVariantsToKeep(Map<String, Map<Integer, CalledVariation>> somaticVariantsToKeep) {
+        this.somaticVariantsToKeep = somaticVariantsToKeep;
+    }
+
+    public void setRandomSeed(int randomSeed) {
+        this.randomSeed = randomSeed;
+    }
 
     private static AnonymizerAlgorithm getAnonymizer(String algorithm) {
         AnonymizerAlgorithm anonymizer = null;
         if (AnonymizerAlgorithm.SHORT_READ_ALGORITHM.equals(algorithm)) anonymizer = new ShortReadAnonymizer();
-        assert anonymizer != null: "No Anonymizer class impl was instantiated";
         return anonymizer;
+    }
+
+    /**
+     * Computes query regions such that all intersecting reads will be included in the anonymized output.
+     * @param mode Run mode to determine the source of the query regions
+     * @pos queryRegions may be unsorted, they must be sorted later by sequence and coordinate
+     */
+    private void computeQueryRegions(String mode) {
+        queryRegions = new ArrayList<>();
+        int padding = queryRegionLength/2;
+        if(SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)){
+            for (String sequenceName : somaticVariantsToKeep.keySet()){
+                Map<Integer, CalledVariation> varsPerPos = somaticVariantsToKeep.get(sequenceName);
+                for (CalledVariation var : varsPerPos.values()){
+                    CalledVariation.VariantType variantType = var.getVariantType();
+                    int start = var.getPos();
+                    int end = var.getEnd();
+                    int length = var.getLength();
+                    String altEndsequenceName = sequenceName;
+                    if (var.getBreakendRecord()!=null){
+                        altEndsequenceName = var.getBreakendRecord().contig();
+                        if(!sequenceName.equals(altEndsequenceName)){
+                            end = var.getBreakendRecord().pos();
+                        }
+                    }
+                    GenomicRegion queryRegion;
+                    if (variantType == CalledVariation.VariantType.SNV){
+                        queryRegion = new GenomicRegionBaseImpl(sequenceName, start - padding,
+                                start + padding);
+                    } else if (variantType == CalledVariation.VariantType.INS) {
+                        queryRegion = new GenomicRegionBaseImpl(sequenceName, start  - padding,
+                                start + length + padding);
+                    } else if (variantType == CalledVariation.VariantType.TRA) {
+                        queryRegion = new GenomicRegionBaseImpl(sequenceName, start - padding,
+                                start + padding);
+                        GenomicRegion secondQueryRegion = new GenomicRegionBaseImpl(altEndsequenceName, end - padding,
+                                end + padding);
+                        queryRegions.add(secondQueryRegion);
+                    }
+                    else if (variantType == CalledVariation.VariantType.INV){
+                        if(start + padding > end - padding){
+                            queryRegion = new GenomicRegionBaseImpl(sequenceName, start - padding,
+                                    end + padding);
+                        }
+                        else{
+                            queryRegion = new GenomicRegionBaseImpl(sequenceName, start - padding,
+                                    start + padding);
+                            GenomicRegion secondQueryRegion = new GenomicRegionBaseImpl(altEndsequenceName, end - padding,
+                                    end + padding);
+                            queryRegions.add(secondQueryRegion);
+                        }
+                    }
+                    else{
+                        if (length < MAX_QUERY_REGION_SIZE){
+                            queryRegion = new GenomicRegionBaseImpl(sequenceName, start - padding,
+                                    end + padding);
+                        }
+                        else{
+                            queryRegion = new GenomicRegionBaseImpl(sequenceName, start - padding,
+                                    start + padding);
+                            GenomicRegion secondQueryRegion = new GenomicRegionBaseImpl(sequenceName, end - padding,
+                                    end + padding);
+                            queryRegions.add(secondQueryRegion);
+                        }
+                    }
+                    queryRegions.add(queryRegion);
+                }
+            }
+        }
     }
 
     public static void main(String[] args) {
@@ -249,7 +298,6 @@ public class GenomeAnonymizer {
                 formatter.setOptionComparator(null);
                 formatter.printHelp(cmdLineSyntax, header, options, footer, true);
                 return;
-                //System.exit(0);
             }
             String normalPath = commandLine.getOptionValue("in");
             String tumorPath = commandLine.getOptionValue("it");
@@ -258,36 +306,39 @@ public class GenomeAnonymizer {
             int nThreads = Integer.parseInt(commandLine.getOptionValue("t", "4"));
             String mode = commandLine.getOptionValue("m", DEFAULT_RUN_MODE_FUNCTIONALITY);
             int randomSeed = Integer.parseInt(commandLine.getOptionValue("s", "-1"));
+            appInstance.setRandomSeed(randomSeed);
             boolean merge = false;
             if (SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)){
                 if(!commandLine.hasOption("v")) throw new ParseException("benchmark mode requires VCF file, " +
                         "but none was provided");
                 String vcfFilePath = commandLine.getOptionValue("v");
-                appInstance.setVcfFile(vcfFilePath);
+                Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep = readVCF(vcfFilePath);
+                appInstance.setSomaticVariantsToKeep(somaticVariantsToKeep);
+                appInstance.computeQueryRegions(mode);
                 if(commandLine.hasOption("merge")){
-                    if(!commandLine.hasOption("bed")) throw new ParseException("benchmark mode with merge requires BED file, " +
-                            "but none was provided");
+//                    if(!commandLine.hasOption("bed")) throw new ParseException("benchmark mode with merge requires BED file, " +
+//                            "but none was provided");
                     if(!commandLine.hasOption("canvasN")) throw new ParseException("benchmark mode with merge requires" +
                             " canvas normal file, but none was provided");
                     if(!commandLine.hasOption("canvasT")) throw new ParseException("benchmark mode with merge requires" +
                             " canvas tumoral file, but none was provided");
                     merge = true;
-                    String bedFilePath = commandLine.getOptionValue("bed");
-                    appInstance.setBedFile(bedFilePath);
+//                    String bedFilePath = commandLine.getOptionValue("bed");
+//                    appInstance.setBedFile(bedFilePath);
                     String canvasNFilePath = commandLine.getOptionValue("canvasN");
                     appInstance.setCanvasN(canvasNFilePath);
                     String canvasTFilePath = commandLine.getOptionValue("canvasT");
                     appInstance.setCanvasT(canvasTFilePath);
                 }
                 appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, AnonymizerAlgorithm.SHORT_READ_ALGORITHM,
-                        SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, merge, nThreads, randomSeed);
+                        SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, merge, nThreads);
             }
             else{
                 if(commandLine.hasOption("v")) LOGGER.warning("Mode is not set to benchmark, but vcf file was provided," +
                         " default mode will be run normally," +
                         " but variants recorded in the vcf will not be kept");
                 appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, AnonymizerAlgorithm.SHORT_READ_ALGORITHM,
-                        DEFAULT_RUN_MODE_FUNCTIONALITY, false, nThreads, randomSeed);
+                        DEFAULT_RUN_MODE_FUNCTIONALITY, false, nThreads);
             }
         }
         catch (Exception e){
@@ -299,12 +350,6 @@ public class GenomeAnonymizer {
         }
         long end2 = System.currentTimeMillis();
         LOGGER.info("Completed execution in: "+ (double) (end2-start2)/1000 + " seconds");
-//        catch (ParseException e){
-//            System.err.println("Invalid arguments: " + e.getMessage());
-//        }
-//        catch (IOException e){
-//            System.err.println("Invalid arguments: " + e.getMessage());
-//        }
     }
 
     private static Options buildCommandLineArguments(){
@@ -335,7 +380,7 @@ public class GenomeAnonymizer {
                 //.required(true)
                 .build());
         options.addOption(Option.builder("t")
-                .desc("Number of threads to run the anonymizer (default=4)")// + "'functional:' ")
+                .desc("Number of threads to run the anonymizer (default=4)")
                 .hasArg(true)
                 .argName("INT")
                 //.required(false)
@@ -347,7 +392,9 @@ public class GenomeAnonymizer {
                         
                         'default': Anonymizes all possible germline variants\
                         
-                        'benchmark': Keeps marked variants for somatic calling benchmarking (requires a VCF file)""")// + "'functional:' ")
+                        'benchmark': Keeps marked variants for somatic calling benchmarking extracting sample reads
+                         into public mappings (requires a VCF file, and a canvas BAM pair matching the coverage of the samples)""")
+                        // + "'functional:' ")
                 .argName("STRING")
                 .hasArg(true)
                 //.required(false)
@@ -373,13 +420,13 @@ public class GenomeAnonymizer {
                 .hasArg(false)
                 //.required(false)
                 .build());
-        options.addOption(Option.builder("bed")
-                .desc("BED file where the regions from the original sample are defined, " +
-                        "and therefore will not be covered with the canvas")
-                .argName("FILE")
-                .hasArg(true)
-                //.required(false)
-                .build());
+//        options.addOption(Option.builder("bed")
+//                .desc("BED file where the regions from the original sample are defined, " +
+//                        "and therefore will not be covered with the canvas")
+//                .argName("FILE")
+//                .hasArg(true)
+//                //.required(false)
+//                .build());
         options.addOption(Option.builder("canvasN")
                 .desc("Dataset with read mappings to cover the normal dataset")
                 .argName("FILE")

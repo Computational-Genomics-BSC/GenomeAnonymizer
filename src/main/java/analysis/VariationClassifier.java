@@ -18,7 +18,7 @@ import static genomicelements.ShortReadAlignment.*;
 
 
 /**
- * Class used to classify all variation from a sample over pileup positions
+ * Class used to classify all variation from a paired normal-tumor sample from each pileup position
  * @author Nicolas Gaitan
  */
 
@@ -71,21 +71,19 @@ public class VariationClassifier {
      * @param normalPath
      * @param tumorPath
      * @param refGenome
-     * @param mode
-     * @param vcfFile
      * @param region
      * @throws IOException
      */
-    public void callVariation(String normalPath, String tumorPath, String refGenome, String mode, String vcfFile, GenomicRegion region) throws IOException {
+    public void callVariation(String normalPath, String tumorPath, String refGenome, GenomicRegion region) throws IOException {
         try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, region);
             IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(refGenome))){
             //Retrieve signals from their normal sample even if there is no coverage in the tumor sample
             pairPileupReader.setReturnNormal(true);
-            callVariation(pairPileupReader, referenceWalker, mode, vcfFile);
+            callVariation(pairPileupReader, referenceWalker);
         }
     }
 
-    public void callVariation(SamplePairReadAlignmentReader pairPileupReader, IndexedFastaSequenceFile referenceWalker, String mode, String vcfFile) throws IOException {
+    public void callVariation(SamplePairReadAlignmentReader pairPileupReader, IndexedFastaSequenceFile referenceWalker){
         Map<Integer, List<CalledVariation>> variationPerPos = new HashMap<>();
         Set<String> seenReads = new HashSet<>();
         int p = 1;

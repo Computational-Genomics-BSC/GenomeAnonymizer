@@ -31,6 +31,11 @@ public class Signature implements GenomicRegion{
         return 0;
     }
 
+    @Override
+    public void setSequenceIdx(int sequenceIdx) {
+
+    }
+
     public enum Source{
         SOFT_CLIP(1, "SOFT_CLIP"),
         INSERT_SIZE(2, "INSERT_SIZE");
