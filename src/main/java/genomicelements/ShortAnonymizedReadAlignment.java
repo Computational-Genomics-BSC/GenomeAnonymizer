@@ -223,20 +223,10 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
     }
 
     public SAMRecord getAnonymizedSamRecord(){
-        SAMFileHeader header = readAlignment.getHeader();
-        SAMRecord answer = new SAMRecord(header);
-        answer.setReferenceName(getSequenceName());
-        answer.setAlignmentStart(getStart());
+        SAMRecord answer = readAlignment.cloneRecord();
         answer.setReadBases(anonymizedSequenceArray);
         answer.setBaseQualities(anonymizedQualitiesArray);
-        answer.setReadName(getReadName());
-        answer.setMappingQuality(getMappingQuality());
         answer.setCigar(anonymizedCigar);
-        answer.setFlags(readAlignment.getFlags());
-        List<SAMRecord.SAMTagAndValue> readAlnOriginalTags = readAlignment.getTags();
-        for(SAMRecord.SAMTagAndValue tagAndValue : readAlnOriginalTags){
-            answer.setAttribute(tagAndValue.tag, tagAndValue.value);
-        }
         // getStart and getEnd are 1-based, adjust accordingly, currently referenceSequence is 0-based
         byte[] refSequenceAln = Arrays.copyOfRange(referenceContigSequence, answer.getStart()-1, answer.getEnd());
         SequenceUtil.calculateMdAndNmTags(answer, refSequenceAln, true, true);
@@ -334,7 +324,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
     }
 
     public boolean isSupplementary() {
-        return readAlignment.isSupplementary;
+        return readAlignment.isSupplementary();
     }
 
     public boolean isAnonymized() {

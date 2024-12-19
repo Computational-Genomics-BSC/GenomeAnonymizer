@@ -3,6 +3,7 @@ package genomicelements;
 import htsjdk.samtools.Cigar;
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.SAMFileHeader;
+import htsjdk.samtools.SAMRecord;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -15,33 +16,20 @@ import java.util.List;
 public class ReadAlignmentBaseImpl implements ReadAlignment{
 
     private String readAlignmentId;
-    private String readName;
-    private int flags;
-    private String sequenceName;
-    private int start;
-    private int end;
-    private int length;
-    private byte[] sequenceArray;
-    private byte[] qualitiesArray;
-    private int mapQ;
-    private Cigar cigar;
-    boolean isSupplementary;
-    boolean isSecondary;
-    private SAMFileHeader header;
+    protected SAMRecord record;
 
+    public ReadAlignmentBaseImpl(SAMRecord record) {
+        this.record = record;
+        this.readAlignmentId = record.getReadName();
+    }
 
-    public ReadAlignmentBaseImpl(String readName, String sequenceName, int flags, int start, int end,
-                                 boolean isSupplementary, int mapQ, Cigar cigar) {
-        this.readAlignmentId = generateReadAlignmentId(readName);
-        this.readName = readName;
-        this.flags = flags;
-        this.sequenceName = sequenceName;
-        this.start = start;
-        this.end = end;
-        this.length = end-start+1;
-        this.isSupplementary = isSupplementary;
-        this.mapQ = mapQ;
-        this.cigar = cigar;
+    public SAMRecord cloneRecord(){
+        try {
+            return (SAMRecord) record.clone();
+        } catch (CloneNotSupportedException e) {
+            e.printStackTrace();
+            throw new RuntimeException("Error cloning record " + record.getReadName(), e);
+        }
     }
 
     @Override
@@ -53,141 +41,120 @@ public class ReadAlignmentBaseImpl implements ReadAlignment{
         this.readAlignmentId = readAlignmentId;
     }
 
-    public void setHeader(SAMFileHeader header){
-        this.header = header;
-    }
-
     public SAMFileHeader getHeader(){
-        return header;
+        return record.getHeader();
     }
 
     @Override
     public String getReadName() {
-        return readName;
+        return record.getReadName();
     }
 
     public void setReadName(String readName) {
-        this.readName = readName;
+        record.setReadName(readName);
     }
 
     @Override
     public String getSequenceName() {
-        return sequenceName;
+        return record.getReferenceName();
     }
 
     public void setSequenceName(String sequenceName) {
-        this.sequenceName = sequenceName;
+        record.setReferenceName(sequenceName);
     }
 
     public int getFlags() {
-        return flags;
+        return record.getFlags();
     }
 
     public void setFlags(int flags) {
-        this.flags = flags;
-    }
-
-    public int getMapQ() {
-        return mapQ;
-    }
-
-    public void setMapQ(int mapQ) {
-        this.mapQ = mapQ;
+        record.setFlags(flags);
     }
 
     public void setCigar(Cigar cigar) {
-        this.cigar = cigar;
+        record.setCigar(cigar);
     }
 
     @Override
     public int getStart() {
-        return start;
+        return record.getAlignmentStart();
     }
 
     public void setStart(int start) {
-        this.start = start;
+        record.setAlignmentStart(start);
     }
 
     @Override
     public int getEnd() {
-        return end;
-    }
-
-    public void setEnd(int end) {
-        this.end = end;
+        return record.getAlignmentEnd();
     }
 
     @Override
     public int getLength() {
-        return length;
-    }
-
-    public void setLength(int length) {
-        this.length = length;
+        return record.getReadLength();
     }
 
     @Override
     public byte[] getSequenceArray() {
-        return sequenceArray;
+        return record.getReadBases();
     }
 
     public void setSequenceArray(byte[] sequenceArray) {
-        this.sequenceArray = sequenceArray;
+        record.setReadBases(sequenceArray);
     }
 
     @Override
     public byte[] getQualitiesArray() {
-        return qualitiesArray;
+        return record.getBaseQualities();
     }
 
     @Override
     public String getSequence() {
-        return new String(this.sequenceArray, StandardCharsets.UTF_8);
+        return new String(getSequenceArray(), StandardCharsets.UTF_8);
     }
 
     @Override
     public String getQualities() {
-        return Arrays.toString(this.qualitiesArray);
+        return Arrays.toString(getQualitiesArray());
     }
 
     @Override
     public int getMappingQuality() {
-        return mapQ;
+        return record.getMappingQuality();
     }
 
     @Override
     public Cigar getCigar() {
-        return cigar;
+        return record.getCigar();
     }
 
     public List<CigarElement> getCigarElements(){
-        return cigar.getCigarElements();
+        return getCigar().getCigarElements();
     }
 
     public void setQualitiesArray(byte[] qualitiesArray) {
-        this.qualitiesArray = qualitiesArray;
+        record.setBaseQualities(qualitiesArray);
     }
 
     @Override
     public boolean isSupplementary() {
-        return isSupplementary;
+        return record.getSupplementaryAlignmentFlag();
     }
 
     public void setSupplementary(boolean supplementary) {
-        isSupplementary = supplementary;
+        record.setSupplementaryAlignmentFlag(supplementary);
     }
 
     @Override
     public boolean isSecondary() {
-        return isSecondary;
+        return record.getNotPrimaryAlignmentFlag();
     }
 
     public void setSecondary(boolean secondary) {
-        isSecondary = secondary;
+        record.setNotPrimaryAlignmentFlag(secondary);
     }
 
-    // Read Id depends on the type of read that is aligned (e.g. Sequencing platform)
-    public static String generateReadAlignmentId(String readName){
-        return readName;
+    public List<SAMRecord.SAMTagAndValue> getTags(){
+        return record.getAttributes();
     }
 }

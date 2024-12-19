@@ -17,60 +17,39 @@ public class ShortReadAlignment extends ReadAlignmentBaseImpl implements ReadAli
     public static final int PAIR_2_IDX = 1;
     public static final String DEFAULT_ID_NAME_SEPARATOR = ";";
 
-    private int pairIdx;
-    private boolean isReverse;
-    private List<SAMRecord.SAMTagAndValue> tags;
-
-    public ShortReadAlignment(String readName, String sequenceName, int flags, int start, int end, boolean isSupplementary, int mapQ,
-                              Cigar cigar, boolean isFirstOfPair, boolean isReverse) {
-        super(readName, sequenceName, flags, start, end, isSupplementary, mapQ, cigar);
-        this.setReadAlignmentId(generateReadAlignmentId(readName));
-        this.pairIdx = isFirstOfPair ? PAIR_1_IDX : PAIR_2_IDX;
-        this.isReverse = isReverse;
-    }
-
     public ShortReadAlignment(SAMRecord samRecord){
-        this(samRecord.getReadName(), samRecord.getContig(), samRecord.getFlags(), samRecord.getStart(), samRecord.getEnd(), samRecord.isSecondaryOrSupplementary(),
-                samRecord.getMappingQuality(), samRecord.getCigar(), samRecord.getFirstOfPairFlag(), samRecord.getReadNegativeStrandFlag());
-        this.setSequenceArray(samRecord.getReadBases());
-        this.setQualitiesArray(samRecord.getBaseQualities());
-        this.setReadAlignmentId(generateReadId(samRecord));
-        this.setHeader(samRecord.getHeader());
-        this.setTags(samRecord.getAttributes());
-
+        super(samRecord);
+        setReadAlignmentId(generateReadId(samRecord));
     }
-
 
     public boolean isPair1(){
-        return pairIdx == PAIR_1_IDX;
+        return record.getFirstOfPairFlag();
     }
 
     public boolean isPair2(){
-        return pairIdx == PAIR_2_IDX;
+        return record.getSecondOfPairFlag();
     }
 
     public int getPairIdx() {
-        return pairIdx;
+        return isPair1() ? PAIR_1_IDX : PAIR_2_IDX;
     }
 
     public boolean isReverse() {
-        return isReverse;
+        return record.getReadNegativeStrandFlag();
     }
 
     public void setReverse(boolean reverse) {
-        isReverse = reverse;
+        record.setReadNegativeStrandFlag(reverse);
     }
 
     public void setPairIdx(int pairIdx) {
-        this.pairIdx = pairIdx;
-    }
-
-    public List<SAMRecord.SAMTagAndValue> getTags(){
-        return tags;
-    }
-
-    public void setTags(List<SAMRecord.SAMTagAndValue> tags){
-        this.tags = tags;
+        if(pairIdx == PAIR_1_IDX){
+            record.setFirstOfPairFlag(true);
+            record.setSecondOfPairFlag(false);
+        }else if(pairIdx == PAIR_2_IDX){
+            record.setFirstOfPairFlag(false);
+            record.setSecondOfPairFlag(true);
+        }
     }
 
     @Override
@@ -78,7 +57,7 @@ public class ShortReadAlignment extends ReadAlignmentBaseImpl implements ReadAli
         return "Read name=" + this.getReadName() + " ReadAlignmentID=" + this.getReadName() + " seq=" + this.getSequenceName() + " pos=" + this.getStart() + " end=" +
                 this.getEnd() + " length=" + this.getLength() + " sequence=" +  new String(this.getSequenceArray(), StandardCharsets.UTF_8)
                 + " qualities=" + Arrays.toString(this.getQualitiesArray()) + " pairIdx=" + this.getPairIdx() +
-                " isSupplementaryOrSecondary=" + this.isSupplementary() + " isAnonymized=" + " isReverse=" + this.isReverse;
+                " isSupplementaryOrSecondary=" + this.isSupplementary() + " isReverse=" + this.isReverse();
     }
 
 
