@@ -62,14 +62,16 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         this.readGermlinesToAnonymize = readGermlinesToAnonymize;
     }
 
-    private SAMFileHeader retrieveFileHeaders(String bamFile) throws IOException {
+    private SAMFileHeader buildFileHeader(String bamFile, String sampleSuffix) throws IOException {
         try (SamReader samReader = factory.open(new File(bamFile))) {
             // Retrieve the SAMFileHeader
             SAMFileHeader header = samReader.getFileHeader();
             // Remove all read groups from the header
             // Set the read group as the hash of the file name + salt
             String readGroupId = Integer.toHexString((bamFile + hashSalt).hashCode());
-            header.setReadGroups(Collections.singletonList(new SAMReadGroupRecord(readGroupId)));
+            SAMReadGroupRecord readGroup = new SAMReadGroupRecord(readGroupId);
+            readGroup.setSample(readGroupId + sampleSuffix);
+            header.setReadGroups(Collections.singletonList(readGroup));
             return header;
         }
     }
@@ -191,8 +193,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         factory.setCreateIndex(true);
         factory.setCompressionLevel(1);
         factory.setUseAsyncIo(true);
-        SAMFileHeader normalFileHeader = retrieveFileHeaders(normalPath);
-        SAMFileHeader tumoralFileHeader = retrieveFileHeaders(tumorPath);
+        SAMFileHeader normalFileHeader = buildFileHeader(normalPath, "_N");
+        SAMFileHeader tumoralFileHeader = buildFileHeader(tumorPath, "_T");
         normalWriter = factory.makeBAMWriter(normalFileHeader, true, normalOutputFile);
         tumoralWriter = factory.makeBAMWriter(tumoralFileHeader, true, tumoralOutputFile);
         normalWriter.setSortOrderChecking(false);
