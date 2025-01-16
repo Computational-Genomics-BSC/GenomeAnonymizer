@@ -52,22 +52,6 @@ public class VCFReader {
                 Map<Integer, CalledVariation> perPosMap = somaticCallsToKeep.computeIfAbsent(calledVar.getSeqName(), v -> new HashMap<>());
                 perPosMap.put(calledVar.getPos(), calledVar);
                 i++;
-                //DEBUG
-//                if(variantContext.getStart() == 189052812){
-//                    System.out.println("& VariantContext=" + variantContext.getContig() + " " +
-//                            variantContext.getAlternateAllele(0).getDisplayString() +
-//                            " isSimpleDel=" + variantContext.isSimpleDeletion() +
-//                            " isSimpleIns=" + variantContext.isSimpleInsertion() +
-//                            " isComplexIndel=" + variantContext.isComplexIndel());
-//                    System.out.println("& Variation=" + calledVar);
-//                    if(calledVar.getBreakendRecord()!=null) {
-//                        System.out.println(" ALT=" + calledVar.getBreakendRecord());
-//                    }
-//                    if(calledVar.getShortHandRecord()!=null) {
-//                        System.out.println(" ALT=" + calledVar.getShortHandRecord());
-//                    }
-//                }
-                //DEBUG
             }
         }
         return somaticCallsToKeep;

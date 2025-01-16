@@ -9,6 +9,7 @@ import java.util.*;
 /**
  * Class that generates anonymized versions of short read alignments, ready for writing
  * @author Nicolas Gaitan
+ * @author Rodrigo Martin
  */
 public class ShortAnonymizedReadAlignment implements AnonymizedRead{
 
@@ -230,24 +231,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         // getStart and getEnd are 1-based, adjust accordingly, currently referenceSequence is 0-based
         byte[] refSequenceAln = Arrays.copyOfRange(referenceContigSequence, answer.getStart()-1, answer.getEnd());
         SequenceUtil.calculateMdAndNmTags(answer, refSequenceAln, true, true);
-        // TEST
-//        List<SAMValidationError> cigarErrors = answer.validateCigar(-1);
-//        if(cigarErrors!=null){
-//            for (SAMValidationError err : cigarErrors){
-//                System.out.println("CIGAR validation error on SAM Record: " +
-//                        answer.toString() + " Error message: "
-//                        + err.getMessage());
-//            }
-//        }
-//        List<SAMValidationError> validationErrors = answer.isValid();
-//        if(validationErrors!=null){
-//            for (SAMValidationError err : validationErrors){
-//                System.out.println("Validation error on SAM Record: " +
-//                        answer + " AnonReadAln=" + this.toString() + " Error message: "
-//                        + err.getMessage());
-//            }
-//        }
-        // TEST
         return answer;
     }
 

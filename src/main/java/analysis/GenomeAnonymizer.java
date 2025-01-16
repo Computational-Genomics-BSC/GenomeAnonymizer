@@ -139,10 +139,6 @@ public class GenomeAnonymizer {
         queryRegions.forEach(v -> v.setSequenceIdx(refSequenceOrder.get(v.getSequenceName())));
         queryRegions.sort(Comparator.comparingInt(GenomicRegion::getSequenceIdx)
                 .thenComparing(GenomicRegion::getStart));
-        // DEBUG
-//        queryRegions.forEach(r-> System.out.println(r.getSequenceName() + "\t" + r.getStart() + "\t" + r.getEnd()));
-//        System.exit(0);
-        // DEBUG
         // Compute genome partitions
         List<GenomicRegion> genomicRegions = new ArrayList<>();
         sequences.sort(Comparator.comparing(FastaSequenceIndexEntry::getSize));
