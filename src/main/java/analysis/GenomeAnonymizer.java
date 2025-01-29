@@ -3,6 +3,7 @@ package analysis;
 import genomicelements.CalledVariation;
 import genomicelements.GenomicRegion;
 import genomicelements.GenomicRegionBaseImpl;
+import genomicelements.Signal;
 import utils.GlobalRandom;
 import htsjdk.samtools.reference.FastaSequenceIndex;
 import htsjdk.samtools.reference.FastaSequenceIndexEntry;
@@ -26,7 +27,7 @@ import static io.VCFReader.readVCF;
  */
 public class GenomeAnonymizer {
 
-    public static final String VERSION = "0.0.3";
+    public static final String VERSION = "0.0.4";
     private static final Logger LOGGER = logConfigure();
 
 
@@ -70,7 +71,7 @@ public class GenomeAnonymizer {
         anonymizer.queryReadsToExclude(normalPath, tumorPath, nThreads);
         Set<String> readsToExclude = anonymizer.getReadsToExclude();
         long start1 = System.currentTimeMillis();
-        Map<String, List<CalledVariation>> readGermlinesToAnonymize =
+        Map<String, List<Signal>> readGermlinesToAnonymize =
                 callVariationInParallel(normalPath, tumorPath, refGenome, mode, partitions, readsToExclude, nThreads);
         long end1 = System.currentTimeMillis();
         LOGGER.info("Variation calling phase finished in: "+ (double) (end1-start1)/1000 + " seconds");
@@ -85,10 +86,10 @@ public class GenomeAnonymizer {
         LOGGER.info("Anonymization phase finished in: "+ (double) (end2-start2)/1000 + " seconds");
     }
 
-    private Map<String, List<CalledVariation>> callVariationInParallel(String normalPath, String tumorPath, String refGenome,
+    private Map<String, List<Signal>> callVariationInParallel(String normalPath, String tumorPath, String refGenome,
                                                                                      String mode, List<GenomicRegion> partitions,
                                                                                      Set<String> readsToExclude, int nThreads) {
-        Map<String, List<CalledVariation>> readGermlinesToAnonymize = new HashMap<>();
+        Map<String, List<Signal>> readGermlinesToAnonymize = new HashMap<>();
         MultithreadClassifier[] mClassifiers = new MultithreadClassifier[partitions.size()];
         for(int i = 0; i < partitions.size(); i++){
             GenomicRegion region = partitions.get(i);
@@ -105,16 +106,16 @@ public class GenomeAnonymizer {
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
         executorService.shutdown();
         for(MultithreadClassifier classifier : mClassifiers){
-            Map<String, List<CalledVariation>> germlinesInPartitionReads = classifier.getAnswer();
+            Map<String, List<Signal>> germlinesInPartitionReads = classifier.getAnswer();
             for(var entryByReadAlnId : germlinesInPartitionReads.entrySet()){
                 String readAlnId = entryByReadAlnId.getKey();
-                List<CalledVariation> newVariationsInReadAln = entryByReadAlnId.getValue();
+                List<Signal> newSignalsInReadAln = entryByReadAlnId.getValue();
                 if(readGermlinesToAnonymize.containsKey(readAlnId)){
-                    List<CalledVariation> currentVariationsInReadAln = readGermlinesToAnonymize.get(readAlnId);
-                    currentVariationsInReadAln.addAll(newVariationsInReadAln);
+                    List<Signal> currentVariationsInReadAln = readGermlinesToAnonymize.get(readAlnId);
+                    currentVariationsInReadAln.addAll(newSignalsInReadAln);
                 }
                 else{
-                    readGermlinesToAnonymize.put(readAlnId, newVariationsInReadAln);
+                    readGermlinesToAnonymize.put(readAlnId, newSignalsInReadAln);
                 }
             }
         }
@@ -339,9 +340,10 @@ public class GenomeAnonymizer {
         }
         catch (Exception e){
             //System.err.println(e.getMessage());
-            LOGGER.severe("Exception happened during execution: " + e.getMessage() + "\n halting execution and" +
-                    " printing stacktrace");
-            e.printStackTrace();
+            LOGGER.log(Level.SEVERE,
+                    "Fatal error happened: " + e.getMessage() + "\n halting execution and" +
+                            " printing stacktrace",
+                    e);
             System.exit(1);
         }
         long end2 = System.currentTimeMillis();
@@ -442,7 +444,6 @@ public class GenomeAnonymizer {
         Logger answer = Logger.getLogger(GenomeAnonymizer.class.getName());
         answer.setLevel(Level.ALL);
         ConsoleHandler consoleHandler = new ConsoleHandler();
-        //consoleHandler.setOutputStream(System.out);
         consoleHandler.setFormatter(new SimpleFormatter());
         answer.addHandler(consoleHandler);
         answer.setUseParentHandlers(false);

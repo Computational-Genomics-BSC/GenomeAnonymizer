@@ -39,7 +39,14 @@ public class Operations {
         return first2 <= last1 && last2 >= first1;
     }
 
-    public static double estimateEuclideanDistance(int x1, int y1, int z1, int x2, int y2, int z2) {
+    public static double computeTwoDimEuclideanDistance(int x1, int y1, int x2, int y2) {
+        double xDist = Math.pow(x1 - y1, 2);
+        double yDist = Math.pow(x2 - y2, 2);
+        double squareSum = xDist + yDist;
+        return Math.sqrt(squareSum);
+    }
+
+    public static double computeThreeDimEuclideanDistance(int x1, int y1, int z1, int x2, int y2, int z2) {
         double squareSum = Math.pow(x1 - x2, 2) + Math.pow(y1 - y2, 2) + Math.pow(z1 - z2, 2);
         return Math.sqrt(squareSum);
     }

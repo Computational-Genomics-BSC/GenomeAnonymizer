@@ -15,33 +15,35 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
 
     private final ShortReadAlignment readAlignment;
     private byte[] referenceContigSequence;
+    private int alnStart;
     private boolean isAnonymized;
     private byte[] anonymizedSequenceArray;
     private byte[] anonymizedQualitiesArray;
     List<CigarElement> anonymizedCigarElements;
     private Cigar anonymizedCigar;
-    private List<CalledVariation> SNVsToAnonymize;
-    private List<CalledVariation> indelsToAnonymize;
-    private List<CalledVariation> SVsToAnonymize;
+    private List<CalledVariation> SNVsimpleSignals;
+    private List<CalledVariation> indelSimpleSignals;
+    private List<Signal> complexSignals;
 
     public ShortAnonymizedReadAlignment(ShortReadAlignment readAlignment) {
         this.readAlignment = readAlignment;
+        this.alnStart = getStart();
         this.isAnonymized = false;
         this.anonymizedSequenceArray = new byte[0];
         this.anonymizedQualitiesArray = new byte[0];
         this.anonymizedCigarElements = new ArrayList<>();
-        this.SNVsToAnonymize = new ArrayList<>();
-        this.indelsToAnonymize = new ArrayList<>();
-        this.SVsToAnonymize = new ArrayList<>();
+        this.SNVsimpleSignals = new ArrayList<>();
+        this.indelSimpleSignals = new ArrayList<>();
+        this.complexSignals = new ArrayList<>();
     }
 
     public void setReferenceContigSequence(byte[] referenceContigSequence) {
-        // 1-based memoized reference sequence, corresponding to the contig to which this read is mapped
+        // 0-based memoized reference sequence, corresponding to the contig to which this read is mapped
         this.referenceContigSequence = referenceContigSequence;
     }
 
     public void anonymizeVariants() throws IllegalStateException{
-        if(referenceContigSequence ==null){
+        if(referenceContigSequence == null){
             throw new IllegalStateException("The ShortAnonymizedReadAlignment.anonymizeVariants was called" +
                     "without setting the contigReferenceSequence first. setContigReferenceSequence, should always" +
                     " be alled after the constructor.");
@@ -52,10 +54,10 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         anonymizedQualitiesArray = new byte[expectedSize];
         byte avgQual = getAverageOfBytes(getOriginalQualitiesArray());
         List<CigarElement> originalCigarElements = readAlignment.getCigarElements();
-        //Invariant as the anonymized read will map to the exact start coordinate as the original
-        final int alnStart = getStart();
+        //Except a starting PG SoftClip, alignment start is invariant, as the anonymized read will map to the exact start coordinate as the original
+        //final int alnStart = getStart();
         int alnOrgEnd = getEnd();
-        //1 - based coordinate
+        //0 based coordinate
         int currentRefAlnPos = alnStart-1;
         //Should be the same if we fill or remove bases from the end of the read
         //int alnNewEnd = 0;
@@ -68,13 +70,20 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         //SNV Operations (value: byte as new base) to perform using the original read index
         byte[] SNVops = processSNVoperations(originalSeqLength);
         //Indel Operations (value: number of bases to remove or add) to perform using the CIGAR index
-        int[] indelOps = processIndelOps(originalCigarElements.size());
+        int[] indelOps = processCigarOperations(originalCigarElements.size());
         while(c < originalCigarElements.size()){
             CigarElement cigarElem = originalCigarElements.get(c);
             CigarOperator currentCigarOp = cigarElem.getOperator();
             int opLength = cigarElem.getLength();
             int indelOp = indelOps[c];
             if(indelOp > 0){
+                //TODO: For softclips, if it begins the read, substract exactly the length from currentRefAlnPos, if it ends add also exactly the length
+                if(CigarOperator.S == currentCigarOp){
+                    currentRefAlnPos -= indelOp;
+                    //Update alignment start in 1-based coordinates
+                    alnStart = currentRefAlnPos+1;
+                    i += indelOp;
+                }
                 makeAdditiveChange(j, currentRefAlnPos, avgQual, indelOp);
                 //i++;
                 j += indelOp;
@@ -89,13 +98,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
             else{
                 if(CigarOperator.M.equals(currentCigarOp)){
                     for(int x = 0; x < opLength; x++){
-                        //DEBUG
-//                        System.out.println("x="+ x);
-//                        System.out.println("i="+ i);
-//                        if(i==SNVops.length) {
-//                            System.out.println(originalCigarElements + " "+ currentCigarOp);
-//                        }
-                        //DEBUG
                         byte snvOp = SNVops[i];
                         if(snvOp > 0){
                             anonymizedSequenceArray[j] = snvOp;
@@ -130,6 +132,10 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
             }
             c++;
         }
+        // Add reference bases to fill read to its original length for base-removing operations
+        if(j < expectedSize){
+            makeAdditiveChange(j, currentRefAlnPos, avgQual, expectedSize-j);
+        }
         generateDefinitiveCigar();
         isAnonymized = true;
     }
@@ -148,7 +154,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
 
     private int estimateNewReadSize(int originalSeqLength) {
         int newSize = originalSeqLength;
-        for(CalledVariation indel : indelsToAnonymize) {
+        for(CalledVariation indel : indelSimpleSignals) {
             CalledVariation.VariantType variantType = indel.getVariantType();
             if (CalledVariation.VariantType.DEL.equals(variantType)) {
                 newSize += indel.getLength();
@@ -163,7 +169,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
 
     private byte[] processSNVoperations(int originalSeqLength) {
         byte[] snvOps = new byte[originalSeqLength];
-        for (CalledVariation snv : SNVsToAnonymize){
+        for (CalledVariation snv : SNVsimpleSignals){
             int snvOpPosition = snv.getInReadPosition(this)-1;
             //Change to retrieve from memoized ref genome
             byte op = snv.getRefAllele()[0];
@@ -172,14 +178,25 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         return snvOps;
     }
 
-    private int[] processIndelOps(int originalCigarLength) {
+    private int[] processCigarOperations(int originalCigarLength) {
         int[] indelOps = new int[originalCigarLength];
-        for (CalledVariation indel : indelsToAnonymize){
+        // A negative operation (op) value, causes an elimination of the signal, whereas a positive value generates
+        // an additive change with base pair filling from the reference genome
+        for (CalledVariation indel : indelSimpleSignals){
             //TODO: Account for SVs (SoftClips at first)
             int indelOpPos = indel.getInReadPosition(this);
-            int op = CalledVariation.VariantType.INS.equals(indel.getVariantType()) ?
+            int op = CalledVariation.VariantType.INS == indel.getVariantType() ?
                     -(indel.getLength()) : indel.getLength();
             indelOps[indelOpPos] = op;
+        }
+        for (Signal signal : complexSignals){
+            if(Signal.Source.SOFT_CLIP == signal.getSource()){
+                int softClipSignalPos = signal.getInReadPosition();
+                int op = signal.getLength();
+                //SoftClips are always filled, but the filling is done either at the beginning or end of the read, such that
+                //starting softclips are treated as deletions, and ending softclips as insertions
+                indelOps[softClipSignalPos] = softClipSignalPos == 0 ? op : -op;
+            }
         }
         return indelOps;
     }
@@ -225,6 +242,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
 
     public SAMRecord getAnonymizedSamRecord(){
         SAMRecord answer = readAlignment.cloneRecord();
+        answer.setAlignmentStart(alnStart);
         answer.setReadBases(anonymizedSequenceArray);
         answer.setBaseQualities(anonymizedQualitiesArray);
         answer.setCigar(anonymizedCigar);
@@ -258,31 +276,36 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         return readAlignment.getQualitiesArray();
     }
 
-    public void setVariantsToAnonymize(List<CalledVariation> variants) {
-        addAllVariantsToAnonymize(variants);
+    public void setSignalsToAnonymize(List<Signal> signals) {
+        addAllSignalsToAnonymize(signals);
     }
 
-    public boolean addAllVariantsToAnonymize(List<CalledVariation> variations){
+    public boolean addAllSignalsToAnonymize(List<Signal> signals){
         boolean added = false;
-        for (CalledVariation var : variations){
-            added = addVariantToAnonymize(var);
+        for (Signal signal : signals){
+            added = addVariantToAnonymize(signal);
             if (!added) return false;
         }
         return added;
     }
 
-    public boolean addVariantToAnonymize(CalledVariation variation){
+    public boolean addVariantToAnonymize(Signal signal){
         // Can change when dealing with SVs
         boolean added = false;
-        String varType = CalledVariation.VariantType.SNV.equals(variation.getVariantType()) ?
-                CalledVariation.GENERIC_TYPE_SNV : CalledVariation.GENERIC_TYPE_INDEL;
-        if (CalledVariation.GENERIC_TYPE_SNV.equals(varType)) {
-            added = SNVsToAnonymize.add(variation);
+        if (Signal.Source.SIMPLE_VARIATION == signal.getSource()){
+            CalledVariation variation = signal.getCalledVariation();
+            String varType = CalledVariation.VariantType.SNV.equals(variation.getVariantType()) ?
+                    CalledVariation.GENERIC_TYPE_SNV : CalledVariation.GENERIC_TYPE_INDEL;
+            if (CalledVariation.GENERIC_TYPE_SNV.equals(varType)) {
+                added = SNVsimpleSignals.add(variation);
+            }
+            if(CalledVariation.GENERIC_TYPE_INDEL.equals(varType)){
+                added = indelSimpleSignals.add(variation);
+            }
+        } else if (Signal.Source.SOFT_CLIP == signal.getSource()) {
+            added = complexSignals.add(signal);
         }
-        if(CalledVariation.GENERIC_TYPE_INDEL.equals(varType)){
-            added = indelsToAnonymize.add(variation);
-        }
-        //Add SVs also
+        //TODO: Add other signal types
         return added;
     }
 

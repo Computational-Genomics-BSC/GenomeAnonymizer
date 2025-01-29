@@ -2,6 +2,7 @@ package analysis;
 
 import genomicelements.CalledVariation;
 import genomicelements.GenomicRegion;
+import genomicelements.Signal;
 import htsjdk.samtools.SAMReadGroupRecord;
 
 import java.io.IOException;
@@ -16,7 +17,7 @@ public interface AnonymizerAlgorithm {
     public void queryReadsToExclude(String normalPath, String tumorPath, int threads) throws Exception;
     public Set<String> getReadsToExclude();
     public void setGenomicPartitions(List<GenomicRegion> genomicPartitions);
-    public void setReadGermlinesToAnonymize(Map<String, List<CalledVariation>> readGermlinesToAnonymize);
+    public void setReadGermlinesToAnonymize(Map<String, List<Signal>> readGermlinesToAnonymize);
     public void anonymizeReads(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed)throws IOException;
 
     public void setQueryRegions(List<GenomicRegion> regions);

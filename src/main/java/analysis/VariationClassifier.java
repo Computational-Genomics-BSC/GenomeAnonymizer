@@ -4,12 +4,15 @@ import genomicelements.CalledVariation.SomaticVariationType;
 import genomicelements.CalledVariation.VariantType;
 import genomicelements.GenomicRegion;
 import genomicelements.PairedPileup;
+import genomicelements.Signal;
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.SAMRecord;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
 import htsjdk.samtools.util.SamLocusIterator.RecordAndOffset;
 import io.SamplePairReadAlignmentReader;
+import utils.Operations;
+
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
@@ -26,8 +29,6 @@ public class VariationClassifier {
 
     private static final Logger LOGGER = Logger.getLogger(VariationClassifier.class.getName());
 
-    private static final double SOFTCLIP_DISTANCE_THRESHOLD = 10;
-
     public static final char NULL_BASE = 'N';
     public static final Set<Character> ALPHABET = new HashSet<>(
             Arrays.asList(
@@ -36,9 +37,13 @@ public class VariationClassifier {
     );
 
     public static final int SLIDING_WINDOW_LIMIT = 200;
+    public static final int SIGNAL_REGION_LIMIT = 2000;
+    // Assuming a maximum position distance of 10, and 15 of length
+    public static final int COMPLEX_SIGNAL_THRESHOLD = 18;
+
 
     Set<String> readsToExclude;
-    Map<String, List<CalledVariation>> potentialGermlinesPerRead;
+    Map<String, List<Signal>> potentialGermlinesPerRead;
     Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep;
     boolean diffuseIndelCalls;
     boolean anonymizePotentialLeaksInVCFSomatics;
@@ -51,7 +56,7 @@ public class VariationClassifier {
         somaticVariantsToKeep = new HashMap<>();
     }
 
-    public Map<String, List<CalledVariation>> getPotentialGermlinesPerRead() {
+    public Map<String, List<Signal>> getPotentialGermlinesPerRead() {
         return potentialGermlinesPerRead;
     }
 
@@ -87,17 +92,21 @@ public class VariationClassifier {
         Map<Integer, List<CalledVariation>> variationPerPos = new HashMap<>();
         Set<String> seenReads = new HashSet<>();
         int p = 1;
-        for (PairedPileup pileup : pairPileupReader){
+        List<Signal> signalsInRegion = new ArrayList<>();
+        Iterator<PairedPileup> pileupIterator = pairPileupReader.iterator();
+        while (pileupIterator.hasNext()) {
+            PairedPileup pileup = pileupIterator.next();
             int pos = pileup.getReferencePos();
-            classifyVariationInPairedPileup(variationPerPos, pileup, seenReads, referenceWalker);
-            processPotentialGermlines(variationPerPos.get(pos));
-            if (p==SLIDING_WINDOW_LIMIT) {
+            classifyVariationInPairedPileup(variationPerPos, signalsInRegion, pileup, seenReads, referenceWalker);
+            processSimpleSignals(variationPerPos.get(pos));
+            if (p == SIGNAL_REGION_LIMIT || !pileupIterator.hasNext()) {
+                //TODO: This method must perform the graph analysis of the signals and only save potential germlines in this.potentialGermlinesPerRead
+                processComplexSignals(signalsInRegion);
+//                diffuseIndelCalls(); -> here?
+                signalsInRegion = new ArrayList<>();
                 p = 0;
-//                if (diffuseIndelCalls){
-//
-//                }
             }
-            variationPerPos.remove(pos-SLIDING_WINDOW_LIMIT);
+            variationPerPos.remove(pos - SLIDING_WINDOW_LIMIT);
             p++;
         }
     }
@@ -109,20 +118,21 @@ public class VariationClassifier {
      * @param referenceWalker
      *
      */
-    public void classifyVariationInPairedPileup(Map<Integer, List<CalledVariation>> variationPerPos, PairedPileup pairedPileup, Set<String> seenReads,
-                                                                         IndexedFastaSequenceFile referenceWalker){
+    public void classifyVariationInPairedPileup(Map<Integer, List<CalledVariation>> variationPerPos, List<Signal> signalsInRegion,
+                                                PairedPileup pairedPileup, Set<String> seenReads, IndexedFastaSequenceFile referenceWalker){
         // Map<Integer, List<CalledVariation>> variationPerPos = new HashMap<>();
         List<RecordAndOffset> normalPileup = pairedPileup.getNormalPileup();
         List<RecordAndOffset> tumorPileup = pairedPileup.getTumorPileup();
         String contig = pairedPileup.getRefenceSequenceName();
         int refPos = pairedPileup.getReferencePos();
         byte refBase = referenceWalker.getSubsequenceAt(contig, refPos, refPos).getBases()[0];
-        classifyPileupVariation(contig, refPos, normalPileup, seenReads, refBase, variationPerPos, referenceWalker,true);
-        classifyPileupVariation(contig, refPos, tumorPileup, seenReads, refBase, variationPerPos, referenceWalker,false);
+        classifyPileupVariation(contig, refPos, normalPileup, seenReads, refBase, variationPerPos, signalsInRegion, referenceWalker,true);
+        classifyPileupVariation(contig, refPos, tumorPileup, seenReads, refBase, variationPerPos, signalsInRegion, referenceWalker,false);
     }
 
     private void classifyPileupVariation(String sequenceName, int refPosition, List<RecordAndOffset> pileup, Set<String> seenReads, byte referenceBase,
-                                         Map<Integer, List<CalledVariation>> variationPerPos, IndexedFastaSequenceFile referenceWalker, boolean isNormalDataset) {
+                                         Map<Integer, List<CalledVariation>> variationPerPos, List<Signal> signalsInRegion,
+                                         IndexedFastaSequenceFile referenceWalker, boolean isNormalDataset) {
         // In case single normal pileup is queried alone, to guarantee that null tumor pileups are not accessed
         if(pileup==null) return;
         // May be removing the read;pair name of seenReads after it reaches he last position in pileup
@@ -143,7 +153,7 @@ public class VariationClassifier {
             String specificReadName = getSpecificShortReadPairName(samRecord, pairIdx);
             //
             if (!seenReads.contains(specificReadName)){
-                discoverIndels(samRecord, pairReadName, variationPerPos, referenceWalker, isNormalDataset);
+                discoverIndelsAndSignaturesFromCIGAR(samRecord, pairReadName, variationPerPos, signalsInRegion, referenceWalker, isNormalDataset);
                 seenReads.add(specificReadName);
             }
             int inReadPosition = samRecord.getReadPositionAtReferencePosition(refPosition);
@@ -155,8 +165,8 @@ public class VariationClassifier {
         }
     }
 
-    public void discoverIndels(SAMRecord samRecord, String pairReadName, Map<Integer, List<CalledVariation>> variationPerPos,
-                               IndexedFastaSequenceFile referenceWalker, boolean isNormalDataset){
+    public void discoverIndelsAndSignaturesFromCIGAR(SAMRecord samRecord, String pairReadName, Map<Integer, List<CalledVariation>> variationPerPos,
+                                                     List<Signal> signalsInRegion, IndexedFastaSequenceFile referenceWalker, boolean isNormalDataset){
         List<CigarElement> cigarElems = samRecord.getCigar().getCigarElements();
         int initRefPos = samRecord.getAlignmentStart();
         int currentCigarLength = 0;
@@ -168,7 +178,6 @@ public class VariationClassifier {
             CigarOperator op = cigarElement.getOperator();
             if (op.isIndel()){
                 int currentRefPos = initRefPos + currentCigarLength-1;
-                //int inReadPos = readConsumedBaseNumber == 0 ? 1 : readConsumedBaseNumber;
                 int inReadPos = samRecord.getReadPositionAtReferencePosition(currentRefPos);
                 int length = cigarElement.getLength();
                 VariantType indelType;
@@ -176,7 +185,7 @@ public class VariationClassifier {
                 int inRefend;
                 int inReadEnd;
                 byte[] altAllele;
-                if (CigarOperator.I.equals(op)){
+                if (CigarOperator.I == op){
                     indelType = VariantType.INS;
                     inRefend = currentRefPos;// + 1;
                     vcfStdEnd = inRefend + 1;
@@ -191,13 +200,11 @@ public class VariationClassifier {
                     altAllele = new byte[1];
                 }
                 // Ends vary based on the functions to recover the alleles, whether they are inclusive or exclusive on interval ends
-                //byte[] altAllele = Arrays.copyOfRange(sequenceBases, inReadPos-1, inReadEnd-1);
                 byte[] refAllele = referenceWalker.getSubsequenceAt(sequenceName, currentRefPos, inRefend).getBases();
                 altAllele[0] = refAllele[0];
                 if (CigarOperator.I.equals(op)){
                     System.arraycopy(sequenceBases, inReadPos, altAllele, 1, altAllele.length - 1);
                 }
-                //altAllele = Arrays.copyOfRange(sequenceBases, inReadPos, inReadEnd);
                 CalledVariation calledVar = new CalledVariation(sequenceName, currentRefPos, vcfStdEnd, indelType, length,
                         altAllele, refAllele);
                 List<CalledVariation> variationInPos = variationPerPos.computeIfAbsent(currentRefPos, v -> new ArrayList<>());
@@ -207,6 +214,20 @@ public class VariationClassifier {
                 // Saves the CIGAR index of the INDEL signal
                 calledVar.addSupportingRead(pairReadName, i);
                 processSomaticType(variationInPos, calledVar, variationExists, isNormalDataset);
+            }
+            if(op.isClipping()){
+                //int currentRefPos = initRefPos + currentCigarLength-1;
+                int currentRefPos = currentCigarLength == 0 ? initRefPos : initRefPos + currentCigarLength-1;
+                int inReadPos = samRecord.getReadPositionAtReferencePosition(currentRefPos);
+                int length = cigarElement.getLength();
+                if(CigarOperator.S == op){
+//                    Signal calledSignal = new Signal(sequenceName, currentRefPos, generateReadId(samRecord), inReadPos, length,
+//                            Signal.Source.SOFT_CLIP);
+                    Signal calledSignal = new Signal(sequenceName, currentRefPos, generateReadId(samRecord), i, length,
+                            Signal.Source.SOFT_CLIP);
+                    calledSignal.setIsFromNormalDataset(isNormalDataset);
+                    signalsInRegion.add(calledSignal);
+                }
             }
             if(op.consumesReferenceBases()){
                 currentCigarLength += cigarElement.getLength();
@@ -271,20 +292,57 @@ public class VariationClassifier {
      * Retrieves the calls to be anonymized for each read alignment, uniquely by read name, pair and position
      * @param variationInPos
      */
-    private void processPotentialGermlines(List<CalledVariation> variationInPos) {
+    private void processSimpleSignals(List<CalledVariation> variationInPos) {
         for (CalledVariation var : variationInPos){
-            if(!anonymizeThisVariant(var)) continue;
+            if(!isPotentialGermline(var)) continue;
             Map<String, Integer> supportingReads = var.getSupportingReads();
             for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
                 String readAlnId = entry.getKey();
-                List<CalledVariation> potentialGermlinesInReadAlignment = potentialGermlinesPerRead
+                List<Signal> potentialGermlinesInReadAlignment = potentialGermlinesPerRead
                         .computeIfAbsent(readAlnId, v -> new ArrayList<>());
-                potentialGermlinesInReadAlignment.add(var);
+                potentialGermlinesInReadAlignment.add(new Signal(readAlnId, var));
             }
         }
     }
 
-    private boolean anonymizeThisVariant(CalledVariation variant) {
+    /**
+     * Classify complex signals into potential germline variations by virtually inferring either a complete graph of
+     * signals from the normal dataset, or a bipartite graph from the normal-tumor pair
+     * @param signalsInRegion
+     */
+    private void processComplexSignals(List<Signal> signalsInRegion) {
+//        List<List<Integer>> adjacencyGraph = new ArrayList<>();
+//        Collections.fill(adjacencyGraph, new ArrayList<>());
+        int n = signalsInRegion.size();
+        boolean[] isClassifiedPG = new boolean[n];
+        for (int i = 0; i < n; i++){
+            Signal firstSignal = signalsInRegion.get(i);
+            for (int j = i; j < n; j++){
+                if (i == j) continue;
+                Signal secondSignal = signalsInRegion.get(j);
+                double signalDistance = Operations.computeTwoDimEuclideanDistance(firstSignal.getLocation(), secondSignal.getLocation(),
+                        firstSignal.getLength(), secondSignal.getLength());
+                if (signalDistance > COMPLEX_SIGNAL_THRESHOLD ||
+                        firstSignal.isFromTumoralDataset() && secondSignal.isFromTumoralDataset()) continue;
+                classifyPGcomplexSignal(firstSignal, i, isClassifiedPG);
+                classifyPGcomplexSignal(secondSignal, j, isClassifiedPG);
+//                adjacencyGraph.get(i).add(j);
+//                adjacencyGraph.get(j).add(i);
+            }
+        }
+    }
+
+    private void classifyPGcomplexSignal(Signal signal, int pos, boolean[] isClassifiedPG) {
+        if(!isClassifiedPG[pos]) {
+            String readAlnId = signal.getReadAlnName();
+            List<Signal> potentialGermlinesInReadAlignment = potentialGermlinesPerRead
+                    .computeIfAbsent(readAlnId, v -> new ArrayList<>());
+            potentialGermlinesInReadAlignment.add(signal);
+            isClassifiedPG[pos] = true;
+        }
+    }
+
+    private boolean isPotentialGermline(CalledVariation variant) {
         boolean isValidatedSomatic = false;
         // Anonymize only potential germlines if seen in both datasets, at least once in each, or more than once if only found in the normal tissue mappings
         boolean isPotentialGermline = SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(variant.getSomaticVariationType()) ||

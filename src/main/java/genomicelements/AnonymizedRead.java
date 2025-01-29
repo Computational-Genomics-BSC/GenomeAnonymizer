@@ -8,7 +8,7 @@ public interface AnonymizedRead{
 
     public String getReadAlignmentId();
 
-    public void setVariantsToAnonymize(List<CalledVariation> variants);
+    public void setSignalsToAnonymize(List<Signal> signals);
 
     public void anonymizeVariants();
 

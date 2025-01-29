@@ -12,6 +12,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.UUID;
 
@@ -34,7 +35,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     // Set that contains all the reads that will be excluded from the result (e.g. Unmapped and MAPQ=0)
     private Set<String> readsToExclude;
     // Map containing all potential germlines (value: List), per pair (nested key, 0 or 1), per read (key)
-    private Map<String, List<CalledVariation>> readGermlinesToAnonymize;
+    private Map<String, List<Signal>> readGermlinesToAnonymize;
     private File canvasNormal;
     private File canvasTumoral;
     private List<GenomicRegion> queryRegions;
@@ -58,7 +59,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         this.genomicPartitions = genomicPartitions;
     }
 
-    public void setReadGermlinesToAnonymize(Map<String, List<CalledVariation>> readGermlinesToAnonymize) {
+    public void setReadGermlinesToAnonymize(Map<String, List<Signal>> readGermlinesToAnonymize) {
         this.readGermlinesToAnonymize = readGermlinesToAnonymize;
     }
 
@@ -92,9 +93,11 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                         answer = queryReadsToExcludeInPartition(path, partition);
                     }
                     catch (IOException e) {
-                        LOGGER.severe("Exception in thread querying reads to exclude in region: "
+                        LOGGER.log(Level.SEVERE,
+                                "Exception in thread querying reads to exclude in region: "
                                 + partition.getSequenceName()
-                                + " " + partition.getStart() + " " + partition.getEnd());
+                                + " " + partition.getStart() + " " + partition.getEnd(),
+                                e);
                         throw new RuntimeException(e);
                     }
                     return answer;
@@ -110,8 +113,9 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             }
         }
         catch (Exception e){
-            LOGGER.severe("Exception when retrieving excluded reads from thread halting execution prematurely");
-            LOGGER.severe(e.getMessage());
+            LOGGER.log(Level.SEVERE,
+                    "Exception when retrieving excluded reads from thread, halting execution prematurely",
+                    e);
             throw new RuntimeException(e);
         }
         allFutures.join();
@@ -149,8 +153,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 try {
                     mergeAnonymizedReads(new File(tumorPath), this.canvasTumoral, this.tumoralWriter, new File(refGenome));
                 } catch (Exception e) {
-                    LOGGER.severe("Exception in thread merging anonymized reads in tumoral dataset");
-                    LOGGER.severe(e.getMessage());
+                    LOGGER.log(Level.SEVERE,
+                            "Exception in thread merging anonymized reads in tumoral dataset", e);
                     throw new RuntimeException(e);
                 }
             });
@@ -158,8 +162,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 try {
                     mergeAnonymizedReads(new File(normalPath), this.canvasNormal, this.normalWriter, new File(refGenome));
                 } catch (Exception e) {
-                    LOGGER.severe("Exception in thread merging anonymized reads in normal dataset");
-                    LOGGER.severe(e.getMessage());
+                    LOGGER.log(Level.SEVERE,
+                            "Exception in thread merging anonymized reads in normal dataset", e);
                     throw new RuntimeException(e);
                 }
             });
@@ -167,8 +171,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             normalFuture.get();
             tumoralFuture.get();
         } catch (Exception e) {
-            LOGGER.severe("Exception when merging anonymized reads halting execution prematurely");
-            LOGGER.severe(e.getMessage());
+            LOGGER.log(Level.SEVERE,
+                    "IOException in reading/writing anonymized reads, halting execution prematurely", e);
             throw new IOException(e);
         } finally {
             closeOutputStreams();
@@ -190,15 +194,17 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         File normalOutputFile = new File(getBAMOutputName(prefix, NORMAL_DATASET_IDX));
         File tumoralOutputFile = new File(getBAMOutputName(prefix, TUMORAL_DATASET_IDX));
         SAMFileWriterFactory factory = new SAMFileWriterFactory();
-        factory.setCreateIndex(true);
+        //factory.setCreateIndex(true);
         factory.setCompressionLevel(1);
         factory.setUseAsyncIo(true);
         SAMFileHeader normalFileHeader = buildFileHeader(normalPath, "_N");
         SAMFileHeader tumoralFileHeader = buildFileHeader(tumorPath, "_T");
-        normalWriter = factory.makeBAMWriter(normalFileHeader, true, normalOutputFile);
-        tumoralWriter = factory.makeBAMWriter(tumoralFileHeader, true, tumoralOutputFile);
-        normalWriter.setSortOrderChecking(false);
-        tumoralWriter.setSortOrderChecking(false);
+        normalWriter = factory.makeBAMWriter(normalFileHeader, false, normalOutputFile);
+        tumoralWriter = factory.makeBAMWriter(tumoralFileHeader, false, tumoralOutputFile);
+        //normalWriter = factory.makeBAMWriter(normalFileHeader, true, normalOutputFile);
+        //tumoralWriter = factory.makeBAMWriter(tumoralFileHeader, true, tumoralOutputFile);
+        //normalWriter.setSortOrderChecking(false);
+        //tumoralWriter.setSortOrderChecking(false);
     }
 
     public String getBAMOutputName(String outputPrefix, int datasetIdx){
@@ -344,7 +350,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                     ShortReadAlignment readAlignment = new ShortReadAlignment(samRecord);
                     ShortAnonymizedReadAlignment anonymizedReadAlignment = new ShortAnonymizedReadAlignment(readAlignment);
                     anonymizedReadAlignment.setReferenceContigSequence(referenceContigSequence);
-                    anonymizedReadAlignment.setVariantsToAnonymize(readGermlinesToAnonymize.get(readAlnId));
+                    anonymizedReadAlignment.setSignalsToAnonymize(readGermlinesToAnonymize.get(readAlnId));
                     anonymizedReadAlignment.anonymizeVariants();
                     newSamRecord = anonymizedReadAlignment.getAnonymizedSamRecord();
                 }

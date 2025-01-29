@@ -2,9 +2,12 @@ package analysis;
 
 import genomicelements.CalledVariation;
 import genomicelements.GenomicRegion;
+import genomicelements.Signal;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -40,10 +43,10 @@ public class MultithreadClassifier implements Runnable{
             classifier.callVariation(normalPath, tumorPath, refGenome, region);
             LOGGER.info("Finished variation analysis of genomic region: SEQ=" + region.getSequenceName() + " POS=" + region.getStart() + " END=" + region.getEnd());
         } catch (Exception e) {
-            LOGGER.severe("Exception in thread classifying variants in region: "
-                    + region.getSequenceName() + " " + region.getStart() + " " + region.getEnd() +
-                    " halting execution prematurely");
-            LOGGER.severe(e.getMessage());
+            LOGGER.log(Level.SEVERE, "Exception in thread classifying variants in region: "
+                            + region.getSequenceName() + " " + region.getStart() + " " + region.getEnd() +
+                            " halting execution prematurely",
+                    e);
             System.exit(1);
         }
     }
@@ -55,7 +58,7 @@ public class MultithreadClassifier implements Runnable{
     public int getEnd(){return this.region.getEnd();}
 
 
-    public Map<String, List<CalledVariation>>  getAnswer(){
+    public Map<String, List<Signal>>  getAnswer(){
         assert(classifier.getPotentialGermlinesPerRead().size() == 1): "The result of this classifier is incorrect: "
                 + region.getSequenceName() + " " + region.getStart() + " " + region.getEnd();
         return classifier.getPotentialGermlinesPerRead();

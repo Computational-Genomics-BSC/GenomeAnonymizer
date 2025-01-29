@@ -5,7 +5,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
-import static utils.Operations.estimateEuclideanDistance;
+import static utils.Operations.computeThreeDimEuclideanDistance;
 
 /**
  * Class that represents a genomic variation with supporting evidence,
@@ -78,11 +78,15 @@ public class CalledVariation {
     }
 
     public double calculateDistanceToAnother(CalledVariation variant2) {
-        return estimateEuclideanDistance(this.pos, this.end, this.length, variant2.pos, variant2.end, variant2.length);
+        return computeThreeDimEuclideanDistance(this.pos, this.end, this.length, variant2.pos, variant2.end, variant2.length);
     }
 
     public int getInReadPosition(AnonymizedRead anonRead){
         return supportingReads.get(anonRead.getReadAlignmentId());
+    }
+
+    public int getInReadPosition(String anonReadId){
+        return supportingReads.get(anonReadId);
     }
 
     public String getSeqName() {
