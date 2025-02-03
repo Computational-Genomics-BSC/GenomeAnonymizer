@@ -40,8 +40,20 @@ public class MultithreadClassifier implements Runnable{
     public void run() {
         try {
             if(!readsToExclude.isEmpty()) classifier.setReadsToExclude(readsToExclude);
+            long startcallVariation = System.currentTimeMillis();
             classifier.callVariation(normalPath, tumorPath, refGenome, region);
+            long endcallVariation = System.currentTimeMillis();
+            classifier.METHOD_TIME_MAP.put("callVariation", endcallVariation-startcallVariation);
             LOGGER.info("Finished variation analysis of genomic region: SEQ=" + region.getSequenceName() + " POS=" + region.getStart() + " END=" + region.getEnd());
+            //DEBUG
+            StringBuilder msg = new StringBuilder();
+            for (Map.Entry<String, Long> entry : classifier.METHOD_TIME_MAP.entrySet()){
+                msg.append(entry.getKey()).append(": ");
+                long timeInSeconds = entry.getValue();
+                msg.append(timeInSeconds).append("\n");
+            }
+            LOGGER.info("PARTITION TIME TABLE: " + "\n" + msg);
+            //DEBUG
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Exception in thread classifying variants in region: "
                             + region.getSequenceName() + " " + region.getStart() + " " + region.getEnd() +

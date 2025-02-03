@@ -1,11 +1,9 @@
 package genomicelements;
 
-import htsjdk.samtools.Cigar;
 import htsjdk.samtools.SAMRecord;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.List;
 
 /**
  * Represents a short read alignment
@@ -70,16 +68,17 @@ public class ShortReadAlignment extends ReadAlignmentBaseImpl implements ReadAli
     public static String generateReadId(SAMRecord alignment){
         int pairIdx = alignment.getFirstOfPairFlag() ? PAIR_1_IDX : PAIR_2_IDX;
         String baseName = generateReadId(alignment.getReadName(), pairIdx, alignment.getAlignmentStart());
-        String complement = generateAlignmentHash(alignment);
+        String complement = generateComplement(alignment);
         return baseName + DEFAULT_ID_NAME_SEPARATOR + complement;
     }
 
-    public static String generateAlignmentHash(SAMRecord samRec) {
-        long answer = 17;
-        answer = 37*answer + samRec.getCigar().toString().hashCode();
-        answer = 37*answer + samRec.getBaseQualityString().hashCode();
-        answer = 37*answer + samRec.getReadString().hashCode();
-        return String.valueOf(answer);
+    public static String generateComplement(SAMRecord samRec) {
+        //long answer = 17;
+        StringBuilder builder = new StringBuilder();
+        builder.append(samRec.getCigar().toString());
+        builder.append(samRec.getBaseQualityString());
+        builder.append(samRec.getReadString());
+        return builder.toString();
     }
 
 }

@@ -199,12 +199,12 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         factory.setUseAsyncIo(true);
         SAMFileHeader normalFileHeader = buildFileHeader(normalPath, "_N");
         SAMFileHeader tumoralFileHeader = buildFileHeader(tumorPath, "_T");
-        normalWriter = factory.makeBAMWriter(normalFileHeader, false, normalOutputFile);
-        tumoralWriter = factory.makeBAMWriter(tumoralFileHeader, false, tumoralOutputFile);
-        //normalWriter = factory.makeBAMWriter(normalFileHeader, true, normalOutputFile);
-        //tumoralWriter = factory.makeBAMWriter(tumoralFileHeader, true, tumoralOutputFile);
-        //normalWriter.setSortOrderChecking(false);
-        //tumoralWriter.setSortOrderChecking(false);
+        //normalWriter = factory.makeBAMWriter(normalFileHeader, false, normalOutputFile);
+        //tumoralWriter = factory.makeBAMWriter(tumoralFileHeader, false, tumoralOutputFile);
+        normalWriter = factory.makeBAMWriter(normalFileHeader, true, normalOutputFile);
+        tumoralWriter = factory.makeBAMWriter(tumoralFileHeader, true, tumoralOutputFile);
+        normalWriter.setSortOrderChecking(false);
+        tumoralWriter.setSortOrderChecking(false);
     }
 
     public String getBAMOutputName(String outputPrefix, int datasetIdx){

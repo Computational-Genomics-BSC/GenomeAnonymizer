@@ -37,16 +37,21 @@ public class VariationClassifier {
     );
 
     public static final int SLIDING_WINDOW_LIMIT = 200;
-    public static final int SIGNAL_REGION_LIMIT = 2000;
+    public static final int MAX_LOCATION_DISTANCE_THRESHOLD = 400;
+    public static final int SIGNAL_REGION_LIMIT = 10000;
     // Assuming a maximum position distance of 10, and 15 of length
     public static final int COMPLEX_SIGNAL_THRESHOLD = 18;
 
 
-    Set<String> readsToExclude;
-    Map<String, List<Signal>> potentialGermlinesPerRead;
-    Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep;
-    boolean diffuseIndelCalls;
-    boolean anonymizePotentialLeaksInVCFSomatics;
+    private Set<String> readsToExclude;
+    private Map<String, List<Signal>> potentialGermlinesPerRead;
+    private Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep;
+    private boolean diffuseIndelCalls;
+    private boolean anonymizePotentialLeaksInVCFSomatics;
+
+    //DEBUG
+    public Map<String, Long> METHOD_TIME_MAP = new HashMap<>();
+    //DEBUG
 
     public VariationClassifier(){
         potentialGermlinesPerRead = new HashMap<>();
@@ -97,18 +102,51 @@ public class VariationClassifier {
         while (pileupIterator.hasNext()) {
             PairedPileup pileup = pileupIterator.next();
             int pos = pileup.getReferencePos();
+            long startclassifyVariationInPairedPileup = System.currentTimeMillis();
             classifyVariationInPairedPileup(variationPerPos, signalsInRegion, pileup, seenReads, referenceWalker);
+            long endclassifyVariationInPairedPileup = System.currentTimeMillis();
+            METHOD_TIME_MAP.compute("classifyVariationInPairedPileup", (k,v) -> v == null ?
+                    endclassifyVariationInPairedPileup-startclassifyVariationInPairedPileup :
+                    v + endclassifyVariationInPairedPileup-startclassifyVariationInPairedPileup);
+            long startprocessSimpleSignals = System.currentTimeMillis();
             processSimpleSignals(variationPerPos.get(pos));
-            if (p == SIGNAL_REGION_LIMIT || !pileupIterator.hasNext()) {
-                //TODO: This method must perform the graph analysis of the signals and only save potential germlines in this.potentialGermlinesPerRead
+            long endprocessSimpleSignals = System.currentTimeMillis();
+            METHOD_TIME_MAP.compute("processSimpleSignals",  (k,v) -> v == null ?
+                    endprocessSimpleSignals-startprocessSimpleSignals :
+                    v + endprocessSimpleSignals-startprocessSimpleSignals);
+//            boolean lastSignalUnreachable = testLastSignalUnreachable(signalsInRegion);
+            if (decideProcessingComplexSignals(pileupIterator, signalsInRegion)) {
+                long startprocessComplexSignals = System.currentTimeMillis();
+                Signal lastSignal = null;
+//                if (lastSignalUnreachable) lastSignal = signalsInRegion.remove(signalsInRegion.size() - 1);
                 processComplexSignals(signalsInRegion);
+                long endprocessComplexSignals = System.currentTimeMillis();
+                METHOD_TIME_MAP.compute("processComplexSignals",  (k,v) -> v == null ?
+                        endprocessComplexSignals-startprocessComplexSignals :
+                        v + endprocessComplexSignals-startprocessComplexSignals);
 //                diffuseIndelCalls(); -> here?
                 signalsInRegion = new ArrayList<>();
+//                if(lastSignalUnreachable) signalsInRegion.add(lastSignal);
                 p = 0;
             }
             variationPerPos.remove(pos - SLIDING_WINDOW_LIMIT);
             p++;
         }
+    }
+
+//    private boolean testLastSignalUnreachable(List<Signal> signals) {
+//        if (signals.size() < 2) return false;
+//        Signal lastSignal = signals.get(signals.size() - 1);
+//        Signal scndToLastSIgnal = signals.get(signals.size() - 2);
+//        int locationDistance = Math.abs(lastSignal.getLocation() - scndToLastSIgnal.getLocation());
+//        return locationDistance > MAX_LOCATION_DISTANCE_THRESHOLD;
+//    }
+
+    private boolean decideProcessingComplexSignals(Iterator<PairedPileup> it, List<Signal> signals) {
+        //if (p == SIGNAL_REGION_LIMIT) ;
+        if(signals.size() >= SIGNAL_REGION_LIMIT) return true;
+        if(!it.hasNext()) return true;
+        return false;
     }
 
     /**
@@ -153,20 +191,30 @@ public class VariationClassifier {
             String specificReadName = getSpecificShortReadPairName(samRecord, pairIdx);
             //
             if (!seenReads.contains(specificReadName)){
-                discoverIndelsAndSignaturesFromCIGAR(samRecord, pairReadName, variationPerPos, signalsInRegion, referenceWalker, isNormalDataset);
+                long startdiscoverIndelsAndSignalsFromCIGAR = System.currentTimeMillis();
+                discoverIndelsAndSignalsFromCIGAR(samRecord, pairReadName, variationPerPos, signalsInRegion, referenceWalker, isNormalDataset);
+                long enddiscoverIndelsAndSignalsFromCIGAR = System.currentTimeMillis();
+                METHOD_TIME_MAP.compute("discoverIndelsAndSignalsFromCIGAR",  (k,v) -> v == null ?
+                        enddiscoverIndelsAndSignalsFromCIGAR-startdiscoverIndelsAndSignalsFromCIGAR :
+                        v + enddiscoverIndelsAndSignalsFromCIGAR-startdiscoverIndelsAndSignalsFromCIGAR);
                 seenReads.add(specificReadName);
             }
             int inReadPosition = samRecord.getReadPositionAtReferencePosition(refPosition);
             if (inReadPosition==0) continue;
             char referenceBaseUpper = Character.toUpperCase((char) referenceBase);
             char readBaseUpper = Character.toUpperCase((char) pileupRecord.getReadBase());
+            long startdiscoverSNVs = System.currentTimeMillis();
             discoverSNVs(pairReadName, variationPerPos, readBaseUpper, referenceBaseUpper, sequenceName, refPosition,
                     inReadPosition, isNormalDataset);
+            long enddiscoverSNVs = System.currentTimeMillis();
+            METHOD_TIME_MAP.compute("discoverSNVs",  (k,v) -> v == null ?
+                    enddiscoverSNVs-startdiscoverSNVs :
+                    v + enddiscoverSNVs-startdiscoverSNVs);
         }
     }
 
-    public void discoverIndelsAndSignaturesFromCIGAR(SAMRecord samRecord, String pairReadName, Map<Integer, List<CalledVariation>> variationPerPos,
-                                                     List<Signal> signalsInRegion, IndexedFastaSequenceFile referenceWalker, boolean isNormalDataset){
+    public void discoverIndelsAndSignalsFromCIGAR(SAMRecord samRecord, String pairReadName, Map<Integer, List<CalledVariation>> variationPerPos,
+                                                  List<Signal> signalsInRegion, IndexedFastaSequenceFile referenceWalker, boolean isNormalDataset){
         List<CigarElement> cigarElems = samRecord.getCigar().getCigarElements();
         int initRefPos = samRecord.getAlignmentStart();
         int currentCigarLength = 0;
@@ -314,18 +362,45 @@ public class VariationClassifier {
 //        List<List<Integer>> adjacencyGraph = new ArrayList<>();
 //        Collections.fill(adjacencyGraph, new ArrayList<>());
         int n = signalsInRegion.size();
+        List<Signal> currentPartition = new ArrayList<>();
+        for(int i = 0; i < n-1; i++){
+            Signal currentSignal = signalsInRegion.get(i);
+            currentPartition.add(currentSignal);
+            Signal nextSignal = signalsInRegion.get(i+1);
+            //if (signals.size() < 2) return false;
+            int locationDistance = Math.abs(nextSignal.getLocation() - currentSignal.getLocation());
+            boolean lastSignalUnreachable = locationDistance > MAX_LOCATION_DISTANCE_THRESHOLD;
+            if(lastSignalUnreachable || currentPartition.size() >= SIGNAL_REGION_LIMIT){
+                if(!lastSignalUnreachable){
+                    currentPartition.add(nextSignal);
+                    i++;
+                }
+                processPartition(currentPartition);
+                System.out.println("# nSignals=" + currentPartition.size());
+                currentPartition = new ArrayList<>();
+            }
+        }
+    }
+
+    private void processPartition(List<Signal> signals) {
+        int n = signals.size();
         boolean[] isClassifiedPG = new boolean[n];
         for (int i = 0; i < n; i++){
-            Signal firstSignal = signalsInRegion.get(i);
-            for (int j = i; j < n; j++){
-                if (i == j) continue;
-                Signal secondSignal = signalsInRegion.get(j);
+            Signal firstSignal = signals.get(i);
+            for (int j = i + 1; j < n; j++){
+                //if (i == j) continue;
+                Signal secondSignal = signals.get(j);
                 double signalDistance = Operations.computeTwoDimEuclideanDistance(firstSignal.getLocation(), secondSignal.getLocation(),
                         firstSignal.getLength(), secondSignal.getLength());
                 if (signalDistance > COMPLEX_SIGNAL_THRESHOLD ||
                         firstSignal.isFromTumoralDataset() && secondSignal.isFromTumoralDataset()) continue;
+                long startclassifyPGcomplexSignal = System.currentTimeMillis();
                 classifyPGcomplexSignal(firstSignal, i, isClassifiedPG);
                 classifyPGcomplexSignal(secondSignal, j, isClassifiedPG);
+                long endclassifyPGcomplexSignal = System.currentTimeMillis();
+                METHOD_TIME_MAP.compute("classifyPGcomplexSignal",  (k,v) -> v == null ?
+                        endclassifyPGcomplexSignal-startclassifyPGcomplexSignal :
+                        v + endclassifyPGcomplexSignal-startclassifyPGcomplexSignal);
 //                adjacencyGraph.get(i).add(j);
 //                adjacencyGraph.get(j).add(i);
             }
@@ -342,18 +417,18 @@ public class VariationClassifier {
         }
     }
 
-    private boolean isPotentialGermline(CalledVariation variant) {
+    private boolean isPotentialGermline(CalledVariation variation) {
         boolean isValidatedSomatic = false;
         // Anonymize only potential germlines if seen in both datasets, at least once in each, or more than once if only found in the normal tissue mappings
-        boolean isPotentialGermline = SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(variant.getSomaticVariationType()) ||
-                SomaticVariationType.NORMAL_ONLY_VARIANT.equals(variant.getSomaticVariationType());
+        boolean isPotentialGermline = SomaticVariationType.TUMORAL_NORMAL_VARIANT.equals(variation.getSomaticVariationType()) ||
+                SomaticVariationType.NORMAL_ONLY_VARIANT.equals(variation.getSomaticVariationType());
         //Avoid anonymizing somatic variants recorded in the VCF file
         if (!somaticVariantsToKeep.isEmpty()){
-            if(somaticVariantsToKeep.containsKey(variant.getSeqName())){
-                Map<Integer, CalledVariation> validatedSomaticsAtSeq = somaticVariantsToKeep.get(variant.getSeqName());
-                if(validatedSomaticsAtSeq.containsKey(variant.getPos())){
-                    CalledVariation validatedSomaticAtPos = validatedSomaticsAtSeq.get(variant.getPos());
-                    if(validatedSomaticAtPos.equals(variant)) isValidatedSomatic = true;
+            if(somaticVariantsToKeep.containsKey(variation.getSeqName())){
+                Map<Integer, CalledVariation> validatedSomaticsAtSeq = somaticVariantsToKeep.get(variation.getSeqName());
+                if(validatedSomaticsAtSeq.containsKey(variation.getPos())){
+                    CalledVariation validatedSomaticAtPos = validatedSomaticsAtSeq.get(variation.getPos());
+                    if(validatedSomaticAtPos.equals(variation)) isValidatedSomatic = true;
                 }
             }
         }
@@ -370,7 +445,7 @@ public class VariationClassifier {
 
     public static String getSpecificShortReadPairName(SAMRecord samRec, int pairIdx) {
         if (samRec.getAttribute("SA") != null){
-            return samRec.getReadName() + DEFAULT_ID_NAME_SEPARATOR + pairIdx + DEFAULT_ID_NAME_SEPARATOR + generateAlignmentHash(samRec);
+            return samRec.getReadName() + DEFAULT_ID_NAME_SEPARATOR + pairIdx + DEFAULT_ID_NAME_SEPARATOR + generateComplement(samRec);
         }
         else{
             return samRec.getReadName() + DEFAULT_ID_NAME_SEPARATOR + pairIdx;
