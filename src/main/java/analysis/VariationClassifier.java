@@ -114,11 +114,8 @@ public class VariationClassifier {
             METHOD_TIME_MAP.compute("processSimpleSignals",  (k,v) -> v == null ?
                     endprocessSimpleSignals-startprocessSimpleSignals :
                     v + endprocessSimpleSignals-startprocessSimpleSignals);
-//            boolean lastSignalUnreachable = testLastSignalUnreachable(signalsInRegion);
-            if (decideProcessingComplexSignals(pileupIterator, signalsInRegion)) {
+            if (!pileupIterator.hasNext() || signalsInRegion.size() >= SIGNAL_REGION_LIMIT) {
                 long startprocessComplexSignals = System.currentTimeMillis();
-                Signal lastSignal = null;
-//                if (lastSignalUnreachable) lastSignal = signalsInRegion.remove(signalsInRegion.size() - 1);
                 processComplexSignals(signalsInRegion);
                 long endprocessComplexSignals = System.currentTimeMillis();
                 METHOD_TIME_MAP.compute("processComplexSignals",  (k,v) -> v == null ?
@@ -126,27 +123,11 @@ public class VariationClassifier {
                         v + endprocessComplexSignals-startprocessComplexSignals);
 //                diffuseIndelCalls(); -> here?
                 signalsInRegion = new ArrayList<>();
-//                if(lastSignalUnreachable) signalsInRegion.add(lastSignal);
                 p = 0;
             }
             variationPerPos.remove(pos - SLIDING_WINDOW_LIMIT);
             p++;
         }
-    }
-
-//    private boolean testLastSignalUnreachable(List<Signal> signals) {
-//        if (signals.size() < 2) return false;
-//        Signal lastSignal = signals.get(signals.size() - 1);
-//        Signal scndToLastSIgnal = signals.get(signals.size() - 2);
-//        int locationDistance = Math.abs(lastSignal.getLocation() - scndToLastSIgnal.getLocation());
-//        return locationDistance > MAX_LOCATION_DISTANCE_THRESHOLD;
-//    }
-
-    private boolean decideProcessingComplexSignals(Iterator<PairedPileup> it, List<Signal> signals) {
-        //if (p == SIGNAL_REGION_LIMIT) ;
-        if(signals.size() >= SIGNAL_REGION_LIMIT) return true;
-        if(!it.hasNext()) return true;
-        return false;
     }
 
     /**
@@ -269,8 +250,6 @@ public class VariationClassifier {
                 int inReadPos = samRecord.getReadPositionAtReferencePosition(currentRefPos);
                 int length = cigarElement.getLength();
                 if(CigarOperator.S == op){
-//                    Signal calledSignal = new Signal(sequenceName, currentRefPos, generateReadId(samRecord), inReadPos, length,
-//                            Signal.Source.SOFT_CLIP);
                     Signal calledSignal = new Signal(sequenceName, currentRefPos, generateReadId(samRecord), i, length,
                             Signal.Source.SOFT_CLIP);
                     calledSignal.setIsFromNormalDataset(isNormalDataset);
@@ -356,6 +335,7 @@ public class VariationClassifier {
     /**
      * Classify complex signals into potential germline variations by virtually inferring either a complete graph of
      * signals from the normal dataset, or a bipartite graph from the normal-tumor pair
+     *
      * @param signalsInRegion
      */
     private void processComplexSignals(List<Signal> signalsInRegion) {
@@ -367,16 +347,14 @@ public class VariationClassifier {
             Signal currentSignal = signalsInRegion.get(i);
             currentPartition.add(currentSignal);
             Signal nextSignal = signalsInRegion.get(i+1);
-            //if (signals.size() < 2) return false;
             int locationDistance = Math.abs(nextSignal.getLocation() - currentSignal.getLocation());
             boolean lastSignalUnreachable = locationDistance > MAX_LOCATION_DISTANCE_THRESHOLD;
-            if(lastSignalUnreachable || currentPartition.size() >= SIGNAL_REGION_LIMIT){
+            if(lastSignalUnreachable || currentPartition.size() >= SIGNAL_REGION_LIMIT  || (i==n-2)){
                 if(!lastSignalUnreachable){
                     currentPartition.add(nextSignal);
                     i++;
                 }
                 processPartition(currentPartition);
-                System.out.println("# nSignals=" + currentPartition.size());
                 currentPartition = new ArrayList<>();
             }
         }
