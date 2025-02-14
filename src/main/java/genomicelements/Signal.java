@@ -108,7 +108,9 @@ public class Signal {
         SIMPLE_VARIATION(1, "DEFINABLE_VARIATION"),
         SOFT_CLIP(2, "SOFT_CLIP"),
         //HARD_CLIP(),
-        INSERT_SIZE(3, "INSERT_SIZE");
+        INSERT_SIZE(3, "INSERT_SIZE"),
+        STRAND_ORIENTATION(4, "STRAND_ORIENTATION"),
+        CHROM_CHANGE(5, "CHROM_CHANGE");
 
         private final int value;
         private final String name;

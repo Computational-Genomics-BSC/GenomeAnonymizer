@@ -16,6 +16,8 @@ public interface AnonymizerAlgorithm {
 
     public void queryReadsToExclude(String normalPath, String tumorPath, int threads) throws Exception;
     public Set<String> getReadsToExclude();
+    public int getInsertSizeMinThreshold();
+    public int getInsertSizeMaxThreshold();
     public void setGenomicPartitions(List<GenomicRegion> genomicPartitions);
     public void setReadGermlinesToAnonymize(Map<String, List<Signal>> readGermlinesToAnonymize);
     public void anonymizeReads(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed)throws IOException;

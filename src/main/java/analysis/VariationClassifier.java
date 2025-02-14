@@ -17,6 +17,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.logging.Logger;
+import java.lang.Math;
 import static genomicelements.ShortReadAlignment.*;
 
 
@@ -44,6 +45,8 @@ public class VariationClassifier {
 
 
     private Set<String> readsToExclude;
+    private int insertSizeMinThreshold;
+    private int insertSizeMaxThreshold;
     private Map<String, List<Signal>> potentialGermlinesPerRead;
     private Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep;
     private boolean diffuseIndelCalls;
@@ -63,6 +66,14 @@ public class VariationClassifier {
 
     public Map<String, List<Signal>> getPotentialGermlinesPerRead() {
         return potentialGermlinesPerRead;
+    }
+
+    public void setInsertSizeMinThreshold(int insertSizeMinThreshold) {
+        this.insertSizeMinThreshold = insertSizeMinThreshold;
+    }
+
+    public void setInsertSizeMaxThreshold(int insertSizeMaxThreshold) {
+        this.insertSizeMaxThreshold = insertSizeMaxThreshold;
     }
 
     public void setReadsToExclude(Set<String> readsToExclude){
@@ -178,6 +189,7 @@ public class VariationClassifier {
                 METHOD_TIME_MAP.compute("discoverIndelsAndSignalsFromCIGAR",  (k,v) -> v == null ?
                         enddiscoverIndelsAndSignalsFromCIGAR-startdiscoverIndelsAndSignalsFromCIGAR :
                         v + enddiscoverIndelsAndSignalsFromCIGAR-startdiscoverIndelsAndSignalsFromCIGAR);
+                complexSignalsFromMates(samRecord, signalsInRegion);
                 seenReads.add(specificReadName);
             }
             int inReadPosition = samRecord.getReadPositionAtReferencePosition(refPosition);
@@ -262,6 +274,40 @@ public class VariationClassifier {
             if(op.consumesReadBases()){
                 readConsumedBaseNumber += cigarElement.getLength();
             }
+        }
+    }
+
+    public void complexSignalsFromMates(SAMRecord samRecord, List<Signal> signalsInRegion) {
+        // TODO: What about the mates?
+        // Check if reads are in different chromosomes
+        if (!samRecord.getReferenceIndex().equals(samRecord.getMateReferenceIndex())) {
+            // TODO: Add signal
+            return;
+        }
+        // Check signal strands: FF, RF and FR
+        // Check if this is the first or second pair (assume both are mapped)
+        boolean firstRead = samRecord.getAlignmentStart() <= samRecord.getMateAlignmentStart();
+        boolean firstForward, secondForward;
+        if (firstRead) {
+            firstForward = !samRecord.getReadNegativeStrandFlag();
+            secondForward = !samRecord.getMateNegativeStrandFlag();
+        } else {
+            firstForward = !samRecord.getMateNegativeStrandFlag();
+            secondForward = !samRecord.getReadNegativeStrandFlag();
+        }
+        if (firstForward && secondForward) {
+            // FF
+            // TODO: Add signal
+            return;
+        } else if (!firstForward && secondForward) {
+            // RF
+            // TODO: Add signal
+            return;
+        }
+        // Check insert size
+        int insertSize = Math.abs(samRecord.getInferredInsertSize());
+        if (insertSize < insertSizeMinThreshold || insertSize > insertSizeMaxThreshold) {
+            // TODO: Add signal
         }
     }
 

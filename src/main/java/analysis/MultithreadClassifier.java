@@ -26,20 +26,26 @@ public class MultithreadClassifier implements Runnable{
     private String vcfFile;
     private GenomicRegion region;
     private Set<String> readsToExclude;
+    private int insertSizeMinThreshold;
+    private int insertSizeMaxThreshold;
 
     public MultithreadClassifier(String normalPath, String tumorPath, String refGenome,
-                                 GenomicRegion region, Set<String> readsToExclude){
+                                 GenomicRegion region, Set<String> readsToExclude, int insertSizeMinThreshold, int insertSizeMaxThreshold) {
         this.normalPath = normalPath;
         this.tumorPath = tumorPath;
         this.refGenome = refGenome;
         this.region = region;
         this.readsToExclude = readsToExclude;
+        this.insertSizeMinThreshold = insertSizeMinThreshold;
+        this.insertSizeMaxThreshold = insertSizeMaxThreshold;
     }
 
     @Override
     public void run() {
         try {
             if(!readsToExclude.isEmpty()) classifier.setReadsToExclude(readsToExclude);
+            classifier.setInsertSizeMinThreshold(insertSizeMinThreshold);
+            classifier.setInsertSizeMaxThreshold(insertSizeMaxThreshold);
             long startcallVariation = System.currentTimeMillis();
             classifier.callVariation(normalPath, tumorPath, refGenome, region);
             long endcallVariation = System.currentTimeMillis();

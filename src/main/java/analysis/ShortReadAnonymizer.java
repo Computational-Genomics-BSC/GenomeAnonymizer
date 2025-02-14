@@ -4,6 +4,7 @@ import genomicelements.*;
 import htsjdk.samtools.*;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
 import utils.GlobalRandom;
+import utils.Tuple;
 
 import java.io.File;
 import java.io.IOException;
@@ -34,6 +35,9 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private List<GenomicRegion> genomicPartitions;
     // Set that contains all the reads that will be excluded from the result (e.g. Unmapped and MAPQ=0)
     private Set<String> readsToExclude;
+    // Thresholds for the insert sizes
+    private int insertSizeMinThreshold = Integer.MIN_VALUE;
+    private int insertSizeMaxThreshold = Integer.MAX_VALUE;
     // Map containing all potential germlines (value: List), per pair (nested key, 0 or 1), per read (key)
     private Map<String, List<Signal>> readGermlinesToAnonymize;
     private File canvasNormal;
@@ -82,13 +86,13 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         paths[0] = normalPath;
         paths[1] = tumorPath;
         ExecutorService exec = Executors.newFixedThreadPool(threads);
-        List<CompletableFuture<Set<String>>> futures = new ArrayList<>();
+        List<CompletableFuture<Tuple<Set<String>, List<Integer>>>> futures = new ArrayList<>();
         //TODO: Check if it is possible to change partitions based on actual content
         // (Implement CoveredGenomicRegion), to improve runtime using parallelization
         for(GenomicRegion partition : genomicPartitions){
             for(String path : paths){
-                CompletableFuture<Set<String>> future = CompletableFuture.supplyAsync (() -> {
-                    Set<String> answer;
+                CompletableFuture<Tuple<Set<String>, List<Integer>>> future = CompletableFuture.supplyAsync (() -> {
+                    Tuple<Set<String>, List<Integer>> answer;
                     try {
                         answer = queryReadsToExcludeInPartition(path, partition);
                     }
@@ -105,11 +109,14 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 futures.add(future);
             }
         }
+        List<Integer> insertSizes = new ArrayList<>();
         CompletableFuture<Void> allFutures = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
         try{
-            for (CompletableFuture<Set<String>> future : futures) {
-                Set<String> answer = future.get();
+            for (CompletableFuture<Tuple<Set<String>, List<Integer>>> future : futures) {
+                Set<String> answer = future.get().getFirst();
                 readsToExclude.addAll(answer);
+                List<Integer> insertSizesInPartition = future.get().getSecond();
+                insertSizes.addAll(insertSizesInPartition);
             }
         }
         catch (Exception e){
@@ -120,21 +127,48 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         }
         allFutures.join();
         exec.shutdown();
+        // Calculate the bottom 5% and top 95% quantiles of the insert sizes
+        Collections.sort(insertSizes);
+        int insertSizeMinIdx = Math.max(0, (int) Math.floor(insertSizes.size() * 0.05));
+        int insertSizeMaxIdx = Math.min(insertSizes.size() - 1, (int) Math.floor(insertSizes.size() * 0.95));
+        insertSizeMinThreshold = insertSizes.get(insertSizeMinIdx);
+        insertSizeMaxThreshold = insertSizes.get(insertSizeMaxIdx);
     }
 
-    private Set<String> queryReadsToExcludeInPartition(String filePath, GenomicRegion partition) throws IOException{
+    private Tuple<Set<String>, List<Integer>> queryReadsToExcludeInPartition(String filePath, GenomicRegion partition) throws IOException {
         Set<String> readsToExcludeInPartition = new HashSet<>();
-        try(SamReader reader = factory.open(new File(filePath))){
+        List<Integer> insertSizesInPartition = new ArrayList<>();
+        try (SamReader reader = factory.open(new File(filePath))) {
             SAMRecordIterator it = reader.query(partition.getSequenceName(), partition.getStart(), partition.getEnd(), false);
             while (it.hasNext()) {
                 SAMRecord samRecord = it.next();
-                if(samRecord.getReadUnmappedFlag() ||
-                        (samRecord.getMappingQuality()==0 && !samRecord.isSecondaryOrSupplementary())){
+                if (samRecord.getReadUnmappedFlag() ||
+                        (samRecord.getMappingQuality() == 0 && !samRecord.isSecondaryOrSupplementary())) {
                     readsToExcludeInPartition.add(samRecord.getReadName());
+                    continue;
                 }
+                // Get the insert sizes
+                if (!samRecord.getReadPairedFlag() || samRecord.getMateUnmappedFlag()) {
+                    continue;
+                }
+                int insertSize = samRecord.getInferredInsertSize();
+                if (insertSize <= 0 && !samRecord.getReadNegativeStrandFlag() && samRecord.getMateNegativeStrandFlag()) {
+                    continue;
+                }
+                insertSizesInPartition.add(insertSize);
             }
         }
-        return readsToExcludeInPartition;
+        return new Tuple<>(readsToExcludeInPartition, insertSizesInPartition);
+    }
+
+    @Override
+    public int getInsertSizeMinThreshold() {
+        return insertSizeMinThreshold;
+    }
+
+    @Override
+    public int getInsertSizeMaxThreshold() {
+        return insertSizeMaxThreshold;
     }
 
     @Override

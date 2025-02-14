@@ -70,9 +70,11 @@ public class GenomeAnonymizer {
         anonymizer.setGenomicPartitions(partitions);
         anonymizer.queryReadsToExclude(normalPath, tumorPath, nThreads);
         Set<String> readsToExclude = anonymizer.getReadsToExclude();
+        int insertSizeMinThreshold = anonymizer.getInsertSizeMinThreshold();
+        int insertSizeMaxThreshold = anonymizer.getInsertSizeMaxThreshold();
         long start1 = System.currentTimeMillis();
         Map<String, List<Signal>> readGermlinesToAnonymize =
-                callVariationInParallel(normalPath, tumorPath, refGenome, mode, partitions, readsToExclude, nThreads);
+                callVariationInParallel(normalPath, tumorPath, refGenome, mode, partitions, readsToExclude, insertSizeMinThreshold, insertSizeMaxThreshold, nThreads);
         long end1 = System.currentTimeMillis();
         LOGGER.info("Variation calling phase finished in: "+ (double) (end1-start1)/1000 + " seconds");
         long start2 = System.currentTimeMillis();
@@ -88,12 +90,13 @@ public class GenomeAnonymizer {
 
     private Map<String, List<Signal>> callVariationInParallel(String normalPath, String tumorPath, String refGenome,
                                                                                      String mode, List<GenomicRegion> partitions,
-                                                                                     Set<String> readsToExclude, int nThreads) {
+                                                                                     Set<String> readsToExclude, int insertSizeMinThreshold,
+                                                                                        int insertSizeMaxThreshold, int nThreads) {
         Map<String, List<Signal>> readGermlinesToAnonymize = new HashMap<>();
         MultithreadClassifier[] mClassifiers = new MultithreadClassifier[partitions.size()];
         for(int i = 0; i < partitions.size(); i++){
             GenomicRegion region = partitions.get(i);
-            mClassifiers[i] = new MultithreadClassifier(normalPath, tumorPath, refGenome, region, readsToExclude);
+            mClassifiers[i] = new MultithreadClassifier(normalPath, tumorPath, refGenome, region, readsToExclude, insertSizeMinThreshold, insertSizeMaxThreshold);
             mClassifiers[i].setVCFVariantsToKeep(this.somaticVariantsToKeep);
         }
         ExecutorService executorService = Executors.newFixedThreadPool(nThreads);
