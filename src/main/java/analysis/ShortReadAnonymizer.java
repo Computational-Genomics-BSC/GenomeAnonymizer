@@ -31,6 +31,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
     public static final int NORMAL_DATASET_IDX = 0;
     public static final int TUMORAL_DATASET_IDX = 1;
+    private static final int INSERT_SIZE_BIN_SIZE = 50;
+    private static final int INSERT_SIZE_BIN_COUNT = 5000 / INSERT_SIZE_BIN_SIZE + 1;
 
     private List<GenomicRegion> genomicPartitions;
     // Set that contains all the reads that will be excluded from the result (e.g. Unmapped and MAPQ=0)
@@ -109,14 +111,17 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 futures.add(future);
             }
         }
-        List<Integer> insertSizes = new ArrayList<>();
+        List<Integer> insertSizesBins = new ArrayList<>(Collections.nCopies(INSERT_SIZE_BIN_COUNT, 0));
         CompletableFuture<Void> allFutures = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
         try{
             for (CompletableFuture<Tuple<Set<String>, List<Integer>>> future : futures) {
                 Set<String> answer = future.get().getFirst();
                 readsToExclude.addAll(answer);
-                List<Integer> insertSizesInPartition = future.get().getSecond();
-                insertSizes.addAll(insertSizesInPartition);
+                List<Integer> insertSizesBinsInPartition = future.get().getSecond();
+                // Sum each element of the list with the corresponding element of the other list
+                for (int i = 0; i < insertSizesBins.size(); i++) {
+                    insertSizesBins.set(i, insertSizesBins.get(i) + insertSizesBinsInPartition.get(i));
+                }
             }
         }
         catch (Exception e){
@@ -127,17 +132,30 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         }
         allFutures.join();
         exec.shutdown();
-        // Calculate the bottom 5% and top 95% quantiles of the insert sizes
-        Collections.sort(insertSizes);
-        int insertSizeMinIdx = Math.max(0, (int) Math.floor(insertSizes.size() * 0.05));
-        int insertSizeMaxIdx = Math.min(insertSizes.size() - 1, (int) Math.floor(insertSizes.size() * 0.95));
-        insertSizeMinThreshold = insertSizes.get(insertSizeMinIdx);
-        insertSizeMaxThreshold = insertSizes.get(insertSizeMaxIdx);
+        // Calculate the bottom 5% and top 95% quantiles of the insert sizes aproximated by the corresponding bins
+        int totalReads = insertSizesBins.stream().mapToInt(Integer::intValue).sum();
+        int bottom5Percentile = (int) Math.ceil(totalReads * 0.05);
+        int top95Percentile = (int) Math.ceil(totalReads * 0.95);
+        int currentReads = 0;
+        for (int i = 0; i < insertSizesBins.size(); i++) {
+            currentReads += insertSizesBins.get(i);
+            if (currentReads >= bottom5Percentile && insertSizeMinThreshold == Integer.MIN_VALUE) {
+            int previousReads = currentReads - insertSizesBins.get(i);
+            double fraction = (bottom5Percentile - previousReads) / (double) insertSizesBins.get(i);
+            insertSizeMinThreshold = (int) ((i - 1 + fraction) * INSERT_SIZE_BIN_SIZE);
+            }
+            if (currentReads >= top95Percentile && insertSizeMaxThreshold == Integer.MAX_VALUE) {
+            int previousReads = currentReads - insertSizesBins.get(i);
+            double fraction = (top95Percentile - previousReads) / (double) insertSizesBins.get(i);
+            insertSizeMaxThreshold = (int) ((i - 1 + fraction) * INSERT_SIZE_BIN_SIZE);
+            break;
+            }
+        }
     }
 
     private Tuple<Set<String>, List<Integer>> queryReadsToExcludeInPartition(String filePath, GenomicRegion partition) throws IOException {
         Set<String> readsToExcludeInPartition = new HashSet<>();
-        List<Integer> insertSizesInPartition = new ArrayList<>();
+        List<Integer> insertSizesBinsInPartition = new ArrayList<>(Collections.nCopies(INSERT_SIZE_BIN_COUNT, 0));
         try (SamReader reader = factory.open(new File(filePath))) {
             SAMRecordIterator it = reader.query(partition.getSequenceName(), partition.getStart(), partition.getEnd(), false);
             while (it.hasNext()) {
@@ -147,18 +165,21 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                     readsToExcludeInPartition.add(samRecord.getReadName());
                     continue;
                 }
+                // Only use the first read
+                if (!samRecord.getReadPairedFlag() || samRecord.getMateUnmappedFlag() || !samRecord.getFirstOfPairFlag()) {
+                    continue;
+                }
                 // Get the insert sizes
-                if (!samRecord.getReadPairedFlag() || samRecord.getMateUnmappedFlag()) {
-                    continue;
-                }
                 int insertSize = samRecord.getInferredInsertSize();
-                if (insertSize <= 0 && !samRecord.getReadNegativeStrandFlag() && samRecord.getMateNegativeStrandFlag()) {
+                if (insertSize <= 0 || samRecord.getReadNegativeStrandFlag() || !samRecord.getMateNegativeStrandFlag()) {
                     continue;
                 }
-                insertSizesInPartition.add(insertSize);
+                // Add to the corresponding bucket
+                int binIdx = Math.min(insertSize / INSERT_SIZE_BIN_SIZE, INSERT_SIZE_BIN_COUNT - 1);
+                insertSizesBinsInPartition.set(binIdx, insertSizesBinsInPartition.get(binIdx) + 1);
             }
         }
-        return new Tuple<>(readsToExcludeInPartition, insertSizesInPartition);
+        return new Tuple<>(readsToExcludeInPartition, insertSizesBinsInPartition);
     }
 
     @Override

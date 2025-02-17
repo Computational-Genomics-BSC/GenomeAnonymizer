@@ -189,6 +189,7 @@ public class VariationClassifier {
                 METHOD_TIME_MAP.compute("discoverIndelsAndSignalsFromCIGAR",  (k,v) -> v == null ?
                         enddiscoverIndelsAndSignalsFromCIGAR-startdiscoverIndelsAndSignalsFromCIGAR :
                         v + enddiscoverIndelsAndSignalsFromCIGAR-startdiscoverIndelsAndSignalsFromCIGAR);
+                // One signal per mate
                 complexSignalsFromMates(samRecord, signalsInRegion);
                 seenReads.add(specificReadName);
             }
@@ -278,13 +279,13 @@ public class VariationClassifier {
     }
 
     public void complexSignalsFromMates(SAMRecord samRecord, List<Signal> signalsInRegion) {
-        // TODO: What about the mates?
         // Check if reads are in different chromosomes
         if (!samRecord.getReferenceIndex().equals(samRecord.getMateReferenceIndex())) {
-            // TODO: Add signal
+            Signal calledSignal = new Signal(samRecord.getContig(), samRecord.getAlignmentStart(), generateReadId(samRecord), 0, 0, Signal.Source.CHROM_CHANGE);
+            signalsInRegion.add(calledSignal);
             return;
         }
-        // Check signal strands: FF, RF and FR
+        // Check signal strands: FF, RF and RR
         // Check if this is the first or second pair (assume both are mapped)
         boolean firstRead = samRecord.getAlignmentStart() <= samRecord.getMateAlignmentStart();
         boolean firstForward, secondForward;
@@ -295,19 +296,16 @@ public class VariationClassifier {
             firstForward = !samRecord.getMateNegativeStrandFlag();
             secondForward = !samRecord.getReadNegativeStrandFlag();
         }
-        if (firstForward && secondForward) {
-            // FF
-            // TODO: Add signal
-            return;
-        } else if (!firstForward && secondForward) {
-            // RF
-            // TODO: Add signal
+        int insertSize = Math.abs(samRecord.getInferredInsertSize());
+        if ((firstForward && secondForward) || (!firstForward && !secondForward) || (!firstForward && secondForward)) {
+            Signal calledSignal = new Signal(samRecord.getContig(), samRecord.getAlignmentStart(), generateReadId(samRecord), 0, insertSize, Signal.Source.STRAND_ORIENTATION);
+            signalsInRegion.add(calledSignal);
             return;
         }
         // Check insert size
-        int insertSize = Math.abs(samRecord.getInferredInsertSize());
         if (insertSize < insertSizeMinThreshold || insertSize > insertSizeMaxThreshold) {
-            // TODO: Add signal
+            Signal calledSignal = new Signal(samRecord.getContig(), samRecord.getAlignmentStart(), generateReadId(samRecord), 0, insertSize, Signal.Source.INSERT_SIZE);
+            signalsInRegion.add(calledSignal);
         }
     }
 
