@@ -1,23 +1,21 @@
 package io;
 
-import genomicelements.CalledVariation;
-import genomicelements.CalledVariation.VariantType;
-import genomicelements.CalledVariation.BreakendSVRecord;
-import genomicelements.CalledVariation.ShorthandSVRecord;
+import genomicelements.PairCalledVariation;
+import genomicelements.PairCalledVariation.VariantType;
+import genomicelements.PairCalledVariation.BreakendSVRecord;
+import genomicelements.PairCalledVariation.ShorthandSVRecord;
 import htsjdk.variant.variantcontext.VariantContext;
 import htsjdk.variant.vcf.VCFFileReader;
 
 import java.io.File;
-import java.io.IOException;
 import java.text.ParseException;
 import java.util.HashMap;
-import java.util.IllegalFormatException;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * VCFReader that comprehensively parses Standard, Breakend and shorthand VCF records into CalledVariation objects
+ * VCFReader that comprehensively parses Standard, Breakend and shorthand VCF records into PairCalledVariation objects
  * @author Nicolas Gaitan
  * @author Rodrigo Martin
  */
@@ -29,14 +27,14 @@ public class VCFReader {
     private static final Pattern SGL_SV_REGEX = Pattern.compile("\\.[.A-Za-z]+|[.A-Za-z]+\\.");
     private static final Pattern STANDARD_RECORD_REGEX = Pattern.compile("([.A-Za-z]+)");
 
-    public static Map<String, Map<Integer, CalledVariation>> readVCF(String vcfFilePath)
+    public static Map<String, Map<Integer, PairCalledVariation>> readVCF(String vcfFilePath)
             throws Exception {
-        Map<String, Map<Integer, CalledVariation>> somaticCallsToKeep = new HashMap<>();
+        Map<String, Map<Integer, PairCalledVariation>> somaticCallsToKeep = new HashMap<>();
         File vcfFile = new File(vcfFilePath);
         try(VCFFileReader reader = new VCFFileReader(vcfFile, false)){
             int i = 0;
             for(VariantContext variantContext : reader){
-                CalledVariation calledVar;
+                PairCalledVariation calledVar;
                 if (variantContext.isSNP() || variantContext.isIndel()){
                     calledVar = processStandardVariant(variantContext);
                 }
@@ -48,8 +46,8 @@ public class VCFReader {
                             + variantContext.getContig() + " " + variantContext.getAlternateAllele(0).getDisplayString() + "\n"
                             + "Displaying line number fo malformed record: ", i);
                 }
-                // By default, redundant records are saved as one CalledVariation only (Last one is saved)
-                Map<Integer, CalledVariation> perPosMap = somaticCallsToKeep.computeIfAbsent(calledVar.getSeqName(), v -> new HashMap<>());
+                // By default, redundant records are saved as one PairCalledVariation only (Last one is saved)
+                Map<Integer, PairCalledVariation> perPosMap = somaticCallsToKeep.computeIfAbsent(calledVar.getSeqName(), v -> new HashMap<>());
                 perPosMap.put(calledVar.getPos(), calledVar);
                 i++;
             }
@@ -61,8 +59,8 @@ public class VCFReader {
      * Method to create a CalledVarition object from the fields in a Standard VariantContext (SNV|INDEL) from a VCF file
      * @param varContext
      */
-    public static CalledVariation processStandardVariant(VariantContext varContext){
-        CalledVariation answer = new CalledVariation(varContext.getContig(), varContext.getStart(), varContext.getEnd(),
+    public static PairCalledVariation processStandardVariant(VariantContext varContext){
+        PairCalledVariation answer = new PairCalledVariation(varContext.getContig(), varContext.getStart(), varContext.getEnd(),
                 VariantType.SNV, varContext.getLengthOnReference(),
                 varContext.getAlternateAllele(0).getBases(), new byte[0]);
         answer.setVariantType(getTypeFromVarContext(varContext));
@@ -70,7 +68,7 @@ public class VCFReader {
             answer.setEnd(answer.getEnd()+1);
             answer.setLength(answer.getAllele().length - 1);
         }
-        answer.setSomaticVariationType(CalledVariation.SomaticVariationType.NOT_SOMATIC);
+        answer.setSomaticVariationType(PairCalledVariation.SomaticVariationType.NOT_SOMATIC);
         answer.setDiffusedStatus(false);
         answer.setLinkToAnotherGermline(false);
         return answer;
@@ -100,7 +98,7 @@ public class VCFReader {
      * Method to create a CalledVarition object from parsing a Breakend VariantContext record (SV) from a VCF file
      * @param varContext
      */
-    public static CalledVariation processBreakendSV(VariantContext varContext) {
+    public static PairCalledVariation processBreakendSV(VariantContext varContext) {
         Matcher svMatchBreakend = BREAKEND_SV_REGEX.matcher(varContext.getAlternateAllele(0).getDisplayString());
         if (!svMatchBreakend.matches()) {
             return null;
@@ -145,7 +143,7 @@ public class VCFReader {
             }
         }
         // Create new record
-        CalledVariation answer = new CalledVariation(varContext.getContig(), varContext.getStart(), endPos, variantType, length,
+        PairCalledVariation answer = new PairCalledVariation(varContext.getContig(), varContext.getStart(), endPos, variantType, length,
                 varContext.getAlternateAllele(0).getDisplayBases(), varContext.getReference().getDisplayBases());
         answer.setBreakendRecord(altSvBreakend);
         return answer;
@@ -155,7 +153,7 @@ public class VCFReader {
      * Method to create a CalledVarition object from parsing a Shorthand notation VariantContext record (SV) from a VCF file
      * @param varContext
      */
-    public static CalledVariation processShorthandSV(VariantContext varContext) {
+    public static PairCalledVariation processShorthandSV(VariantContext varContext) {
         Matcher svMatchShorthand = SHORTHAND_SV_REGEX.matcher(varContext.getAlternateAllele(0).getDisplayString());
         if (!svMatchShorthand.matches()) {
             return null;
@@ -186,7 +184,7 @@ public class VCFReader {
             default -> throw new IllegalArgumentException("Unknown variant type: " + altType + ". Skipping:\n" + varContext.toString());
         };
         // Create new record
-        CalledVariation answer = new CalledVariation(varContext.getContig(), varContext.getStart(),
+        PairCalledVariation answer = new PairCalledVariation(varContext.getContig(), varContext.getStart(),
                 varContext.getEnd(), variantType, length, varContext.getAlternateAllele(0).getDisplayBases(),
                 varContext.getReference().getDisplayBases());
         answer.setShortHandRecord(altSvShorthand);
@@ -197,7 +195,7 @@ public class VCFReader {
      * Method to create a CalledVarition object from parsing a Single Breakpoint VariantContext record (SV) from a VCF file
      * @param varContext
      */
-    public static CalledVariation processSGLSV(VariantContext varContext) {
+    public static PairCalledVariation processSGLSV(VariantContext varContext) {
         Matcher svMatchSgl = SGL_SV_REGEX.matcher(varContext.getAlternateAllele(0).getDisplayString());
         if (!svMatchSgl.matches() || !varContext.hasAttribute("SVTYPE")) {
             return null;
@@ -205,7 +203,7 @@ public class VCFReader {
         VariantType variantType = VariantType.SGL;
         int length = 0;
         // Create new record
-        return new CalledVariation(varContext.getContig(), varContext.getStart(), varContext.getEnd(),
+        return new PairCalledVariation(varContext.getContig(), varContext.getStart(), varContext.getEnd(),
                 variantType, length, varContext.getAlternateAllele(0).getDisplayBases(),
                 varContext.getReference().getDisplayBases());
     }

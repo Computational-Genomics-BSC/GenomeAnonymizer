@@ -1,9 +1,7 @@
 package genomicelements;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 import static utils.Operations.computeThreeDimEuclideanDistance;
 
@@ -12,7 +10,7 @@ import static utils.Operations.computeThreeDimEuclideanDistance;
  * with the caveat that it is does not always represent a real genomic variant
  * @author Nicolas Gaitan
  */
-public class CalledVariation {
+public class PairCalledVariation {
     public static final String GENERIC_TYPE_SNV = "SNV";
     public static final String GENERIC_TYPE_INDEL = "INDEL";
     public static final String GENERIC_TYPE_SV = "SV";
@@ -29,9 +27,9 @@ public class CalledVariation {
     private SomaticVariationType somaticVariationType;
     private boolean hasDiffused;
     private boolean isLinkedToAnotherGermline;
-    private Map<String, Integer> supportingReads;
+    private Map<String, Integer> supportingReadPositions;
 
-    public CalledVariation(String seqName, int pos, int end, VariantType varType, int length, byte[] allele, byte[] refAllele) {
+    public PairCalledVariation(String seqName, int pos, int end, VariantType varType, int length, byte[] allele, byte[] refAllele) {
         this.seqName = seqName;
         this.pos = pos;
         this.end = end;
@@ -43,7 +41,7 @@ public class CalledVariation {
         this.hasDiffused = false;
         this.isLinkedToAnotherGermline = false;
         //Holds the reads that supported this call as keys, and their 1-based position in-read for SNVs, or 0 based index in-CIGAR for indels and SVs
-        this.supportingReads = new HashMap<>();
+        this.supportingReadPositions = new HashMap<>();
         // OPTIONAL: Breakend and Shorthand record representations for SVs
         this.breakendRecord = null;
         this.shortHandRecord = null;
@@ -58,7 +56,7 @@ public class CalledVariation {
     */
 
     public void addSupportingRead(String readId, int varReadPos) {
-        supportingReads.put(readId, varReadPos);
+        supportingReadPositions.put(readId, varReadPos);
     }
 
     public void setDiffusedStatus(boolean diffusedStatus) {
@@ -77,16 +75,16 @@ public class CalledVariation {
         return hasDiffused;
     }
 
-    public double calculateDistanceToAnother(CalledVariation variant2) {
+    public double calculateDistanceToAnother(PairCalledVariation variant2) {
         return computeThreeDimEuclideanDistance(this.pos, this.end, this.length, variant2.pos, variant2.end, variant2.length);
     }
 
     public int getInReadPosition(AnonymizedRead anonRead){
-        return supportingReads.get(anonRead.getReadAlignmentId());
+        return getInReadPosition(anonRead.getReadAlignmentId());
     }
 
     public int getInReadPosition(String anonReadId){
-        return supportingReads.get(anonReadId);
+        return supportingReadPositions.get(anonReadId);
     }
 
     public String getSeqName() {
@@ -117,8 +115,8 @@ public class CalledVariation {
         return refAllele;
     }
 
-    public Map<String, Integer> getSupportingReads() {
-        return supportingReads;
+    public Map<String, Integer> getSupportingReadPositions() {
+        return supportingReadPositions;
     }
 
     public void setEnd(int end){
@@ -168,23 +166,16 @@ public class CalledVariation {
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;
-        if (obj instanceof CalledVariation) {
+        if (obj instanceof PairCalledVariation) {
             boolean answer;
-            CalledVariation var2 = (CalledVariation) obj;
+            PairCalledVariation var2 = (PairCalledVariation) obj;
             answer =  this.seqName.equals(var2.seqName) &&
                     this.variantType.equals(var2.variantType) &&
                     this.pos == var2.pos &&
                     this.end == var2.end &&
                     //this.length == var2.length &&
-                    Arrays.equals(this.allele, var2.allele);
-            //DEBUG
-//            if(pos==73824164 && SomaticVariationType.NOT_SOMATIC.equals(this.somaticVariationType)){
-//                System.out.println("# Found var: " + this.toString());
-//                System.out.println("# VCF var: " + var2.toString());
-//                System.out.println("# equal=" + answer);
-//            }
+                    (variantType != VariantType.SNV) || Arrays.equals(this.allele, var2.allele);
             return answer;
-            //DEBUG
         }
         return false;
     }

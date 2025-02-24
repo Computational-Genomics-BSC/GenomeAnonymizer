@@ -17,7 +17,7 @@ public class ShortReadAlignment extends ReadAlignmentBaseImpl implements ReadAli
 
     public ShortReadAlignment(SAMRecord samRecord){
         super(samRecord);
-        setReadAlignmentId(generateReadId(samRecord));
+        setReadAlignmentId(generateReadAlnId(samRecord));
     }
 
     public boolean isPair1(){
@@ -60,14 +60,14 @@ public class ShortReadAlignment extends ReadAlignmentBaseImpl implements ReadAli
 
 
     //Provides a unique ID for each read alignment
-    public static String generateReadId(String readName, int pairIdx, int refPos){
+    public static String generateReadAlnId(String readName, int pairIdx, int refPos){
         return readName + DEFAULT_ID_NAME_SEPARATOR + pairIdx + DEFAULT_ID_NAME_SEPARATOR + refPos;
     }
 
     //Provides a unique ID for each read alignment, directly from a SAMRecord
-    public static String generateReadId(SAMRecord alignment){
+    public static String generateReadAlnId(SAMRecord alignment){
         int pairIdx = alignment.getFirstOfPairFlag() ? PAIR_1_IDX : PAIR_2_IDX;
-        String baseName = generateReadId(alignment.getReadName(), pairIdx, alignment.getAlignmentStart());
+        String baseName = generateReadAlnId(alignment.getReadName(), pairIdx, alignment.getAlignmentStart());
         String complement = generateComplement(alignment);
         return baseName + DEFAULT_ID_NAME_SEPARATOR + complement;
     }

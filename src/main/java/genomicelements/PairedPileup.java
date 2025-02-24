@@ -1,9 +1,6 @@
 package genomicelements;
 
-import htsjdk.samtools.util.SamLocusIterator.RecordAndOffset;
-import htsjdk.samtools.util.SamLocusIterator.LocusInfo;
-
-import java.util.List;
+import genomicelements.LocusPileupIterator.OnPileupQueue;
 
 /**
  * Representation of a tuple of read alignment pileups, with one coming from a normal sample and the other from the tumor pair
@@ -12,38 +9,34 @@ import java.util.List;
  */
 public class PairedPileup {
 
-    private LocusInfo normalLocus;
-    private LocusInfo tumorLocus;
+    private LocusPileUp normalLocus;
+    private LocusPileUp tumorLocus;
     private String refenceSequenceName;
     private int referenceSequenceIdx;
     private int referencePos;
 
-    public PairedPileup(LocusInfo normalLocus, LocusInfo tumorLocus) {
-        // DEBUG
-        assert normalLocus.getPosition() == tumorLocus.getPosition(): "Normal and tumor locuses are not in the same position " +
-                normalLocus.getPosition() + tumorLocus.getPosition();
-        // DEBUG
+    public PairedPileup(LocusPileUp normalLocus, LocusPileUp tumorLocus) {
         this.normalLocus = normalLocus;
         this.tumorLocus = tumorLocus;
         refenceSequenceName = normalLocus.getSequenceName();
-        referenceSequenceIdx = normalLocus.getSequenceIndex();
-        referencePos = normalLocus.getPosition();
+        referenceSequenceIdx = normalLocus.getSequenceIdx();
+        referencePos = normalLocus.getLocation();
     }
 
-    public PairedPileup(LocusInfo normalLocus) {
+    public PairedPileup(LocusPileUp normalLocus) {
         this.normalLocus = normalLocus;
         this.tumorLocus = null;
         refenceSequenceName = normalLocus.getSequenceName();
-        referenceSequenceIdx = normalLocus.getSequenceIndex();
-        referencePos = normalLocus.getPosition();
+        referenceSequenceIdx = normalLocus.getSequenceIdx();
+        referencePos = normalLocus.getLocation();
     }
 
-    public List<RecordAndOffset> getNormalPileup(){
-        return normalLocus.getRecordAndOffsets();
+    public LocusPileUp getNormalPileup(){
+        return normalLocus;
     }
 
-    public List<RecordAndOffset> getTumorPileup(){
-        return tumorLocus == null ? null : tumorLocus.getRecordAndOffsets();
+    public LocusPileUp getTumorPileup(){
+        return tumorLocus == null ? null : tumorLocus;
     }
 
     public int totalSize(){

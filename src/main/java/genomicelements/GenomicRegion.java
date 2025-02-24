@@ -6,4 +6,5 @@ public interface GenomicRegion {
     public int getStart();
     public int getEnd();
     public void setSequenceIdx(int sequenceIdx);
+    public String toString();
 }

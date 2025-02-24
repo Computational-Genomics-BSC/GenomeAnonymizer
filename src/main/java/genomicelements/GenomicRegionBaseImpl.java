@@ -57,8 +57,7 @@ public class GenomicRegionBaseImpl implements GenomicRegion{
         this.sequenceIdx = sequenceIdx;
     }
 
-    @Override
     public String toString(){
-        return sequenceName + "\t" + start + "\t" + end;
+        return sequenceName + ":" + start + "-" + end;
     }
 }

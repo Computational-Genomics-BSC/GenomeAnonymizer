@@ -1,6 +1,5 @@
 package analysis;
 
-import genomicelements.CalledVariation;
 import genomicelements.GenomicRegion;
 import genomicelements.Signal;
 import htsjdk.samtools.SAMReadGroupRecord;

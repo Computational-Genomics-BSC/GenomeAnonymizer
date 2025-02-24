@@ -11,7 +11,7 @@ public class Signal {
     private byte[] sequenceBytes;
     private Source source;
     private boolean isFromNormalDataset;
-    private CalledVariation calledVariation = null;
+    private PairCalledVariation pairCalledVariation = null;
 
 
     public Signal(String sequenceName, int location, String readAlnName, int readPosition, int length, Source source) {
@@ -25,14 +25,14 @@ public class Signal {
     }
 
     /**
-     * Generate a simple signal from a CalledVariation, this will not have the information about the dataset it comes from
+     * Generate a simple signal from a PairCalledVariation, this will not have the information about the dataset it comes from
      * @param readAlnName
-     * @param calledVariation
+     * @param pairCalledVariation
      */
-    public Signal(String readAlnName, CalledVariation calledVariation) {
-        this(calledVariation.getSeqName(), calledVariation.getPos(), readAlnName, calledVariation.getInReadPosition(readAlnName),
-                calledVariation.getLength(), Source.SIMPLE_VARIATION);
-        this.calledVariation = calledVariation;
+    public Signal(String readAlnName, PairCalledVariation pairCalledVariation) {
+        this(pairCalledVariation.getSeqName(), pairCalledVariation.getPos(), readAlnName, pairCalledVariation.getInReadPosition(readAlnName),
+                pairCalledVariation.getLength(), Source.SIMPLE_VARIATION);
+        this.pairCalledVariation = pairCalledVariation;
     }
 
     public String getSequenceName() {
@@ -80,8 +80,8 @@ public class Signal {
         return !isFromNormalDataset;
     }
 
-    public CalledVariation getCalledVariation() {
-        return calledVariation;
+    public PairCalledVariation getCalledVariation() {
+        return pairCalledVariation;
     }
 
     public void setSequenceIdx(int sequenceIdx) {
@@ -102,6 +102,19 @@ public class Signal {
 
     public boolean locatedAtReadEnd(){
         return !locatedAtReadStart();
+    }
+
+    @Override
+    public String toString() {
+        return "Signal{" +
+                "readAlnName='" + readAlnName + '\'' +
+                ", length=" + length +
+                ", source=" + source +
+                ", isFromNormalDataset=" + isFromNormalDataset +
+                ", sequenceName='" + sequenceName + '\'' +
+                ", location=" + location +
+                ", inReadPosition=" + inReadPosition +
+                '}';
     }
 
     public enum Source{

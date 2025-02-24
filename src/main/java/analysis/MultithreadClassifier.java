@@ -1,6 +1,6 @@
 package analysis;
 
-import genomicelements.CalledVariation;
+import genomicelements.PairCalledVariation;
 import genomicelements.GenomicRegion;
 import genomicelements.Signal;
 
@@ -21,27 +21,30 @@ public class MultithreadClassifier implements Runnable{
     private final VariationClassifier classifier = new VariationClassifier();
     private String normalPath;
     private String tumorPath;
-    private String refGenome;
+    private String refGenomeFile;
     private String mode;
     private String vcfFile;
     private GenomicRegion region;
     private Set<String> readsToExclude;
+    private byte[] regionSequence;
 
     public MultithreadClassifier(String normalPath, String tumorPath, String refGenome,
-                                 GenomicRegion region, Set<String> readsToExclude){
+                                 byte[] regionSequence, GenomicRegion region, Set<String> readsToExclude){
         this.normalPath = normalPath;
         this.tumorPath = tumorPath;
-        this.refGenome = refGenome;
+        this.refGenomeFile = refGenome;
         this.region = region;
         this.readsToExclude = readsToExclude;
+        this.regionSequence = regionSequence;
     }
 
     @Override
     public void run() {
         try {
             if(!readsToExclude.isEmpty()) classifier.setReadsToExclude(readsToExclude);
+            classifier.setRefSequence(regionSequence);
             long startcallVariation = System.currentTimeMillis();
-            classifier.callVariation(normalPath, tumorPath, refGenome, region);
+            classifier.callVariation(normalPath, tumorPath, refGenomeFile, region);
             long endcallVariation = System.currentTimeMillis();
             classifier.METHOD_TIME_MAP.put("callVariation", endcallVariation-startcallVariation);
             LOGGER.info("Finished variation analysis of genomic region: SEQ=" + region.getSequenceName() + " POS=" + region.getStart() + " END=" + region.getEnd());
@@ -76,7 +79,7 @@ public class MultithreadClassifier implements Runnable{
         return classifier.getPotentialGermlinesPerRead();
     }
 
-    public void setVCFVariantsToKeep(Map<String, Map<Integer,CalledVariation>> somaticVariantsToKeep){
+    public void setVCFVariantsToKeep(Map<String, Map<Integer, PairCalledVariation>> somaticVariantsToKeep){
         classifier.setVCFVariantsToKeep(somaticVariantsToKeep);
     }
 }

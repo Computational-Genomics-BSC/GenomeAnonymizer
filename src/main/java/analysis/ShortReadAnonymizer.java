@@ -17,7 +17,7 @@ import java.util.logging.Logger;
 import java.util.UUID;
 
 import static analysis.GenomeAnonymizer.BAM_FILE;
-import static genomicelements.ShortReadAlignment.generateReadId;
+import static io.SamplePairReadAlignmentReader.DEFAULT_MINIMUM_MAPPING_QUALITY;
 
 /**
  * AnonymizerAlgorithm implementation for short read data
@@ -129,7 +129,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             while (it.hasNext()) {
                 SAMRecord samRecord = it.next();
                 if(samRecord.getReadUnmappedFlag() ||
-                        (samRecord.getMappingQuality()==0 && !samRecord.isSecondaryOrSupplementary())){
+                        (samRecord.getMappingQuality() < DEFAULT_MINIMUM_MAPPING_QUALITY && !samRecord.isSecondaryOrSupplementary())){
                     readsToExcludeInPartition.add(samRecord.getReadName());
                 }
             }
@@ -151,7 +151,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             ExecutorService exec = Executors.newFixedThreadPool(2);
             Future<?> tumoralFuture = exec.submit(() -> {
                 try {
-                    mergeAnonymizedReads(new File(tumorPath), this.canvasTumoral, this.tumoralWriter, new File(refGenome));
+                    mergeAnonymizedReads(new File(tumorPath), this.canvasTumoral, this.tumoralWriter, new File(refGenome),
+                            false);
                 } catch (Exception e) {
                     LOGGER.log(Level.SEVERE,
                             "Exception in thread merging anonymized reads in tumoral dataset", e);
@@ -160,7 +161,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             });
             Future<?> normalFuture = exec.submit(() -> {
                 try {
-                    mergeAnonymizedReads(new File(normalPath), this.canvasNormal, this.normalWriter, new File(refGenome));
+                    mergeAnonymizedReads(new File(normalPath), this.canvasNormal, this.normalWriter, new File(refGenome),
+                            true);
                 } catch (Exception e) {
                     LOGGER.log(Level.SEVERE,
                             "Exception in thread merging anonymized reads in normal dataset", e);
@@ -205,6 +207,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         tumoralWriter = factory.makeBAMWriter(tumoralFileHeader, true, tumoralOutputFile);
         normalWriter.setSortOrderChecking(false);
         tumoralWriter.setSortOrderChecking(false);
+        LOGGER.info("Beginning writing Anonymized reads to\tNormal: " + normalOutputFile + "\tTumoral: " +
+                tumoralOutputFile);
     }
 
     public String getBAMOutputName(String outputPrefix, int datasetIdx){
@@ -214,10 +218,13 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         return outputPrefix + anonTag + datasetIdStr + extension;
     }
 
-    private void mergeAnonymizedReads(File samFile, File canvasSamFile, SAMFileWriter samWriter, File referenceGenomeFile) throws IOException {
+    private void mergeAnonymizedReads(File samFile, File canvasSamFile, SAMFileWriter samWriter, File referenceGenomeFile,
+                                      boolean isNormalDataset) throws IOException {
         IndexedFastaSequenceFile referenceGenome = new IndexedFastaSequenceFile(referenceGenomeFile);
         SamReader canvasSamReader = null;
         Set<String> canvasToExclude = new HashSet<>();
+        int writtenReads = 0;
+        String datasetName = isNormalDataset ? "Normal" : "Tumoral";
         if (canvasSamFile != null) {
             canvasSamReader = factory.referenceSequence(referenceGenomeFile).open(canvasSamFile);
             canvasToExclude = extractCanvasReadsToExclude(canvasSamReader, this.queryRegions);
@@ -244,12 +251,16 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                         continue;
                     }
                     writeRead(samWriter, canvasRead);
+                    writtenReads++;
+                    logWrittenReads(writtenReads, datasetName);
                 } else {
                     lastCanvasRead = canvasRead;
                     break;
                 }
             }
             writeRead(samWriter, anonymizedRead);
+            writtenReads++;
+            logWrittenReads(writtenReads, datasetName);
         }
         // Iterate through the remaining canvas reads
         while (canvasReads.hasNext() || lastCanvasRead != null) {
@@ -259,12 +270,18 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 continue;
             }
             writeRead(samWriter, canvasRead);
+            writtenReads++;
+            logWrittenReads(writtenReads, datasetName);
         }        
         anonymizedSamReader.close();
         if (canvasSamReader != null) {
             canvasSamReader.close();
         }
         referenceGenome.close();
+    }
+
+    private void logWrittenReads(int writtenReads, String datasetName) {
+        if (writtenReads % 10_000_000 == 0) LOGGER.info("Written " + writtenReads + " to " + datasetName);
     }
 
     private Set<String> extractCanvasReadsToExclude(SamReader canvasSamReader, Iterable<GenomicRegion> regions) {
@@ -340,7 +357,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                     }
                     samRecord = it.next();
                     String readName = samRecord.getReadName();
-                    readAlnId = generateReadId(samRecord);
+                    readAlnId = ShortReadAlignment.generateReadAlnId(samRecord);
                     if (readsToExclude.contains(readName) || returnedReads.contains(readAlnId)) {
                         samRecord = null;
                     }
