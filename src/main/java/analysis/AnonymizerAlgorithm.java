@@ -1,6 +1,7 @@
 package analysis;
 
 import genomicelements.GenomicRegion;
+import genomicelements.PairCalledVariation;
 import genomicelements.Signal;
 import htsjdk.samtools.SAMReadGroupRecord;
 
@@ -13,12 +14,17 @@ public interface AnonymizerAlgorithm {
 
     public final static String SHORT_READ_ALGORITHM = SAMReadGroupRecord.PlatformValue.ILLUMINA.name();
 
-    public void queryReadsToExclude(String normalPath, String tumorPath, int threads) throws Exception;
-    public Set<String> getReadsToExclude();
-    public void setGenomicPartitions(List<GenomicRegion> genomicPartitions);
-    public void setReadGermlinesToAnonymize(Map<String, List<Signal>> readGermlinesToAnonymize);
-    public void anonymizeReads(String normalPath, String tumorPath, String refGenome, String outputPrefix, boolean compressed)throws IOException;
+    public void anonymizeReads();
 
+    public void mergeAnonymizedReads() throws IOException;
+    public void queryReadsToExclude();
+
+    public void setPartitions() throws IOException;
+    public void setMinimumMappingQuality(int minimumMappingQuality);
+    public void setThreadNumber(int threads);
     public void setQueryRegions(List<GenomicRegion> regions);
     public void setCanvasFiles(String normalCanvasFileName, String tumoralCanvasFileName);
+
+    //TODO: Decide if this stays or not
+    public void setVCFVariantsToKeep(Map<String, Map<Integer, PairCalledVariation>> variantsToKeep);
 }

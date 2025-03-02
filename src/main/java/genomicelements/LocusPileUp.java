@@ -2,24 +2,35 @@ package genomicelements;
 
 import genomicelements.LocusPileupIterator.OnPileupQueue;
 
+import java.util.ArrayList;
 import java.util.List;
+
+import static genomicelements.LocusPileupIterator.DEFAULT_PILEUP_READ_LIMIT;
 
 /**
  * The LocusPileUp class represents a specific genomic location and maintains a collection of alignments
  * (SAMRecord objects) that overlap at the given locus. It is designed to store and manage piled-up reads,
  * their corresponding bases, and positions in the reads. It also interacts with an OnPileupQueue to claim
- * new alignments that overlap the current pileup location.
+ * new and/or different alignments at this pileup location.
  * @author Nicolas Gaitan
  */
 public class LocusPileUp implements GenomicRegion{
-    //TODO: Implement on demand read return, if it hasn´t been seen, or if at the pileup it has a change in base
-    
+
     private String sequenceName;
     private int start;
     private int sequenceIdx;
     private int size;
+    private List<PileupRead> pileupReads;
+    //Limit to the number of reads that can be piled up at a given locus
+    private int pileupReadLimit = DEFAULT_PILEUP_READ_LIMIT;
     //Alignments, their bases and position in read are provided in lists with corresponding indexes
-    private OnPileupQueue readQueue;
+    private OnPileupQueue readQueue = null;
+
+    public LocusPileUp(String sequenceName, int start) {
+        this.sequenceName = sequenceName;
+        this.start = start;
+        this.pileupReads = new ArrayList<>();
+    }
 
     public LocusPileUp(String sequenceName, int start, OnPileupQueue readQueue) {
         this.sequenceName = sequenceName;
@@ -29,16 +40,31 @@ public class LocusPileUp implements GenomicRegion{
 
     public void addPileupRead(PileupRead read){
         size++;
-        readQueue.offerNew(read);
+        //If a valid OnPileupQueue is provided when instantiated, the PileupRead is added to the queue
+        // (modes: CLAIM_NEW_READS_ONLY_PILEUP_MODE, CLAIM_NEW_AND_DIFFERING_READS_ONLY_PILEUP_MODE)
+        if(readQueue != null){
+            readQueue.offerNew(read);
+        }
+        else{
+            //If the pileupReadLimit is reached, the read is not added to the pileupReads list
+            // (mode: CLAIM_ALL_READS_PILEUP_MODE)
+            if(pileupReads.size() <= pileupReadLimit){
+                pileupReads.add(read);
+            }
+        }
+    }
+
+    public List<PileupRead> getPileupReads(){
+        return pileupReads;
     }
 
     /**
-     * Retrieves and claims only new SAMRecord objects from the associated OnPileupQueue that overlap the current pileup position.
-     * Overlapping reads are removed from the queue and returned.
+     * Retrieves and claims only new SAMRecord objects from the associated OnPileupQueue that overlap the current pileup position,
+     *  or those that differ at this pileup position.
      * @return A list of SAMRecord objects representing the newly claimed reads overlapping the pileup position.
      */
-    public List<PileupRead> claimNewReadsOnPileup(){
-        return readQueue.claimNewReadsOnPileup(this);
+    public List<PileupRead> claimReadsOnPileup(){
+        return readQueue.claimReadsOnPileup(this);
     }
 
     @Override
@@ -65,8 +91,16 @@ public class LocusPileUp implements GenomicRegion{
         return start;
     }
 
+    public int getPileupReadLimit() {
+        return pileupReadLimit;
+    }
+
     public int size() {
         return size;
+    }
+
+    public void setPileupReadLimit(int pileupReadLimit) {
+        this.pileupReadLimit = pileupReadLimit;
     }
 
     @Override

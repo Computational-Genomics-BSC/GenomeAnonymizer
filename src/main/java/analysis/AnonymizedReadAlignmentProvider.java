@@ -4,57 +4,73 @@ import genomicelements.PairCalledVariation.SomaticVariationType;
 import genomicelements.PairCalledVariation.VariantType;
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
-import htsjdk.samtools.SAMRecord;
 import io.SamplePairReadAlignmentReader;
+import utils.MapCacheFIFO;
 import utils.Operations;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.*;
+import java.util.function.Consumer;
 import java.util.logging.Logger;
 
-import static genomicelements.LocusPileupIterator.CLAIM_NEW_AND_DIFFERING_READS_PILEUP_MODE;
-import static genomicelements.ShortReadAlignment.*;
-
+import static analysis.GenomeAnonymizer.DEFAULT_MIN_MAPPING_QUALITY;
+import static utils.Operations.overlap;
 
 
 /**
- * Class used to classify all variation from a paired normal-tumor sample from each pileup position
+ * Class used to classify all variation from a paired normal-tumor sample from each pileup position, and provide
+ * variated and not read alignments
  * @author Nicolas Gaitan
  */
 
-public class VariationClassifier {
+public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>, Closeable {
 
-    private static final Logger LOGGER = Logger.getLogger(VariationClassifier.class.getName());
+    private static final Logger LOGGER = Logger.getLogger(AnonymizedReadAlignmentProvider.class.getName());
 
     public static final List<Byte> ALPHABET_AS_BYTES = Arrays.asList(
             (byte) 'A', (byte) 'T', (byte) 'C', (byte) 'G'
     );
 
+    public static final int SHORT_READ_LEFT_PILEUP_REGION_EXTENSION = 500;
     public static final int SLIDING_WINDOW_LIMIT = 200;
     public static final int MAX_LOCATION_DISTANCE_THRESHOLD = 400;
-    public static final int SIGNAL_REGION_LIMIT = 1000;
+    public static final int SIGNAL_PER_REGION_LIMIT = 1000;
+
     // Assuming a maximum position distance of 10, and 15 of length
     public static final int COMPLEX_SIGNAL_THRESHOLD = 18;
+
+    SamplePairReadAlignmentReader pairPileupReader;
+    private int currentPileupPosition = 0;
+
+    private Queue<AnonymizedRead> anonymizedReadQueue;
+    private MapCacheFIFO<String, AnonymizedRead> anonymizedReadCache;
+    private Set<String> onHoldReads;
 
     private Map<Integer, List<PairCalledVariation>> snvsPerPos;
     private Map<Integer, List<PairCalledVariation>> indelsPerPos;
     private List<Signal> complexSignals;
 
     private Set<String> readsToExclude;
-    private Map<String, List<Signal>> potentialGermlinesPerRead;
     private Map<String, Map<Integer, PairCalledVariation>> somaticVariantsToKeep;
     private boolean diffuseIndelCalls;
     private boolean anonymizePotentialLeaksInVCFSomatics;
 
     private byte[] refSequence;
-    private GenomicRegion region;
+    private GenomicRegion genomicRegion;
+
+    private int minMappingQuality = DEFAULT_MIN_MAPPING_QUALITY;
+
+    private int numProcessedPileups = 0;
 
     //DEBUG
     public Map<String, Long> METHOD_TIME_MAP = new HashMap<>();
     //DEBUG
 
-    public VariationClassifier(){
-        potentialGermlinesPerRead = new HashMap<>();
+    public AnonymizedReadAlignmentProvider(){
+        anonymizedReadQueue = new LinkedList<>();
+        anonymizedReadCache = new MapCacheFIFO<>(10_000_000);
+        onHoldReads = new HashSet<>();
         diffuseIndelCalls = false;
         setAnonymizePotentialLeaks(false);
         readsToExclude = new HashSet<>();
@@ -65,16 +81,16 @@ public class VariationClassifier {
         refSequence = new byte[0];
     }
 
-    public Map<String, List<Signal>> getPotentialGermlinesPerRead() {
-        return potentialGermlinesPerRead;
-    }
-
     public void setReadsToExclude(Set<String> readsToExclude){
         this.readsToExclude = readsToExclude;
     }
 
     public void setVCFVariantsToKeep(Map<String, Map<Integer, PairCalledVariation>> somaticVariantsToKeep){
         this.somaticVariantsToKeep = somaticVariantsToKeep;
+    }
+
+    public void setMinMappingQuality(int minMappingQuality) {
+        this.minMappingQuality = minMappingQuality;
     }
 
     public void setAnonymizePotentialLeaks(boolean anonymize){
@@ -93,53 +109,55 @@ public class VariationClassifier {
      * @param region
      * @throws IOException
      */
-    public void callVariation(String normalPath, String tumorPath, String refGenome, GenomicRegion region) throws IOException {
-        this.region = region;
-        try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, refSequence, this.region)){
+    public void init(String normalPath, String tumorPath, String refGenome, GenomicRegion region) throws IOException {
+        this.genomicRegion = region;
+        int leftLimit = Math.max(genomicRegion.getStart() - SHORT_READ_LEFT_PILEUP_REGION_EXTENSION, 1);
+        GenomicRegion leftExtendedRegion = new GenomicRegionBaseImpl(genomicRegion.getSequenceName(),
+                leftLimit, genomicRegion.getEnd());
+        leftExtendedRegion.setSequenceIdx(region.getSequenceIdx());
+        pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, refSequence, leftExtendedRegion);
             //Retrieve signals from their normal sample even if there is no coverage in the tumor sample
-            pairPileupReader.setReturnNormal(true);
-            pairPileupReader.setMinimumMappingQuality(SamplePairReadAlignmentReader.DEFAULT_MINIMUM_MAPPING_QUALITY);
-            pairPileupReader.setIncludeDuplicates(true);
-            pairPileupReader.setReadsToExclude(readsToExclude);
-            pairPileupReader.setPileupMode(CLAIM_NEW_AND_DIFFERING_READS_PILEUP_MODE);
-            callVariation(pairPileupReader);
-        }
+        pairPileupReader.setReturnNormal(true);
+        pairPileupReader.setMinimumMappingQuality(minMappingQuality);
+        pairPileupReader.setIncludeDuplicates(true);
+        pairPileupReader.setReadsToExclude(readsToExclude);
     }
 
-    public void callVariation(SamplePairReadAlignmentReader pairPileupReader){
-        Iterator<PairedPileup> pileupIterator = pairPileupReader.iterator();
-        int numProcessedPileups = 0;
-        while (pileupIterator.hasNext()) {
-            PairedPileup pileup = pileupIterator.next();
-            int refPosition = pileup.getReferencePos();
-            initializeSignalsInPos(refPosition);
-            long startclassifyVariationInPairedPileup = System.currentTimeMillis();
-            classifyVariationInPairedPileup(pileup);
-            long endclassifyVariationInPairedPileup = System.currentTimeMillis();
-            METHOD_TIME_MAP.compute("classifyVariationInPairedPileup", (k,v) -> v == null ?
-                    endclassifyVariationInPairedPileup-startclassifyVariationInPairedPileup :
-                    v + endclassifyVariationInPairedPileup-startclassifyVariationInPairedPileup);
-            long startprocessSimpleSignals = System.currentTimeMillis();
-            processSimpleSignals(refPosition, snvsPerPos);
-            processSimpleSignals(refPosition, indelsPerPos);
-            long endprocessSimpleSignals = System.currentTimeMillis();
-            METHOD_TIME_MAP.compute("processSimpleSNVSignals",  (k,v) -> v == null ?
-                    endprocessSimpleSignals-startprocessSimpleSignals :
-                    v + endprocessSimpleSignals-startprocessSimpleSignals);
-            if (!pileupIterator.hasNext() || complexSignals.size() >= SIGNAL_REGION_LIMIT) {
-                long startprocessComplexSignals = System.currentTimeMillis();
-                processComplexSignals();
-                long endprocessComplexSignals = System.currentTimeMillis();
-                METHOD_TIME_MAP.compute("processComplexSignals",  (k,v) -> v == null ?
-                        endprocessComplexSignals-startprocessComplexSignals :
-                        v + endprocessComplexSignals-startprocessComplexSignals);
+    public void processNextPairedPileup(PairedPileup pileup){
+        int refPosition = pileup.getReferencePos();
+        //DEBUG
+//        if(genomicRegion.getSequenceName().equals("1") && genomicRegion.getStart() == 216739681 && genomicRegion.getEnd() == 227576664){
+//            System.out.println("#Pileup position: " + currentPileupPosition);
+//        }
+        //DEBUG
+        currentPileupPosition = refPosition;
+        initializeSignalsInPos(refPosition);
+        long startclassifyVariationInPairedPileup = System.currentTimeMillis();
+        classifyVariationInPairedPileup(pileup);
+        long endclassifyVariationInPairedPileup = System.currentTimeMillis();
+        METHOD_TIME_MAP.compute("classifyVariationInPairedPileup", (k,v) -> v == null ?
+                endclassifyVariationInPairedPileup-startclassifyVariationInPairedPileup :
+                v + endclassifyVariationInPairedPileup-startclassifyVariationInPairedPileup);
+        long startprocessSimpleSignals = System.currentTimeMillis();
+        processSimpleSignals(refPosition, snvsPerPos);
+        processSimpleSignals(refPosition, indelsPerPos);
+        long endprocessSimpleSignals = System.currentTimeMillis();
+        METHOD_TIME_MAP.compute("processSimpleSNVSignals",  (k,v) -> v == null ?
+                endprocessSimpleSignals-startprocessSimpleSignals :
+                v + endprocessSimpleSignals-startprocessSimpleSignals);
+        if (genomicRegion.getEnd() == currentPileupPosition || complexSignals.size() >= SIGNAL_PER_REGION_LIMIT) {
+            long startprocessComplexSignals = System.currentTimeMillis();
+            processComplexSignals();
+            long endprocessComplexSignals = System.currentTimeMillis();
+            METHOD_TIME_MAP.compute("processComplexSignals",  (k,v) -> v == null ?
+                    endprocessComplexSignals-startprocessComplexSignals :
+                    v + endprocessComplexSignals-startprocessComplexSignals);
 //                diffuseIndelCalls(); -> here?
-                complexSignals = new ArrayList<>();
-            }
-            clearUnusedSimpleSignals(refPosition - SLIDING_WINDOW_LIMIT);
-            numProcessedPileups++;
-            logProcessedPileups(numProcessedPileups);
+            complexSignals = new ArrayList<>();
         }
+        clearUnusedSimpleSignals(refPosition - SLIDING_WINDOW_LIMIT);
+        numProcessedPileups++;
+        logProcessedPileups();
     }
 
     private void initializeSignalsInPos(int pos) {
@@ -168,36 +186,37 @@ public class VariationClassifier {
         if(pileup==null){
             return;
         }
-        //Check for potential SNVs
-        long startdiscoverSNVs = System.currentTimeMillis();
-        //TODO: Implement on demand read return, if it hasn´t been seen, or if at the pileup it has a change in base
-        long enddiscoverSNVs = System.currentTimeMillis();
-        METHOD_TIME_MAP.compute("discoverPileupSNVs",  (k,v) -> v == null ?
-                enddiscoverSNVs-startdiscoverSNVs :
-                v + enddiscoverSNVs-startdiscoverSNVs);
-        //Get only the new reads that appear on this pileup, already processed ones are ignored
-        List<PileupRead> pileupReads = pileup.claimNewReadsOnPileup();
+        //Get only the new reads that appear on this pileup, or those that vary from the reference at this pileup
+        List<PileupRead> pileupReads = pileup.claimReadsOnPileup();
         //Check for potential indels or other complex signals
-        for (PileupRead pileupRecord : pileupReads) {
-            //This may be extended to support other types of reads (e.g. long reads)
-            if(pileupRecord.getStatus() == PileupRead.PileupReadStatus.PILEUP_READ_STATUS_NEW){
+        for (PileupRead pileupRead : pileupReads) {
+            //ANNOT: This may be extended to support other types of reads (e.g. long reads)
+            if(pileupRead.getStatus() == PileupRead.PileupReadStatus.PILEUP_READ_STATUS_NEW){
+                //Avoid queuing reads that fall in the region offset, but are not part of the pileup region
+                if(overlap(pileupRead, genomicRegion)){
+                    AnonymizedRead anonymizedRead = new ShortAnonymizedReadAlignment(pileupRead.getRead(), isNormalDataset);
+                    anonymizedRead.setReferenceContigSequence(refSequence);
+                    anonymizedReadQueue.offer(anonymizedRead);
+                    anonymizedReadCache.put(anonymizedRead.getReadAlignmentId(), anonymizedRead);
+                }
                 long startdiscoverIndelsAndSignalsFromCIGAR = System.currentTimeMillis();
-                discoverIndelsAndComplexSignalsFromCIGAR(pileupRecord, isNormalDataset);
+                discoverIndelsAndComplexSignalsFromCIGAR(pileupRead, isNormalDataset);
                 long enddiscoverIndelsAndSignalsFromCIGAR = System.currentTimeMillis();
                 METHOD_TIME_MAP.compute("discoverIndelsAndComplexSignalsFromCIGAR", (k, v) -> v == null ?
                         enddiscoverIndelsAndSignalsFromCIGAR - startdiscoverIndelsAndSignalsFromCIGAR :
                         v + enddiscoverIndelsAndSignalsFromCIGAR - startdiscoverIndelsAndSignalsFromCIGAR);
             }
-            if(pileupRecord.differsFromReferenceAtPileup()){
+            //Check for potential SNVs
+            if(pileupRead.differsFromReferenceAtPileup()){
                 long startdiscoverSNVsFromRead = System.currentTimeMillis();
-                discoverSNVs(pileupRecord, isNormalDataset);
+                discoverSNVs(pileupRead, isNormalDataset);
                 long enddiscoverSNVsFromRead = System.currentTimeMillis();
                 METHOD_TIME_MAP.compute("discoverSNVsFromRead", (k, v) -> v == null ?
                         enddiscoverSNVsFromRead - startdiscoverSNVsFromRead :
                         v + enddiscoverSNVsFromRead - startdiscoverSNVsFromRead);
             }
                 //DEBUG
-//                System.out.println("$ " + pileupRecord.getPairedReadName());
+//                System.out.println("$ " + pileupRead.getPairedReadName());
                 //DEBUG
         }
     }
@@ -253,15 +272,18 @@ public class VariationClassifier {
                 processSomaticType(variationInPos, calledVar, variationExists, isNormalDataset);
             }
             if(op.isClipping()){
-                //int currentRefPos = initRefPos + cigarPos-1;
                 int currentRefPos = cigarPos == 0 ? initRefPos : initRefPos + cigarPos-1;
                 int inReadPos = pileupRead.getRead().getReadPositionAtReferencePosition(currentRefPos);
                 int length = cigarElement.getLength();
                 if(CigarOperator.S == op){
-                    Signal calledSignal = new Signal(sequenceName, currentRefPos, readAlnId, i, length,
-                            Signal.Source.SOFT_CLIP);
-                    calledSignal.setIsFromNormalDataset(isNormalDataset);
-                    complexSignals.add(calledSignal);
+                    //Temp. solution: Avoid soft-clipping signals that fall outside the reference sequence
+                    if(initRefPos-length-1 >= 0){
+                        Signal calledSignal = new Signal(sequenceName, currentRefPos, readAlnId, i, length,
+                                Signal.Source.SOFT_CLIP);
+                        calledSignal.setIsFromNormalDataset(isNormalDataset);
+                        complexSignals.add(calledSignal);
+                        if (anonymizedReadCache.containsKey(readAlnId)) onHoldReads.add(readAlnId);
+                    }
                 }
             }
             if(op.consumesReferenceBases()){
@@ -290,7 +312,6 @@ public class VariationClassifier {
         int indexSearch = variationInPos.indexOf(calledVar);
         boolean variationExists = indexSearch != -1;
         if (variationExists) calledVar = variationInPos.get(indexSearch);
-        //TODO: Check and fix inReadPosition if wrongly estimated in supplementaries
         calledVar.addSupportingRead(readAlnId, inReadPosition);
         processSomaticType(variationInPos, calledVar, variationExists, isNormalDataset);
     }
@@ -326,10 +347,6 @@ public class VariationClassifier {
         }
     }
 
-    /**
-     *
-     *
-     */
     private void processSimpleSignals(int refPos, Map<Integer, List<PairCalledVariation>> variationTypePerPos) {
         List<PairCalledVariation> variationInPos = variationTypePerPos.get(refPos);
         for (PairCalledVariation var : variationInPos){
@@ -337,9 +354,10 @@ public class VariationClassifier {
                 Map<String, Integer> supportingReads = var.getSupportingReadPositions();
                 for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
                     String readAlnId = entry.getKey();
-                    List<Signal> potentialGermlinesInReadAlignment = potentialGermlinesPerRead
-                            .computeIfAbsent(readAlnId, v -> new ArrayList<>());
-                    potentialGermlinesInReadAlignment.add(new Signal(readAlnId, var));
+                    AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnId);
+                    //The anonymizedRead is null if it comes from the offset before the first pileup position,
+                    //it is used for classification but is left to be returned by other thread
+                    if(anonymizedRead != null) anonymizedRead.addSignalToAnonymize(new Signal(readAlnId, var));
                 }
             }
         }
@@ -382,7 +400,7 @@ public class VariationClassifier {
             Signal nextSignal = complexSignals.get(i+1);
             int locationDistance = Math.abs(nextSignal.getLocation() - currentSignal.getLocation());
             boolean lastSignalUnreachable = locationDistance > MAX_LOCATION_DISTANCE_THRESHOLD;
-            if(lastSignalUnreachable || currentPartition.size() >= SIGNAL_REGION_LIMIT  || (i==n-2)){
+            if(lastSignalUnreachable || currentPartition.size() >= SIGNAL_PER_REGION_LIMIT || (i==n-2)){
                 if(!lastSignalUnreachable){
                     currentPartition.add(nextSignal);
                     i++;
@@ -415,27 +433,93 @@ public class VariationClassifier {
 //                adjacencyGraph.get(i).add(j);
 //                adjacencyGraph.get(j).add(i);
             }
+            onHoldReads.remove(firstSignal.getReadAlnName());
         }
     }
 
     private void classifyPGcomplexSignal(Signal signal, int pos, boolean[] isClassifiedPG) {
         if(!isClassifiedPG[pos]) {
             String readAlnId = signal.getReadAlnName();
-            List<Signal> potentialGermlinesInReadAlignment = potentialGermlinesPerRead
-                    .computeIfAbsent(readAlnId, v -> new ArrayList<>());
+            AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnId);
+            //The anonymizedRead is null if it comes from the offset before the first pileup position,
+            //it is used for classification but is left to be returned by other thread
+            if(anonymizedRead != null) anonymizedRead.addSignalToAnonymize(signal);
+            isClassifiedPG[pos] = true;
             //DEBUG
             //System.out.println("& " + signal.toString());
             //DEBUG
-            potentialGermlinesInReadAlignment.add(signal);
-            isClassifiedPG[pos] = true;
         }
     }
 
-    private void logProcessedPileups(int processedPileupPositions) {
-        if (processedPileupPositions % 1_000_000 == 0) LOGGER.info("GenomicRegion["+region.toString()+"]: "+ "Processed " + processedPileupPositions + " pileup positions");
+    private void logProcessedPileups() {
+        if (numProcessedPileups % 1_000_000 == 0) LOGGER.info("GenomicRegion["+ genomicRegion.toString()+"]: "+ "Processed " + numProcessedPileups + " pileup positions");
     }
 
     public void setDiffuseIndelCalls(boolean diffuseIndelCalls) {
         this.diffuseIndelCalls = diffuseIndelCalls;
+    }
+
+    @Override
+    public Iterator<AnonymizedRead> iterator() {
+        return new Iterator<AnonymizedRead>() {
+
+            final Iterator<PairedPileup> pairedPileupIterator = pairPileupReader.iterator();
+            AnonymizedRead next = getNextAnonymizedRead();
+
+            @Override
+            public boolean hasNext() {
+                return next != null;
+            }
+
+            @Override
+            public AnonymizedRead next() {
+                if(next == null) throw new NoSuchElementException();
+                AnonymizedRead current = next;
+                next = getNextAnonymizedRead();
+                return current;
+            }
+
+            private AnonymizedRead getNextAnonymizedRead() {
+                //Advance the pileup or get the next fully processed read
+                AnonymizedRead answer;
+                while(pairedPileupIterator.hasNext()){
+                    answer = anonymizedReadQueue.peek();
+//                    if(answer != null && answer.getEnd() < currentPileupPosition - DISTANCE_LIMIT_TO_HOLD_READS){
+                    if(answer != null && answer.getEnd() < currentPileupPosition){
+                        answer = anonymizedReadQueue.remove();
+                        if (!onHoldReads.contains(answer.getReadAlignmentId())){
+                            anonymizedReadCache.remove(answer.getReadAlignmentId());
+                            return answer;
+                        }
+                        else{
+                            anonymizedReadQueue.offer(answer);
+                        }
+                    }
+                    processNextPairedPileup(pairedPileupIterator.next());
+                }
+                //Get the next remaining reads from the queue
+                if(!anonymizedReadQueue.isEmpty()){
+                    answer = anonymizedReadQueue.poll();
+                    anonymizedReadCache.remove(answer.getReadAlignmentId());
+                    return answer;
+                }
+                return null;
+            }
+        };
+    }
+
+    @Override
+    public void forEach(Consumer<? super AnonymizedRead> action) {
+        Iterable.super.forEach(action);
+    }
+
+    @Override
+    public Spliterator<AnonymizedRead> spliterator() {
+        return Iterable.super.spliterator();
+    }
+
+    @Override
+    public void close() throws IOException {
+        pairPileupReader.close();
     }
 }

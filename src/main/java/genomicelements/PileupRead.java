@@ -3,9 +3,9 @@ package genomicelements;
 import htsjdk.samtools.Cigar;
 import htsjdk.samtools.SAMRecord;
 
-import static genomicelements.ShortReadAlignment.generateReadAlnId;
+import static genomicelements.ShortAnonymizedReadAlignment.generateReadAlnId;
 
-public class PileupRead {
+public class PileupRead implements GenomicRegion{
     private final int location;
     private SAMRecord read;
     private int readPosition;
@@ -36,12 +36,22 @@ public class PileupRead {
         return read.getReferenceName();
     }
 
+    @Override
+    public int getSequenceIdx() {
+        return 0;
+    }
+
     public int getStart(){
         return read.getAlignmentStart();
     }
 
     public int getEnd(){
         return read.getAlignmentEnd();
+    }
+
+    @Override
+    public void setSequenceIdx(int sequenceIdx) {
+
     }
 
     public String getReadName(){

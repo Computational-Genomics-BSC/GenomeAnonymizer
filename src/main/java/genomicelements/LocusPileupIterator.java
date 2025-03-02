@@ -9,6 +9,8 @@ import java.util.function.Consumer;
 
 import genomicelements.PileupRead.PileupReadStatus;
 
+import static utils.Operations.overlap;
+
 /**
  * @author Nicolas Gaitan
  * Iterable interface to traverse locus pileups over a stream of alignments, as SAMRecord objects
@@ -22,47 +24,58 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
     );
 
     public static final int CLAIM_ALL_READS_PILEUP_MODE = 0;
-    public static final int CLAIM_NEW_AND_DIFFERING_READS_PILEUP_MODE = 1;
+    public static final int CLAIM_NEW_READS_ONLY_PILEUP_MODE = 1;
+    public static final int CLAIM_NEW_AND_DIFFERING_READS_ONLY_PILEUP_MODE = 2;
 
-    private SAMRecordIterator readIterator;
+    public static final int DEFAULT_PILEUP_READ_LIMIT = 100_000;
+
+
+    private SamReader samReaderStream;
     private MapCacheFIFO<Integer, LocusPileUp> cache;
     private int start;
     private int end;
     private int nextReferencePosition;
-    private int minimumMappingQuality = 0;
-    private boolean includeDuplicates = false;
     private OnPileupQueue readQueue;
     private Set<String> readsToExclude;
-    private int pileupMode = 0;
+
+    //Pileup behaviour modifiers
+    private int minimumMappingQuality = 0;
+    private boolean includeDuplicates = false;
+    private int pileupMode;
+    //Extend pileup towards the left/right-most positions of the ends of the most extreme pileup read alignment
+//    private boolean extendLeft;
+//    private boolean extendRight;
+//
     //This reference sequence is 0-based, given it comes in a byte array
     private byte[] refSequence;
+    private String sequenceName;
 
     //TODO: Handle pileup when traversing different chromosomes or specify it cannot be used for that
 
-    public LocusPileupIterator(SamReader samReaderStream, String sequenceName, int start, int end) throws IllegalStateException{
-        setPileupMode(CLAIM_ALL_READS_PILEUP_MODE);
-        init(samReaderStream.query(sequenceName, start, end, false), start, end);
+    public LocusPileupIterator(SamReader samReaderStream, String sequenceName, int start, int end){
+        this(samReaderStream, sequenceName, start, end, CLAIM_ALL_READS_PILEUP_MODE);
     }
 
-    public LocusPileupIterator(SamReader samReaderStream, String sequenceName, int start, int end, int pileupMode, byte[] refSequence) throws IllegalStateException{
-        init(samReaderStream.query(sequenceName, start, end, false), start, end);
-        setPileupMode(pileupMode);
+    public LocusPileupIterator(SamReader samReaderStream, String sequenceName, int start, int end, byte[] refSequence) throws IllegalStateException{
+        this(samReaderStream, sequenceName, start, end, CLAIM_NEW_AND_DIFFERING_READS_ONLY_PILEUP_MODE);
+        if(this.pileupMode == CLAIM_NEW_AND_DIFFERING_READS_ONLY_PILEUP_MODE && refSequence == null) {
+            throw new IllegalStateException("Reference sequence must be provided when using the new and different reads pileup mode.");
+        }
         setRefSequence(refSequence);
-        if(this.pileupMode != CLAIM_NEW_AND_DIFFERING_READS_PILEUP_MODE && pileupMode != CLAIM_ALL_READS_PILEUP_MODE) {
+    }
+
+    public LocusPileupIterator(SamReader samReaderStream, String sequenceName, int start, int end, int pileupMode) throws IllegalStateException{
+        setPileupMode(pileupMode);
+        if(this.pileupMode != CLAIM_NEW_AND_DIFFERING_READS_ONLY_PILEUP_MODE && pileupMode != CLAIM_ALL_READS_PILEUP_MODE) {
             throw new IllegalArgumentException("Invalid pileup mode: " + pileupMode + ". Valid modes are: " +
                     "0 - Claim all reads pileup mode, 1 - Claim new and different reads pileup mode.");
         }
-        if(this.pileupMode == CLAIM_NEW_AND_DIFFERING_READS_PILEUP_MODE && refSequence == null) {
-            throw new IllegalStateException("Reference sequence must be provided when using the new and different reads pileup mode.");
-        }
+        init(samReaderStream, sequenceName, start, end);
     }
 
-    public LocusPileupIterator(SAMRecordIterator readIterator, int start, int end) throws IllegalStateException{
-        init(readIterator, start, end);
-    }
-
-    public void init(SAMRecordIterator readIterator, int start, int end) throws IllegalStateException{
-        this.readIterator = readIterator;
+    public void init(SamReader samReaderStream, String sequenceName, int start, int end) throws IllegalStateException{
+        this.samReaderStream = samReaderStream;
+        this.sequenceName = sequenceName;
         // 1-based start and end of the region
         this.start = start;
         this.end = end;
@@ -108,12 +121,11 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
         this.refSequence = refSequence;
     }
 
-    //TODO: Implement on demand read return, if it hasn´t been seen, or if at the pileup it has a change in base
-
     private void createOrUpdatePileupsFromRead(SAMRecord read) throws IllegalArgumentException{
         byte[] bases = read.getReadBases();
         int refPos = read.getAlignmentStart();
         int readPos = 0;
+        boolean isReadsFirstPileup = true;
         int alignedCount = 0;
         String sequenceName = read.getContig();
         List<CigarElement> cigarElementList = read.getCigar().getCigarElements();
@@ -130,11 +142,16 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
                     }
                     LocusPileUp pileup = cache.get(pileupPos);
                     if(pileup == null) {
-                        pileup = new LocusPileUp(sequenceName, pileupPos, readQueue);
+                        if(pileupMode == CLAIM_ALL_READS_PILEUP_MODE) pileup = new LocusPileUp(sequenceName, pileupPos);
+                        else pileup = new LocusPileUp(sequenceName, pileupPos, readQueue);
                         cache.putEntry(pileupPos, pileup);
                     }
                     PileupRead pileupRead = new PileupRead(read, pileUpReadPos, readBaseUpper, pileupPos);
-                    if(pileupMode == CLAIM_NEW_AND_DIFFERING_READS_PILEUP_MODE){
+                    if(isReadsFirstPileup){
+                        isReadsFirstPileup = false;
+                    }
+                    else pileupRead.setStatus(PileupReadStatus.PILEUP_READ_STATUS_REPEATED);
+                    if(pileupMode == CLAIM_NEW_AND_DIFFERING_READS_ONLY_PILEUP_MODE){
                         char referenceBaseUpper = Character.toUpperCase((char) refSequence[pileupPos-1]);
                         if(ALPHABET.contains(referenceBaseUpper)) pileupRead.setReferenceBase(referenceBaseUpper);
                     }
@@ -153,11 +170,11 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
 
     @Override
     public Iterator<LocusPileUp> iterator() {
-        if(!readIterator.hasNext()) return Collections.emptyIterator();
         return new Iterator<LocusPileUp>() {
 
-            // To make sure the readIterator is not null, it is checked in the Iterable class
-            SAMRecord nextRead = readIterator.next();
+            final SAMRecordIterator readIterator = samReaderStream.query(sequenceName, start, end, false);
+
+            SAMRecord nextRead = readIterator.hasNext() ? readIterator.next() : null;
             LocusPileUp next = getNext();
 
             @Override
@@ -205,10 +222,10 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
     }
 
     public boolean passesFilters(SAMRecord read){
-        if (readsToExclude.contains(read.getReadName())) return false;
-        if(read.getReadUnmappedFlag()) return false;
         if(read.getMappingQuality() < minimumMappingQuality) return false;
+        if(read.getReadUnmappedFlag()) return false;
         if(!includeDuplicates && read.getDuplicateReadFlag()) return false;
+        if (readsToExclude.contains(read.getReadName())) return false;
         return true;
     }
 
@@ -227,11 +244,12 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
 
         private static final int DEFAULT_MAX_SIZE_LIMIT = 10_000_000;
 
-        private Set<String> addedReadIds;
+        //DEBUG
+//        Map<String, Integer> debugMap = new HashMap();
+        //DEBUG
 
         public OnPileupQueue(){
             super();
-            addedReadIds = new HashSet<>();
         }
 
         public boolean offerNew(PileupRead read){
@@ -239,32 +257,30 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
             if(this.size() > DEFAULT_MAX_SIZE_LIMIT){
                 flushUnclaimedReads();
             }
-            String readAlnId = read.getReadAlignmentId();
-            PileupReadStatus status = determinePileupReadStatus(read, addedReadIds.contains(readAlnId));
+            PileupReadStatus status = updatePileupReadStatus(read);
             if(status != null){
                 read.setStatus(status);
-                if(status == PileupReadStatus.PILEUP_READ_STATUS_NEW || status == PileupReadStatus.PILEUP_READ_STATUS_NEW_AND_DIFFERING_BASE) {
-                    addedReadIds.add(readAlnId);
-                }
+//                System.out.println("#Read " + read.getRead().getReadName() + " has status: " + status);
+                //DEBUG
+//                debugMap.compute(read.getReadAlignmentId(), (k, v) -> v == null ? 1 : v+1);
+//                System.out.println("Read " + read.getReadName()  + " has been seen " + debugMap.get(read.getReadAlignmentId()) + " times " + "with status " + read.getStatus() + ".");
+                //DEBUG
                 return super.offer(read);
             }
             return false;
         }
-        
-        
-        
+
         /**
          * Identifies and retrieves a list of SAMRecord objects from the queue that overlap a specified reference position.
          * Reads are considered overlapping if their start position is ≤ the pileup position and their end position is ≥ the pileup reference position.
          * The overlapping reads are removed from the queue and returned as part of the resulting list.
-         * @implicitParam nextReferencePosition the pileup position used as a threshold.
          * @return A list of SAMRecord objects that overlap the specified reference position. Each SAMRecord will no longer be in the queue.
          */
-        public List<PileupRead> claimNewReadsOnPileup(LocusPileUp pileup){
+        public List<PileupRead> claimReadsOnPileup(LocusPileUp pileup){
             List<PileupRead> answer = new ArrayList<>();
             PileupRead nextRead = this.peek();
-            while (!this.isEmpty() &&
-                    (nextRead.getStart() <= pileup.getLocation() && nextRead.getEnd() >= pileup.getLocation())){
+            while (!this.isEmpty() && overlap(pileup, nextRead)){
+//                    && (nextRead.getStart() <= pileup.getLocation() && nextRead.getEnd() >= pileup.getLocation())){
                 answer.add(this.poll());
                 nextRead = this.peek();
             }
@@ -279,28 +295,28 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
          *                       value will be removed from the queue if previously unclaimed.
          */
         public void flushUnclaimedReads(){
-            PileupRead nextRead = this.peek();
-            while (!this.isEmpty() && nextRead.getEnd() < nextReferencePosition-1){
-                this.poll();
-                addedReadIds.remove(nextRead.getReadAlignmentId());
-                nextRead = this.peek();
-            }
+            this.removeIf(nextRead -> nextRead.getEnd() < nextReferencePosition-1);
+//            PileupRead nextRead = this.peek();
+//            while (!this.isEmpty() && nextRead.getEnd() < nextReferencePosition-1){
+//                this.poll();
+//                nextRead = this.peek();
+//            }
         }
     }
 
     /**
-     * Determines the pileup status of a PileupRead based on its presence in the set and whether it differs from the reference.
-     *
+     * Determines the pileup status of a PileupRead based on its previous status and whether it differs from the reference.
      * @param read    The PileupRead to evaluate.
-     * @param isInSet A boolean indicating whether the read is already in the addedReadIds set.
      * @return The corresponding PileupReadStatus for the read, or null if no valid status applies.
      */
-    private PileupReadStatus determinePileupReadStatus(PileupRead read, boolean isInSet) {
-        if (pileupMode == CLAIM_ALL_READS_PILEUP_MODE) {
-            return isInSet ? PileupReadStatus.PILEUP_READ_STATUS_REPEATED : PileupReadStatus.PILEUP_READ_STATUS_NEW;
+    private PileupReadStatus updatePileupReadStatus(PileupRead read) {
+        boolean isNew = read.getStatus() == PileupReadStatus.PILEUP_READ_STATUS_UNKNOWN;
+        if (pileupMode == CLAIM_NEW_READS_ONLY_PILEUP_MODE) {
+            return isNew ?  PileupReadStatus.PILEUP_READ_STATUS_NEW
+                    : null; // No status for repeated reads in this mode, will not be returned
         }
-        else if (pileupMode == CLAIM_NEW_AND_DIFFERING_READS_PILEUP_MODE) {
-            if (!isInSet) {
+        else if (pileupMode == CLAIM_NEW_AND_DIFFERING_READS_ONLY_PILEUP_MODE) {
+            if (isNew) {
                 return read.differsFromReferenceAtPileup()
                         ? PileupReadStatus.PILEUP_READ_STATUS_NEW_AND_DIFFERING_BASE
                         : PileupReadStatus.PILEUP_READ_STATUS_NEW;

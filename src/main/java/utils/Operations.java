@@ -1,5 +1,6 @@
 package utils;
 
+import genomicelements.GenomicRegion;
 import htsjdk.samtools.SAMRecord;
 
 import java.util.Map;
@@ -38,6 +39,20 @@ public class Operations {
             return 1;
         }
         return 0;
+    }
+
+    public static boolean overlap(GenomicRegion  region1, GenomicRegion region2) {
+        int first1 = region1.getStart();
+        int first2 = region2.getStart();
+        int last1 = region1.getEnd();
+        int last2 = region2.getEnd();
+        return overlap(first1, first2, last1, last2);
+    }
+
+    public static boolean overlap(GenomicRegion region1, int first2, int last2) {
+        int first1 = region1.getStart();
+        int last1 = region1.getEnd();
+        return overlap(first1, first2, last1, last2);
     }
 
     public static boolean overlap(int first1, int first2, int last1, int last2) {

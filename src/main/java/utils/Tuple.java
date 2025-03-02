@@ -2,7 +2,7 @@ package utils;
 
 /**
  * Represents a tuple of two elements.
- * @author Rodrigo Martín
+ * @author Rodrigo Martin
  */
 public class Tuple<A, B> {
     private A a;

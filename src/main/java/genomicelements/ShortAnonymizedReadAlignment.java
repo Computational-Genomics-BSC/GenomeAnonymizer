@@ -11,9 +11,14 @@ import java.util.*;
  * @author Nicolas Gaitan
  * @author Rodrigo Martin
  */
-public class ShortAnonymizedReadAlignment implements AnonymizedRead{
+public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegion{
 
-    private final ShortReadAlignment readAlignment;
+    public static final int PAIR_1_IDX = 0;
+    public static final int PAIR_2_IDX = 1;
+    public static final String DEFAULT_ID_NAME_SEPARATOR = ";";
+
+    private final SAMRecord readAlignment;
+    private String readAlnId;
     private byte[] referenceContigSequence;
     private int alnStart;
     private boolean isAnonymized;
@@ -24,25 +29,54 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
     private List<PairCalledVariation> SNVsimpleSignals;
     private List<PairCalledVariation> indelSimpleSignals;
     private List<Signal> complexSignals;
+    private boolean isNormalDataset = true;
 
-    public ShortAnonymizedReadAlignment(ShortReadAlignment readAlignment) {
+    public ShortAnonymizedReadAlignment(SAMRecord readAlignment) {
         this.readAlignment = readAlignment;
+        this.readAlnId = generateReadAlnId(readAlignment);
         this.alnStart = getStart();
         this.isAnonymized = false;
-        this.anonymizedSequenceArray = new byte[0];
-        this.anonymizedQualitiesArray = new byte[0];
+        this.anonymizedSequenceArray = readAlignment.getReadBases();
+        this.anonymizedQualitiesArray = readAlignment.getBaseQualities();
+        this.anonymizedCigar = readAlignment.getCigar();
         this.anonymizedCigarElements = new ArrayList<>();
         this.SNVsimpleSignals = new ArrayList<>();
         this.indelSimpleSignals = new ArrayList<>();
         this.complexSignals = new ArrayList<>();
     }
 
+    public ShortAnonymizedReadAlignment(SAMRecord readAlignment, boolean isNormalDataset) {
+        this(readAlignment);
+        this.isNormalDataset = isNormalDataset;
+    }
+
+    public SAMRecord getAnonymizedSamRecord(){
+        if(!isAnonymized()){
+            anonymizeVariants();
+        }
+        SAMRecord answer = this.cloneRecord();
+        answer.setAlignmentStart(alnStart);
+        answer.setReadBases(anonymizedSequenceArray);
+        answer.setBaseQualities(anonymizedQualitiesArray);
+        answer.setCigar(anonymizedCigar);
+        // getStart and getEnd are 1-based, adjust accordingly, currently referenceSequence is 0-based
+        byte[] refSequenceAln = Arrays.copyOfRange(referenceContigSequence, answer.getStart()-1, answer.getEnd());
+        SequenceUtil.calculateMdAndNmTags(answer, refSequenceAln, true, true);
+        return answer;
+    }
+
+    //DEBUG
+    public SAMRecord getRead(){
+        return readAlignment;
+    }
+    //DEBUG
+
     public void setReferenceContigSequence(byte[] referenceContigSequence) {
         // 0-based memoized reference sequence, corresponding to the contig to which this read is mapped
         this.referenceContigSequence = referenceContigSequence;
     }
 
-    public void anonymizeVariants() throws IllegalStateException{
+    private void anonymizeVariants() throws IllegalStateException{
         if(referenceContigSequence == null){
             throw new IllegalStateException("The ShortAnonymizedReadAlignment.anonymizeVariants was called" +
                     "without setting the contigReferenceSequence first. setContigReferenceSequence, should always" +
@@ -53,7 +87,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         anonymizedSequenceArray = new byte[expectedSize];
         anonymizedQualitiesArray = new byte[expectedSize];
         byte avgQual = getAverageOfBytes(getOriginalQualitiesArray());
-        List<CigarElement> originalCigarElements = readAlignment.getCigarElements();
+        List<CigarElement> originalCigarElements = readAlignment.getCigar().getCigarElements();
         //Except a starting PG SoftClip, alignment start is invariant, as the anonymized read will map to the exact start coordinate as the original
         //final int alnStart = getStart();
         int alnOrgEnd = getEnd();
@@ -174,7 +208,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         // A negative operation (op) value, causes an elimination of the signal, whereas a positive value generates
         // an additive change with base pair filling from the reference genome
         for (PairCalledVariation indel : indelSimpleSignals){
-            //TODO: Account for SVs (SoftClips at first)
             int indelOpPos = indel.getInReadPosition(this);
             int op = PairCalledVariation.VariantType.INS == indel.getVariantType() ?
                     -(indel.getLength()) : indel.getLength();
@@ -231,42 +264,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         return (byte) answer;
     }
 
-    public SAMRecord getAnonymizedSamRecord(){
-        SAMRecord answer = readAlignment.cloneRecord();
-        answer.setAlignmentStart(alnStart);
-        answer.setReadBases(anonymizedSequenceArray);
-        answer.setBaseQualities(anonymizedQualitiesArray);
-        answer.setCigar(anonymizedCigar);
-        // getStart and getEnd are 1-based, adjust accordingly, currently referenceSequence is 0-based
-        byte[] refSequenceAln = Arrays.copyOfRange(referenceContigSequence, answer.getStart()-1, answer.getEnd());
-        SequenceUtil.calculateMdAndNmTags(answer, refSequenceAln, true, true);
-        return answer;
-    }
-
-    public String getReadAlignmentId() {
-        return readAlignment.getReadAlignmentId();
-    }
-
-    public String getReadName() {
-        return readAlignment.getReadName();
-    }
-
-    public int getLength() {
-        return readAlignment.getLength();
-    }
-
-    public int getPairIdx() {
-        return readAlignment.getPairIdx();
-    }
-
-    public byte[] getOriginalSequenceArray(){
-        return readAlignment.getSequenceArray();
-    }
-
-    public byte[] getOriginalQualitiesArray(){
-        return readAlignment.getQualitiesArray();
-    }
-
     public void setSignalsToAnonymize(List<Signal> signals) {
         addAllSignalsToAnonymize(signals);
     }
@@ -274,13 +271,13 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
     public boolean addAllSignalsToAnonymize(List<Signal> signals){
         boolean added = false;
         for (Signal signal : signals){
-            added = addVariantToAnonymize(signal);
+            added = addSignalToAnonymize(signal);
             if (!added) return false;
         }
         return added;
     }
 
-    public boolean addVariantToAnonymize(Signal signal){
+    public boolean addSignalToAnonymize(Signal signal){
         // Can change when dealing with SVs
         boolean added = false;
         if (Signal.Source.SIMPLE_VARIATION == signal.getSource()){
@@ -300,12 +297,17 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         return added;
     }
 
-    public String getReadId(){
-        return readAlignment.getReadAlignmentId();
+    public String getReadAlignmentId(){
+        return readAlnId;
     }
 
     public String getSequenceName() {
-        return readAlignment.getSequenceName();
+        return readAlignment.getContig();
+    }
+
+    @Override
+    public int getSequenceIdx() {
+        return 0;
     }
 
     public int getStart() {
@@ -316,23 +318,94 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         return readAlignment.getEnd();
     }
 
+    @Override
+    public void setSequenceIdx(int sequenceIdx) {
+    }
+
     public int getMappingQuality(){
         return readAlignment.getMappingQuality();
     }
 
     public boolean isSupplementary() {
-        return readAlignment.isSupplementary();
+        return readAlignment.getSupplementaryAlignmentFlag();
+    }
+
+    public boolean isReverse() {
+        return readAlignment.getReadNegativeStrandFlag();
+    }
+
+    public void setReverse(boolean reverse) {
+        readAlignment.setReadNegativeStrandFlag(reverse);
     }
 
     public boolean isAnonymized() {
+        if(SNVsimpleSignals.isEmpty() && indelSimpleSignals.isEmpty() && complexSignals.isEmpty()){
+            //This is a read that does not have to be anonymized
+            isAnonymized = true;
+        }
         return isAnonymized;
+    }
+
+    public boolean isFromNormalDataset(){
+        return isNormalDataset;
+    }
+
+    public boolean isFromTumoralDataset(){
+        return !isNormalDataset;
+    }
+
+    public String getReadName() {
+        return readAlignment.getReadName();
+    }
+
+    public int getLength() {
+        return readAlignment.getReadLength();
+    }
+
+    public boolean isPair1(){
+        return readAlignment.getFirstOfPairFlag();
+    }
+
+    public boolean isPair2(){
+        return readAlignment.getSecondOfPairFlag();
+    }
+
+    public int getPairIdx() {
+        return isPair1() ? PAIR_1_IDX : PAIR_2_IDX;
+    }
+
+    public void setPairIdx(int pairIdx) {
+        if(pairIdx == PAIR_1_IDX){
+            readAlignment.setFirstOfPairFlag(true);
+            readAlignment.setSecondOfPairFlag(false);
+        }else if(pairIdx == PAIR_2_IDX){
+            readAlignment.setFirstOfPairFlag(false);
+            readAlignment.setSecondOfPairFlag(true);
+        }
+    }
+
+    public byte[] getOriginalSequenceArray(){
+        return readAlignment.getReadBases();
+    }
+
+    public byte[] getOriginalQualitiesArray(){
+        return readAlignment.getBaseQualities();
+    }
+
+    public SAMRecord cloneRecord(){
+        try {
+            return (SAMRecord) readAlignment.clone();
+        } catch (CloneNotSupportedException e) {
+            e.printStackTrace();
+            throw new RuntimeException("Error cloning record " + readAlignment.getReadName(), e);
+        }
     }
 
     @Override
     public String toString(){
         StringBuilder builder = new StringBuilder();
         builder.append("ReadName=").append(getReadName());
-        builder.append(" ReadID=").append(getReadId());
+        builder.append(" ReadID=").append(getReadAlignmentId());
         builder.append(" Start=").append(getStart());
         builder.append(" End=").append(getEnd());
         builder.append(" OrgSeq=").append(new String(getOriginalSequenceArray(), StandardCharsets.UTF_8));
@@ -340,7 +413,24 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead{
         builder.append(" OrgQual=").append(Arrays.toString(getOriginalQualitiesArray()));
         builder.append(" AnonQual=").append(Arrays.toString(anonymizedQualitiesArray));
         builder.append(" CIGAR=").append(anonymizedCigar.toString());
-        builder.append(" TAGS=").append(readAlignment.getTags());
+        builder.append(" TAGS=").append(readAlignment.getAttributes());
+        return builder.toString();
+    }
+
+    //Provides a unique ID for each read alignment, directly from a SAMRecord
+    public static String generateReadAlnId(SAMRecord alignment){
+        StringBuilder builder = new StringBuilder();
+        int pairIdx = alignment.getFirstOfPairFlag() ? PAIR_1_IDX : PAIR_2_IDX;
+//        String baseName = generateReadAlnId(alignment.getReadName(), pairIdx, alignment.getAlignmentStart());
+        builder.append(alignment.getReadName());
+        builder.append(DEFAULT_ID_NAME_SEPARATOR);
+        builder.append(pairIdx);
+        builder.append(DEFAULT_ID_NAME_SEPARATOR);
+        builder.append(alignment.getAlignmentStart());
+        builder.append(alignment.getCigar().toString());
+        builder.append(alignment.getBaseQualityString());
+        builder.append(alignment.getReadString());
+//        String complement = generateComplement(alignment);
         return builder.toString();
     }
 }
