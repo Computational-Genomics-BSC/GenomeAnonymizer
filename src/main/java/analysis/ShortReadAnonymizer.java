@@ -117,7 +117,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             idx++;
         }
         reference.close();
-        // Sort queryRegions with the updated information on sequence order from the reference genome
+//         Sort queryRegions with the updated information on sequence order from the reference genome
         queryRegions.forEach(v -> v.setSequenceIdx(refSequenceOrder.get(v.getSequenceName())));
         queryRegions.sort(Comparator.comparingInt(GenomicRegion::getSequenceIdx)
                 .thenComparing(GenomicRegion::getStart));
@@ -254,7 +254,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                             v + writeReadTime);
                 }
                 long endcallVariation = System.currentTimeMillis();
-                //DEBUG
+                //TIME DEBUG
                 anonymizedReadProvider.METHOD_TIME_MAP.put("callVariation", endcallVariation - startcallVariation);
                 LOGGER.info("Finished variation analysis of genomic region: SEQ=" + genomicPartition.getSequenceName()
                         + " POS=" + genomicPartition.getStart() + " END=" + genomicPartition.getEnd());
@@ -265,7 +265,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                     msg.append(timeInSeconds).append("\n");
                 }
                 LOGGER.info("PARTITION TIME TABLE: " + "\n" + msg);
-                //DEBUG
+                //TIME DEBUG
             }
             catch (Exception e) {
                 LOGGER.log(Level.SEVERE,
@@ -302,7 +302,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
     private void writeRead(SAMFileWriter samWriter, SAMRecord read) {
         // Set the read name to the hash of the read name + salt
-        read.setReadName(UUID.nameUUIDFromBytes((read.getReadName() + hashSalt).getBytes()).toString());
+//        read.setReadName(UUID.nameUUIDFromBytes((read.getReadName() + hashSalt).getBytes()).toString());
         // Set the read group to the same value as the read group of the header
         read.setAttribute("RG", samWriter.getFileHeader().getReadGroups().get(0).getId());
         samWriter.addAlignment(read);

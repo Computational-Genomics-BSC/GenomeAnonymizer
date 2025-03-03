@@ -55,6 +55,10 @@ public class Operations {
         return overlap(first1, first2, last1, last2);
     }
 
+    public static boolean overlap(int first1, int last1, int point) {
+        return point <= last1 && point >= first1;
+    }
+
     public static boolean overlap(int first1, int first2, int last1, int last2) {
         return first2 <= last1 && last2 >= first1;
     }

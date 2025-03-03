@@ -50,8 +50,8 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         this.isNormalDataset = isNormalDataset;
     }
 
-    public SAMRecord getAnonymizedSamRecord(){
-        if(!isAnonymized()){
+    public SAMRecord getAnonymizedSamRecord() {
+        if (!isAnonymized()) {
             anonymizeVariants();
         }
         SAMRecord answer = this.cloneRecord();
@@ -59,17 +59,9 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         answer.setReadBases(anonymizedSequenceArray);
         answer.setBaseQualities(anonymizedQualitiesArray);
         answer.setCigar(anonymizedCigar);
-        // getStart and getEnd are 1-based, adjust accordingly, currently referenceSequence is 0-based
-        byte[] refSequenceAln = Arrays.copyOfRange(referenceContigSequence, answer.getStart()-1, answer.getEnd());
-        SequenceUtil.calculateMdAndNmTags(answer, refSequenceAln, true, true);
+        SequenceUtil.calculateMdAndNmTags(answer, referenceContigSequence, true, true);
         return answer;
     }
-
-    //DEBUG
-    public SAMRecord getRead(){
-        return readAlignment;
-    }
-    //DEBUG
 
     public void setReferenceContigSequence(byte[] referenceContigSequence) {
         // 0-based memoized reference sequence, corresponding to the contig to which this read is mapped
@@ -111,7 +103,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
             int opLength = cigarElem.getLength();
             int indelOp = indelOps[c];
             if(indelOp > 0){
-                //TODO: For softclips, if it begins the read, substract exactly the length from currentRefAlnPos, if it ends add also exactly the length
+                //For softclips, if it begins the read, substract exactly the length from currentRefAlnPos, if it ends add also exactly the length
                 if(CigarOperator.S == currentCigarOp){
                     currentRefAlnPos -= indelOp;
                     //Update alignment start in 1-based coordinates
@@ -156,7 +148,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
             }
             c++;
         }
-        // Add reference bases to fill read to its original length for base-removing operations
+        // Add reference bases to fill read to its original length for base-removing operations, exclude reads that would fall out of reference bounds
         if(j < expectedSize){
             makeAdditiveChange(j, currentRefAlnPos, avgQual, expectedSize-j);
         }
@@ -186,7 +178,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
             if (PairCalledVariation.VariantType.INS.equals(variantType)) {
                 newSize -= indel.getLength();
             }
-            //TODO: Account for SVs (SoftClips at first)
         }
         return newSize;
     }
@@ -194,7 +185,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
     private byte[] processSNVoperations(int originalSeqLength) {
         byte[] snvOps = new byte[originalSeqLength];
         for (PairCalledVariation snv : SNVsimpleSignals){
-//            int snvOpPosition = snv.getInReadPosition(this)-1;
             int snvOpPosition = snv.getInReadPosition(this);
             //Change to retrieve from memoized ref genome
             byte op = snv.getRefAllele()[0];

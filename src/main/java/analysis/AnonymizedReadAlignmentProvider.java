@@ -125,11 +125,6 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
 
     public void processNextPairedPileup(PairedPileup pileup){
         int refPosition = pileup.getReferencePos();
-        //DEBUG
-//        if(genomicRegion.getSequenceName().equals("1") && genomicRegion.getStart() == 216739681 && genomicRegion.getEnd() == 227576664){
-//            System.out.println("#Pileup position: " + currentPileupPosition);
-//        }
-        //DEBUG
         currentPileupPosition = refPosition;
         initializeSignalsInPos(refPosition);
         long startclassifyVariationInPairedPileup = System.currentTimeMillis();
@@ -215,9 +210,6 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                         enddiscoverSNVsFromRead - startdiscoverSNVsFromRead :
                         v + enddiscoverSNVsFromRead - startdiscoverSNVsFromRead);
             }
-                //DEBUG
-//                System.out.println("$ " + pileupRead.getPairedReadName());
-                //DEBUG
         }
     }
 
@@ -273,11 +265,11 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
             }
             if(op.isClipping()){
                 int currentRefPos = cigarPos == 0 ? initRefPos : initRefPos + cigarPos-1;
-                int inReadPos = pileupRead.getRead().getReadPositionAtReferencePosition(currentRefPos);
                 int length = cigarElement.getLength();
                 if(CigarOperator.S == op){
-                    //Temp. solution: Avoid soft-clipping signals that fall outside the reference sequence
-                    if(initRefPos-length-1 >= 0){
+                    //Temp. solution: Avoid soft-clipping signals that fall outside the beginning of the reference sequence,
+                    //  or from reads that overlap with the last position
+                    if(initRefPos-length-1 >= 0 && !overlap(pileupRead.getStart(), pileupRead.getEnd()+length+1, refSequence.length-1)){
                         Signal calledSignal = new Signal(sequenceName, currentRefPos, readAlnId, i, length,
                                 Signal.Source.SOFT_CLIP);
                         calledSignal.setIsFromNormalDataset(isNormalDataset);
@@ -484,7 +476,6 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 AnonymizedRead answer;
                 while(pairedPileupIterator.hasNext()){
                     answer = anonymizedReadQueue.peek();
-//                    if(answer != null && answer.getEnd() < currentPileupPosition - DISTANCE_LIMIT_TO_HOLD_READS){
                     if(answer != null && answer.getEnd() < currentPileupPosition){
                         answer = anonymizedReadQueue.remove();
                         if (!onHoldReads.contains(answer.getReadAlignmentId())){
