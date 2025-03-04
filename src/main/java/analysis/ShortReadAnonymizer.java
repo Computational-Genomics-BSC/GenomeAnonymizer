@@ -126,7 +126,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         Collections.reverse(sequences);
         int[] partitionsPerSequence = new int[sequences.size()];
         Arrays.fill(partitionsPerSequence, 1);
-//        long basesPerThread = genomeSize / (nThreads * 10L);
         long basesPerThread = genomeSize / (threads * 5L);
         // Estimate threads to be assigned to each contig
         for(int i = 0; i < sequences.size(); i++){
@@ -302,7 +301,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
     private void writeRead(SAMFileWriter samWriter, SAMRecord read) {
         // Set the read name to the hash of the read name + salt
-//        read.setReadName(UUID.nameUUIDFromBytes((read.getReadName() + hashSalt).getBytes()).toString());
+        read.setReadName(UUID.nameUUIDFromBytes((read.getReadName() + hashSalt).getBytes()).toString());
         // Set the read group to the same value as the read group of the header
         read.setAttribute("RG", samWriter.getFileHeader().getReadGroups().get(0).getId());
         samWriter.addAlignment(read);

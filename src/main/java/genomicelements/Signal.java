@@ -1,5 +1,9 @@
 package genomicelements;
 
+/**
+ * Represents a signal from a variation at a genomic location in a given read.
+ * @author Nicolas Gaitan
+ */
 public class Signal {
 
     private String sequenceName;

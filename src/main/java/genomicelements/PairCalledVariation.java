@@ -174,7 +174,7 @@ public class PairCalledVariation {
                     this.pos == var2.pos &&
                     this.end == var2.end &&
                     this.length == var2.length &&
-                    (variantType != VariantType.SNV) || Arrays.equals(this.allele, var2.allele);
+                    Arrays.equals(this.allele, var2.allele);
             return answer;
         }
         return false;
