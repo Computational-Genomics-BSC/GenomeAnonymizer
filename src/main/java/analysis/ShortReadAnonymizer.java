@@ -5,6 +5,7 @@ import htsjdk.samtools.*;
 import htsjdk.samtools.reference.FastaSequenceIndex;
 import htsjdk.samtools.reference.FastaSequenceIndexEntry;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
+import htsjdk.samtools.util.IOUtil;
 import utils.GlobalRandom;
 
 import java.io.File;
@@ -32,6 +33,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
     public static final int NORMAL_DATASET_IDX = 0;
     public static final int TUMORAL_DATASET_IDX = 1;
+    // TODO: Set up as a parameter
+    public static final int MAX_READS_IN_RAM = 3000000;
 
     private String normalPath;
     private String tumorPath;
@@ -212,6 +215,14 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
     @Override
     public void anonymizeReads() {
+        // This is necessary to avoid all reads being kept in memory
+        // TODO: Ask as optional parameter?
+        File tmpDir = IOUtil.getDefaultTmpDir();
+        if (!tmpDir.exists()) tmpDir.mkdirs();
+        tmpDir.setReadable(true, false);
+        tmpDir.setWritable(true, false);
+        System.setProperty("java.io.tmpdir", tmpDir.getAbsolutePath());
+
         ExecutorService executorService = Executors.newFixedThreadPool(threads);
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         for(GenomicRegion genomicPartition : genomicPartitions){
@@ -281,15 +292,14 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
     private SAMFileWriter openSingleOutputStream(String path, GenomicRegion region, boolean isNormalDataset) throws IOException {
         int idx = isNormalDataset ? NORMAL_DATASET_IDX : TUMORAL_DATASET_IDX;
-        String suffix = "_" + region.toString() ;
+        String suffix = "_" + region.toString().replace(":", "_");
         File outputFile = new File(getBAMOutputName(outputPrefix+suffix, idx));
         SAMFileWriterFactory factory = new SAMFileWriterFactory();
-        //factory.setCreateIndex(true);
         factory.setCompressionLevel(1);
-        factory.setUseAsyncIo(true);
+        factory.setMaxRecordsInRam(MAX_READS_IN_RAM / threads);
         SAMFileHeader fileHeader = buildFileHeader(path, isNormalDataset ? "_N" : "_T");
-        SAMFileWriter writer = factory.makeBAMWriter(fileHeader, true, outputFile);
-        writer.setSortOrderChecking(false);
+        fileHeader.setSortOrder(SAMFileHeader.SortOrder.coordinate);
+        SAMFileWriter writer = factory.makeWriter(fileHeader, false, outputFile, new File(refGenomePath));
         return writer;
     }
 
