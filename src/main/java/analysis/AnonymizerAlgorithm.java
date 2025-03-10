@@ -16,7 +16,6 @@ public interface AnonymizerAlgorithm {
 
     public void anonymizeReads();
 
-    public void mergeAnonymizedReads() throws IOException;
     public void queryReadsToExclude();
 
     public void setPartitions() throws IOException;
