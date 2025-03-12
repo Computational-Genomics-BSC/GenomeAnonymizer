@@ -11,10 +11,7 @@ import utils.GlobalRandom;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.Future;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.UUID;
@@ -66,7 +63,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         this.inputTumorPath = inputTumorPath;
         this.refGenomePath = refGenomePath;
         this.outputPrefix = outputPrefix;
-        readsToExclude = new HashSet<>();
+        readsToExclude = ConcurrentHashMap.newKeySet();
         factory = SamReaderFactory.makeDefault();
         factory.setUseAsyncIo(true);
         factory.validationStringency(ValidationStringency.SILENT);
@@ -128,6 +125,9 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         int[] partitionsPerSequence = new int[sequences.size()];
         Arrays.fill(partitionsPerSequence, 1);
         long basesPerThread = genomeSize / (threads * 5L);
+        //DEBUG
+//        long basesPerThread = genomeSize / (threads * 50L);
+        //DEBUG
         // Estimate threads to be assigned to each contig
         for(int i = 0; i < sequences.size(); i++){
             partitionsPerSequence[i] += (int) (sequences.get(i).getSize() / basesPerThread);
@@ -148,6 +148,12 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 currentFirst += partitionSize + 1;
             }
         }
+        //DEBUG
+//        int lower = new Random().nextInt(0, genomicPartitions.size() - 11);
+//        int upper = lower + 10;
+//        genomicPartitions = genomicPartitions.stream().filter(v -> v.getSequenceName().equals("22")).toList();
+//        genomicPartitions.forEach(v -> System.out.println("$" + v.toString()));
+        //DEBUG
     }
 
     public void queryReadsToExclude() {
@@ -201,8 +207,13 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             SAMRecordIterator it = reader.query(partition.getSequenceName(), partition.getStart(), partition.getEnd(), false);
             while (it.hasNext()) {
                 SAMRecord samRecord = it.next();
-                if(samRecord.getReadUnmappedFlag() ||
+                if((samRecord.getReadUnmappedFlag() || samRecord.getMateUnmappedFlag()) ||
                         (samRecord.getMappingQuality() < minimumMappingQuality && !samRecord.isSecondaryOrSupplementary())){
+                //DEBUG
+//                if((samRecord.getReadUnmappedFlag() || samRecord.getMateUnmappedFlag()) ||
+//                        (samRecord.getMappingQuality() < minimumMappingQuality && !samRecord.isSecondaryOrSupplementary()) ||
+//                        !samRecord.getMateReferenceName().equals(samRecord.getContig())){
+                //DEBUG
                     readsToExcludeInPartition.add(samRecord.getReadName());
                 }
             }
@@ -225,7 +236,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         ExecutorService executorService = Executors.newFixedThreadPool(threads);
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         for(GenomicRegion genomicPartition : genomicPartitions){
-            String suffix = "_" + genomicPartition.toString().replace(":", "_");
+//            String suffix = "_" + genomicPartition.toString().replace(":", "_");
+            String suffix = "_" + genomicPartition.toString();
             String normalOutputPath = getBAMOutputName(outputPrefix+suffix, NORMAL_DATASET_IDX);
             String tumorOutputPath = getBAMOutputName(outputPrefix+suffix, TUMORAL_DATASET_IDX);
             CompletableFuture<Void> future = CompletableFuture.runAsync (() -> {
@@ -259,7 +271,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                  AnonymizedReadAlignmentProvider anonymizedReadProvider = new AnonymizedReadAlignmentProvider();) {
                 anonymizedReadProvider.setReadsToExclude(readsToExclude);
                 anonymizedReadProvider.setRefSequence(referenceSequences.get(genomicPartition.getSequenceName()));
-                anonymizedReadProvider.setMinMappingQuality(minimumMappingQuality);
+//                anonymizedReadProvider.setMinMappingQuality(minimumMappingQuality);
                 anonymizedReadProvider.setVCFVariantsToKeep(somaticVariantsToKeep);
                 anonymizedReadProvider.init(inputNormalPath, inputTumorPath, refGenomePath, genomicPartition);
                 long startcallVariation = System.currentTimeMillis();
@@ -290,7 +302,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             }
             catch (Exception e) {
                 LOGGER.log(Level.SEVERE,
-                        "Exception in thread Anonymizing reads to exclude in region: "
+                        "Exception in thread Anonymizing reads in region: "
                                 + genomicPartition.getSequenceName()
                                 + " " + genomicPartition.getStart() + " " + genomicPartition.getEnd(),
                         e);
@@ -397,7 +409,9 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         final MergingSamRecordIterator iterator = new MergingSamRecordIterator(headerMerger, readers, false);
         while (iterator.hasNext()) {
             final SAMRecord record = iterator.next();
-            writer.addAlignment(record);
+            if(!readsToExclude.contains(record.getReadName())) {
+                writer.addAlignment(record);
+            }
         }
         // Close the files
         writer.close();

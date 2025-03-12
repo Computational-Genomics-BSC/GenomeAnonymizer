@@ -33,7 +33,7 @@ public class GenomeAnonymizer {
     public static final String DEFAULT_RUN_MODE_FUNCTIONALITY = "default";
     public static final String SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY = "benchmark";
 
-    public final static int DEFAULT_MIN_MAPPING_QUALITY = 1;
+    public final static int DEFAULT_MIN_MAPPING_QUALITY = 0;
     public final static int DEFAULT_QUERY_REGION_LENGTH = 2000;
     
     public final static String BAM_FILE = ".bam";
@@ -83,7 +83,6 @@ public class GenomeAnonymizer {
         anonymizer.anonymizeReads();
         long end2 = System.currentTimeMillis();
         LOGGER.info("Read Anonymization phase finished in: "+ (double) (end2-start2)/1000 + " seconds");
-//        anonymizer.mergeAnonymizedReads();
     }
 
     public void setCanvasN(String canvasN) {
@@ -208,11 +207,16 @@ public class GenomeAnonymizer {
             String outputPrefix = commandLine.getOptionValue("o", removeSuffixIfExists(normalPath, BAM_FILE));
             int nThreads = Integer.parseInt(commandLine.getOptionValue("t", "4"));
             String mode = commandLine.getOptionValue("m", DEFAULT_RUN_MODE_FUNCTIONALITY);
-            int minMQ = Integer.parseInt(commandLine.getOptionValue("minMQ", "1"));
+            int minMQ = Integer.parseInt(commandLine.getOptionValue("minMQ", String.valueOf(DEFAULT_MIN_MAPPING_QUALITY)));
             int randomSeed = Integer.parseInt(commandLine.getOptionValue("s", "-1"));
             appInstance.setMinimumMappingQuality(minMQ);
             appInstance.setRandomSeed(randomSeed);
             boolean merge = false;
+            LOGGER.info("Running with parameters - \n normalPath: " + normalPath + "\n tumorPath: " + tumorPath +
+                        "\n refGenome: " + refGenome + "\n outputPrefix: " + outputPrefix +
+                        "\n mode: " + mode + "\n minMQ: " + minMQ + "\n nThreads: " + nThreads);
+//                    + "\n randomSeed: " + randomSeed
+//                     +      "\n merge: " + merge);
             if (SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)){
                 if(!commandLine.hasOption("v")) throw new ParseException("benchmark mode requires VCF file, " +
                         "but none was provided");
@@ -327,7 +331,7 @@ public class GenomeAnonymizer {
                 //.required(false)
                 .build());
         options.addOption(Option.builder("minMQ")
-                .desc("Minimum mapping quality for reads to be considered in the anonymization process (default=1; scale=0-60 PHRED)")
+                .desc("Minimum mapping quality for reads to be considered in the anonymization process (default=0; scale=0-60 PHRED)")
                 .argName("INTEGER")
                 .hasArg(true)
                 //.required(false)

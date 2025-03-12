@@ -28,7 +28,7 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
     public static final int CLAIM_NEW_AND_DIFFERING_READS_ONLY_PILEUP_MODE = 2;
 
     public static final int DEFAULT_PILEUP_READ_LIMIT = 100_000;
-
+    public static final int DEFAULT_READ_MINIMUM_MAPQ = 0;
 
     private SamReader samReaderStream;
     private MapCacheFIFO<Integer, LocusPileUp> cache;
@@ -39,13 +39,10 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
     private Set<String> readsToExclude;
 
     //Pileup behaviour modifiers
-    private int minimumMappingQuality = 0;
+    private int minimumMappingQuality = DEFAULT_READ_MINIMUM_MAPQ;
     private boolean includeDuplicates = false;
     private int pileupMode;
-    //Extend pileup towards the left/right-most positions of the ends of the most extreme pileup read alignment
-//    private boolean extendLeft;
-//    private boolean extendRight;
-//
+
     //This reference sequence is 0-based, given it comes in a byte array
     private byte[] refSequence;
     private String sequenceName;
@@ -222,10 +219,10 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
     }
 
     public boolean passesFilters(SAMRecord read){
+        if(readsToExclude.contains(read.getReadName())) return false;
         if(read.getMappingQuality() < minimumMappingQuality) return false;
         if(read.getReadUnmappedFlag()) return false;
         if(!includeDuplicates && read.getDuplicateReadFlag()) return false;
-        if (readsToExclude.contains(read.getReadName())) return false;
         return true;
     }
 
@@ -244,10 +241,6 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
 
         private static final int DEFAULT_MAX_SIZE_LIMIT = 10_000_000;
 
-        //DEBUG
-//        Map<String, Integer> debugMap = new HashMap();
-        //DEBUG
-
         public OnPileupQueue(){
             super();
         }
@@ -260,11 +253,6 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
             PileupReadStatus status = updatePileupReadStatus(read);
             if(status != null){
                 read.setStatus(status);
-//                System.out.println("#Read " + read.getRead().getReadName() + " has status: " + status);
-                //DEBUG
-//                debugMap.compute(read.getReadAlignmentId(), (k, v) -> v == null ? 1 : v+1);
-//                System.out.println("Read " + read.getReadName()  + " has been seen " + debugMap.get(read.getReadAlignmentId()) + " times " + "with status " + read.getStatus() + ".");
-                //DEBUG
                 return super.offer(read);
             }
             return false;
@@ -280,7 +268,6 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
             List<PileupRead> answer = new ArrayList<>();
             PileupRead nextRead = this.peek();
             while (!this.isEmpty() && overlap(pileup, nextRead)){
-//                    && (nextRead.getStart() <= pileup.getLocation() && nextRead.getEnd() >= pileup.getLocation())){
                 answer.add(this.poll());
                 nextRead = this.peek();
             }
@@ -296,11 +283,6 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
          */
         public void flushUnclaimedReads(){
             this.removeIf(nextRead -> nextRead.getEnd() < nextReferencePosition-1);
-//            PileupRead nextRead = this.peek();
-//            while (!this.isEmpty() && nextRead.getEnd() < nextReferencePosition-1){
-//                this.poll();
-//                nextRead = this.peek();
-//            }
         }
     }
 

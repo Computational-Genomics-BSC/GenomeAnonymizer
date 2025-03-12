@@ -32,7 +32,7 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
     private String platform;
     private SamReader normalSamReader;
     private SamReader tumorSamReader;
-    private boolean returnNormal = false;
+    private boolean removeUncovered = false;
     private int minimumMappingQuality = DEFAULT_MIN_MAPPING_QUALITY;
     private boolean includeDuplicates = true;
     private Set<String> readsToExclude;
@@ -78,8 +78,8 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         this.includeDuplicates = includeDuplicates;
     }
 
-    public void setReturnNormal(boolean returnNormal){
-        this.returnNormal = returnNormal;
+    public void setRemoveUncovered(boolean removeUncovered){
+        this.removeUncovered = removeUncovered;
     }
 
     public void setReadsToExclude(Set<String> readsToExclude){
@@ -142,7 +142,6 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
             LocusPileupIterator pileupClass = new LocusPileupIterator(reader, region.getSequenceName(), region.getStart(), region.getEnd(), referenceSequence);
             pileupClass.setReadsToExclude(readsToExclude);
             pileupClass.setIncludeDuplicates(includeDuplicates);
-            pileupClass.setMinimumMappingQuality(minimumMappingQuality);
             return pileupClass.iterator();
         }
 
@@ -155,7 +154,6 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         }
 
         private PairedPileup getNext(){
-            if(returnNormal) return getPairsAndNormals();
             return getPairs();
         }
 
@@ -163,18 +161,22 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
          *
          * @return currentPileup
          */
-        private PairedPileup getPairsAndNormals() {
-            PairedPileup currentPileup;
+        private PairedPileup getPairs() {
+            PairedPileup currentPileup = null;
             while(true){
                 if (nextNormalLocus != null && nextTumorLocus != null){
                     int cmp = compare(nextNormalLocus.getSequenceIdx(), nextNormalLocus.getLocation(), nextNormalLocus.getEnd(),
                             nextTumorLocus.getSequenceIdx(), nextTumorLocus.getLocation(), nextTumorLocus.getEnd());
                     if (cmp < -1){
-                        currentPileup = new PairedPileup(nextNormalLocus);
+                        if (removeUncovered){
+                            flagUncoveredForRemoval(nextNormalLocus);
+                        }
                         nextNormalLocus =  nextOrNull(normalPileupIter);
-                        break;
                     }
                     else if(cmp > 1){
+                        if(removeUncovered){
+                            flagUncoveredForRemoval(nextTumorLocus);
+                        }
                         nextTumorLocus = nextOrNull(tumorPileupIter);
                     }
                     else{
@@ -185,56 +187,38 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
                     }
                 }
                 else if(nextNormalLocus == null && nextTumorLocus == null){
-                    currentPileup = null;
                     break;
                 }
                 else{
                     if(nextTumorLocus == null){
-                        currentPileup = new PairedPileup(nextNormalLocus);
+                        if (removeUncovered){
+                            flagUncoveredForRemoval(nextNormalLocus);
+                        }
                         nextNormalLocus = nextOrNull(normalPileupIter);
                     }
                     else{
-                        currentPileup = null;
+                        if(removeUncovered){
+                            flagUncoveredForRemoval(nextTumorLocus);
+                        }
+                        nextTumorLocus = nextOrNull(tumorPileupIter);
                     }
                     break;
                 }
             }
             return currentPileup;
+        }
+
+        private void flagUncoveredForRemoval(LocusPileUp locusPileUp){
+            List<PileupRead> uncoveredReads = locusPileUp.claimReadsOnPileup();
+            readsToExclude.addAll(uncoveredReads
+                    .stream()
+                    .map(PileupRead::getReadName)
+                    .toList()
+            );
         }
 
         private LocusPileUp nextOrNull(Iterator<LocusPileUp> iterator){
             return iterator.hasNext() ? iterator.next() : null;
-        }
-
-        /**
-         *
-         * @return currentPileup
-         */
-        private PairedPileup getPairs() {
-            PairedPileup currentPileup;
-            while(true){
-                if(nextNormalLocus == null || nextTumorLocus == null){
-                    currentPileup = null;
-                    break;
-                }
-                else{
-                    int cmp = compare(nextNormalLocus.getSequenceIdx(), nextNormalLocus.getLocation(), nextNormalLocus.getEnd(),
-                            nextTumorLocus.getSequenceIdx(), nextTumorLocus.getLocation(), nextTumorLocus.getEnd());
-                    if (cmp < -1){
-                        nextNormalLocus = nextOrNull(normalPileupIter);
-                    }
-                    else if(cmp > 1){
-                        nextTumorLocus = nextOrNull(tumorPileupIter);
-                    }
-                    else{
-                        currentPileup = new PairedPileup(nextNormalLocus, nextTumorLocus);
-                        nextNormalLocus = nextOrNull(normalPileupIter);
-                        nextTumorLocus = nextOrNull(tumorPileupIter);
-                        break;
-                    }
-                }
-            }
-            return currentPileup;
         }
 
         @Override

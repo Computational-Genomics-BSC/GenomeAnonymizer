@@ -58,6 +58,6 @@ public class GenomicRegionBaseImpl implements GenomicRegion{
     }
 
     public String toString(){
-        return sequenceName + ":" + start + "-" + end;
+        return sequenceName + "_" + start + "-" + end;
     }
 }

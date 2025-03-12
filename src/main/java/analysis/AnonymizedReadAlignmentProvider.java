@@ -116,9 +116,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 leftLimit, genomicRegion.getEnd());
         leftExtendedRegion.setSequenceIdx(region.getSequenceIdx());
         pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, refSequence, leftExtendedRegion);
-            //Retrieve signals from their normal sample even if there is no coverage in the tumor sample
-        pairPileupReader.setReturnNormal(true);
-        pairPileupReader.setMinimumMappingQuality(minMappingQuality);
+        //Remove uncovered reads
+        pairPileupReader.setRemoveUncovered(true);
         pairPileupReader.setIncludeDuplicates(true);
         pairPileupReader.setReadsToExclude(readsToExclude);
     }
@@ -185,8 +184,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         List<PileupRead> pileupReads = pileup.claimReadsOnPileup();
         //Check for potential indels or other complex signals
         for (PileupRead pileupRead : pileupReads) {
-            //ANNOT: This may be extended to support other types of reads (e.g. long reads)
-            if(pileupRead.getStatus() == PileupRead.PileupReadStatus.PILEUP_READ_STATUS_NEW){
+            if(pileupRead.isNew()){
                 //Avoid queuing reads that fall in the region offset, but are not part of the pileup region
                 if(overlap(pileupRead, genomicRegion)){
                     AnonymizedRead anonymizedRead = new ShortAnonymizedReadAlignment(pileupRead.getRead(), isNormalDataset);
@@ -213,7 +211,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         }
     }
 
-    public void discoverIndelsAndComplexSignalsFromCIGAR(PileupRead pileupRead, boolean isNormalDataset){
+    public void discoverIndelsAndComplexSignalsFromCIGAR(PileupRead pileupRead, boolean isNormalDataset) {
         List<CigarElement> cigarElems = pileupRead.getCigar().getCigarElements();
         String readAlnId = pileupRead.getReadAlignmentId();
         int initRefPos = pileupRead.getStart();
@@ -308,7 +306,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         processSomaticType(variationInPos, calledVar, variationExists, isNormalDataset);
     }
 
-    private void processSomaticType(List<PairCalledVariation> variationInPos, PairCalledVariation calledVar, boolean variationExists, boolean isNormalDataset) {
+    private void processSomaticType(List<PairCalledVariation> variationInPos, PairCalledVariation calledVar,
+                                    boolean variationExists, boolean isNormalDataset) {
         if (!variationExists){
             if (isNormalDataset){
                 calledVar.setSomaticVariationType(SomaticVariationType.NORMAL_SINGLE_READ_VARIANT);

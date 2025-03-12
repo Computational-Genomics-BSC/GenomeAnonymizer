@@ -90,6 +90,11 @@ public class PileupRead implements GenomicRegion{
         this.referenceBase = referenceBase;
     }
 
+    public boolean isNew(){
+        return status == PileupRead.PileupReadStatus.PILEUP_READ_STATUS_NEW ||
+                status == PileupRead.PileupReadStatus.PILEUP_READ_STATUS_NEW_AND_DIFFERING_BASE;
+    }
+
     /**
      * Checks if the base at the pileup position differs from the corresponding reference base.
      * Does not inform about deletions or insertions, neither breakpoints
