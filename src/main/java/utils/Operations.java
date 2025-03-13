@@ -63,6 +63,18 @@ public class Operations {
         return first2 <= last1 && last2 >= first1;
     }
 
+    public static boolean isContained(GenomicRegion region1, GenomicRegion region2) {
+        int first1 = region1.getStart();
+        int first2 = region2.getStart();
+        int last1 = region1.getEnd();
+        int last2 = region2.getEnd();
+        return isContained(first1, first2, last1, last2);
+    }
+
+    public static boolean isContained(int first1, int first2, int last1, int last2) {
+        return first1 >= first2 && last1 <= last2;
+    }
+
     public static double computeTwoDimEuclideanDistance(int x1, int y1, int x2, int y2) {
         double xDist = Math.pow(x1 - y1, 2);
         double yDist = Math.pow(x2 - y2, 2);

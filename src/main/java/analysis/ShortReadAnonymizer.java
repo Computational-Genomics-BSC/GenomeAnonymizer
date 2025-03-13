@@ -219,11 +219,11 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 SAMRecord samRecord = it.next();
                 if((samRecord.getReadUnmappedFlag() || samRecord.getMateUnmappedFlag()) ||
                         (samRecord.getMappingQuality() < minimumMappingQuality && !samRecord.isSecondaryOrSupplementary())){
-                //DEBUG
+//                DEBUG
 //                if((samRecord.getReadUnmappedFlag() || samRecord.getMateUnmappedFlag()) ||
 //                        (samRecord.getMappingQuality() < minimumMappingQuality && !samRecord.isSecondaryOrSupplementary()) ||
 //                        !samRecord.getMateReferenceName().equals(samRecord.getContig())){
-                //DEBUG
+//                DEBUG
                     readsToExcludeInPartition.add(samRecord.getReadName());
                 }
             }
@@ -242,7 +242,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         ExecutorService executorService = Executors.newFixedThreadPool(threads);
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         for(GenomicRegion genomicPartition : genomicPartitions){
-//            String suffix = "_" + genomicPartition.toString().replace(":", "_");
             String suffix = "_" + genomicPartition.toString();
             String normalOutputPath = getBAMOutputName(outputPrefix+suffix, NORMAL_DATASET_IDX);
             String tumorOutputPath = getBAMOutputName(outputPrefix+suffix, TUMORAL_DATASET_IDX);
@@ -277,7 +276,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                  AnonymizedReadAlignmentProvider anonymizedReadProvider = new AnonymizedReadAlignmentProvider();) {
                 anonymizedReadProvider.setReadsToExclude(readsToExclude);
                 anonymizedReadProvider.setRefSequence(referenceSequences.get(genomicPartition.getSequenceName()));
-//                anonymizedReadProvider.setMinMappingQuality(minimumMappingQuality);
                 anonymizedReadProvider.setVCFVariantsToKeep(somaticVariantsToKeep);
                 anonymizedReadProvider.init(inputNormalPath, inputTumorPath, refGenomePath, genomicPartition);
                 long startcallVariation = System.currentTimeMillis();

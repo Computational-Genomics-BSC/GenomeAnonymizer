@@ -15,6 +15,7 @@ import java.util.function.Consumer;
 import java.util.logging.Logger;
 
 import static analysis.GenomeAnonymizer.DEFAULT_MIN_MAPPING_QUALITY;
+import static utils.Operations.isContained;
 import static utils.Operations.overlap;
 
 
@@ -186,7 +187,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         for (PileupRead pileupRead : pileupReads) {
             if(pileupRead.isNew()){
                 //Avoid queuing reads that fall in the region offset, but are not part of the pileup region
-                if(overlap(pileupRead, genomicRegion)){
+                if(belongsToRegion(pileupRead, genomicRegion)){
                     AnonymizedRead anonymizedRead = new ShortAnonymizedReadAlignment(pileupRead.getRead(), isNormalDataset);
                     anonymizedRead.setReferenceContigSequence(refSequence);
                     anonymizedReadQueue.offer(anonymizedRead);
@@ -209,6 +210,15 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                         v + enddiscoverSNVsFromRead - startdiscoverSNVsFromRead);
             }
         }
+    }
+
+    private boolean belongsToRegion(PileupRead pileupRead, GenomicRegion genomicRegion) {
+        if (isContained(pileupRead, genomicRegion)) return true;
+        if (!overlap(pileupRead, genomicRegion)) return false;
+        int distanceToRegionStart = Math.abs(pileupRead.getStart() - genomicRegion.getStart());
+        int distanceToRegionEnd = Math.abs(pileupRead.getStart() - genomicRegion.getEnd());
+        int closestDistance = Math.min(distanceToRegionStart, distanceToRegionEnd);
+        return closestDistance == distanceToRegionStart;
     }
 
     public void discoverIndelsAndComplexSignalsFromCIGAR(PileupRead pileupRead, boolean isNormalDataset) {

@@ -9,6 +9,7 @@ public interface AnonymizedRead {
     public int getStart();
     public int getEnd();
     public boolean addSignalToAnonymize(Signal signal);
+    public String getReadName();
     public String getReadAlignmentId();
     public void setSignalsToAnonymize(List<Signal> signals);
 //    public void anonymizeVariants();
