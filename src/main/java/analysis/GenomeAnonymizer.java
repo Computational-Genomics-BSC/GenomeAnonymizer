@@ -47,6 +47,7 @@ public class GenomeAnonymizer {
     private int queryRegionLength = DEFAULT_QUERY_REGION_LENGTH;
     private String canvasN;
     private String canvasT;
+    private File tmpDir;
     private Map<String, Map<Integer, PairCalledVariation>> somaticVariantsToKeep = new HashMap<>();
     private List<GenomicRegion> queryRegions = new ArrayList<>();
     private int randomSeed;
@@ -67,6 +68,7 @@ public class GenomeAnonymizer {
         LOGGER.info("Beginning anonymization in " + mode + " mode");
         GlobalRandom.setSeed(randomSeed);
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm, normalPath, tumorPath, refGenome, outputPrefix);
+        if (tmpDir != null) anonymizer.setTmpDir(tmpDir);
         anonymizer.setThreadNumber(nThreads);
         anonymizer.setMinimumMappingQuality(minMappingQuality);
         anonymizer.setQueryRegions(queryRegions);
@@ -83,6 +85,10 @@ public class GenomeAnonymizer {
         anonymizer.anonymizeReads();
         long end2 = System.currentTimeMillis();
         LOGGER.info("Read Anonymization phase finished in: "+ (double) (end2-start2)/1000 + " seconds");
+    }
+
+    public void setTmpDir(File tmpDir) {
+        this.tmpDir = tmpDir;
     }
 
     public void setCanvasN(String canvasN) {
@@ -211,6 +217,10 @@ public class GenomeAnonymizer {
             int randomSeed = Integer.parseInt(commandLine.getOptionValue("s", "-1"));
             appInstance.setMinimumMappingQuality(minMQ);
             appInstance.setRandomSeed(randomSeed);
+            if (commandLine.hasOption("tmpDir")) {
+                String tmpDirPath = commandLine.getOptionValue("tmpDir");
+                appInstance.setTmpDir(new File(tmpDirPath));
+            }
             boolean merge = false;
             LOGGER.info("Running with parameters - \n normalPath: " + normalPath + "\n tumorPath: " + tumorPath +
                         "\n refGenome: " + refGenome + "\n outputPrefix: " + outputPrefix +
@@ -333,6 +343,12 @@ public class GenomeAnonymizer {
         options.addOption(Option.builder("minMQ")
                 .desc("Minimum mapping quality for reads to be considered in the anonymization process (default=0; scale=0-60 PHRED)")
                 .argName("INTEGER")
+                .hasArg(true)
+                //.required(false)
+                .build());
+        options.addOption(Option.builder("tmpDir")
+                .desc("Temporary directory to store intermediate files")
+                .argName("DIRECTORY")
                 .hasArg(true)
                 //.required(false)
                 .build());

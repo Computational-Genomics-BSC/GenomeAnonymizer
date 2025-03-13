@@ -6,6 +6,7 @@ import genomicelements.Signal;
 import htsjdk.samtools.SAMReadGroupRecord;
 
 import java.io.IOException;
+import java.io.File;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -21,6 +22,7 @@ public interface AnonymizerAlgorithm {
     public void setPartitions() throws IOException;
     public void setMinimumMappingQuality(int minimumMappingQuality);
     public void setThreadNumber(int threads);
+    public void setTmpDir(File tmpDir);
     public void setQueryRegions(List<GenomicRegion> regions);
     public void setCanvasFiles(String normalCanvasFileName, String tumoralCanvasFileName);
 

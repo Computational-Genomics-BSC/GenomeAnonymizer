@@ -45,6 +45,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private Set<String> readsToExclude;
     private File canvasNormal;
     private File canvasTumoral;
+    private File tmpDir;
     private SamReaderFactory factory;
 
     private int minimumMappingQuality = DEFAULT_MIN_MAPPING_QUALITY;
@@ -75,6 +76,15 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     @Override
     public void setMinimumMappingQuality(int minimumMappingQuality) {
         this.minimumMappingQuality = minimumMappingQuality;
+    }
+
+    public void setTmpDir(File tmpDir) {
+        // This is necessary to avoid all reads being kept in memory
+        if (!tmpDir.exists()) tmpDir.mkdirs();
+        tmpDir.setReadable(true, false);
+        tmpDir.setWritable(true, false);
+        System.setProperty("java.io.tmpdir", tmpDir.getAbsolutePath());
+        this.tmpDir = tmpDir;
     }
 
     public void setThreadNumber(int threads) {
@@ -223,14 +233,10 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
     @Override
     public void anonymizeReads() {
-        // This is necessary to avoid all reads being kept in memory
-        // TODO: Ask as optional parameter?
-        File tmpDir = IOUtil.getDefaultTmpDir();
-        if (!tmpDir.exists()) tmpDir.mkdirs();
-        tmpDir.setReadable(true, false);
-        tmpDir.setWritable(true, false);
-        System.setProperty("java.io.tmpdir", tmpDir.getAbsolutePath());
-
+        // If this.tmpDir is not set, set it to the default temporary directory
+        if (this.tmpDir == null) {
+            setTmpDir(IOUtil.getDefaultTmpDir());
+        }
         List<String> normalPaths = new ArrayList<>();
         List<String> tumorPaths = new ArrayList<>();
         ExecutorService executorService = Executors.newFixedThreadPool(threads);
