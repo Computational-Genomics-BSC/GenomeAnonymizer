@@ -6,6 +6,8 @@ import htsjdk.samtools.util.SequenceUtil;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
+import static utils.Operations.compare;
+
 /**
  * Class that generates anonymized versions of short read alignments, ready for writing
  * @author Nicolas Gaitan
@@ -422,5 +424,10 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         builder.append(alignment.getReadString());
 //        String complement = generateComplement(alignment);
         return builder.toString();
+    }
+
+    @Override
+    public int compareTo(GenomicRegion genomicRegion) {
+        return compare(this, genomicRegion);
     }
 }

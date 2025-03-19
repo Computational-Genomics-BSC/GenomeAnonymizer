@@ -22,9 +22,8 @@ public interface AnonymizerAlgorithm {
     public void setPartitions() throws IOException;
     public void setMinimumMappingQuality(int minimumMappingQuality);
     public void setThreadNumber(int threads);
+    public void setMaxReadsInRam(int maxReadsInMemory);
     public void setTmpDir(File tmpDir);
-    public void setQueryRegions(List<GenomicRegion> regions);
-    public void setCanvasFiles(String normalCanvasFileName, String tumoralCanvasFileName);
 
     //TODO: Decide if this stays or not
     public void setVCFVariantsToKeep(Map<String, Map<Integer, PairCalledVariation>> variantsToKeep);

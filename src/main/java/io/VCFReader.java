@@ -47,8 +47,8 @@ public class VCFReader {
                             + "Displaying line number fo malformed record: ", i);
                 }
                 // By default, redundant records are saved as one PairCalledVariation only (Last one is saved)
-                Map<Integer, PairCalledVariation> perPosMap = somaticCallsToKeep.computeIfAbsent(calledVar.getSeqName(), v -> new HashMap<>());
-                perPosMap.put(calledVar.getPos(), calledVar);
+                Map<Integer, PairCalledVariation> perPosMap = somaticCallsToKeep.computeIfAbsent(calledVar.getSequenceName(), v -> new HashMap<>());
+                perPosMap.put(calledVar.getStart(), calledVar);
                 i++;
             }
         }

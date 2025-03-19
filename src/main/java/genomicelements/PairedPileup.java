@@ -1,7 +1,5 @@
 package genomicelements;
 
-import genomicelements.LocusPileupIterator.OnPileupQueue;
-
 /**
  * Representation of a tuple of read alignment pileups, with one coming from a normal sample and the other from the tumor pair
  * allowing deep comparison between both mappings
@@ -9,8 +7,8 @@ import genomicelements.LocusPileupIterator.OnPileupQueue;
  */
 public class PairedPileup {
 
-    private LocusPileUp normalLocus;
-    private LocusPileUp tumorLocus;
+    private LocusPileUp normalLocus = null;
+    private LocusPileUp tumorLocus = null;
     private String refenceSequenceName;
     private int referenceSequenceIdx;
     private int referencePos;
@@ -23,12 +21,12 @@ public class PairedPileup {
         referencePos = normalLocus.getLocation();
     }
 
-    public PairedPileup(LocusPileUp normalLocus) {
-        this.normalLocus = normalLocus;
-        this.tumorLocus = null;
-        refenceSequenceName = normalLocus.getSequenceName();
-        referenceSequenceIdx = normalLocus.getSequenceIdx();
-        referencePos = normalLocus.getLocation();
+    public PairedPileup(LocusPileUp locus, boolean isNormal) {
+        if(isNormal) this.normalLocus = locus;
+        else this.tumorLocus = locus;
+        refenceSequenceName = locus.getSequenceName();
+        referenceSequenceIdx = locus.getSequenceIdx();
+        referencePos = locus.getLocation();
     }
 
     public LocusPileUp getNormalPileup(){
@@ -51,7 +49,7 @@ public class PairedPileup {
         return referenceSequenceIdx;
     }
 
-    public int getReferencePos() {
+    public int getLocation() {
         return referencePos;
     }
 

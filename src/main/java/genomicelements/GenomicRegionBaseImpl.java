@@ -1,5 +1,7 @@
 package genomicelements;
 
+import static utils.Operations.compare;
+
 /**
  * Generic representation of a simple genomic region defined by coordinates on a reference
  * @author Nicolas Gaitan
@@ -59,5 +61,10 @@ public class GenomicRegionBaseImpl implements GenomicRegion{
 
     public String toString(){
         return sequenceName + "_" + start + "-" + end;
+    }
+
+    @Override
+    public int compareTo(GenomicRegion genomicRegion) {
+        return compare(this, genomicRegion);
     }
 }

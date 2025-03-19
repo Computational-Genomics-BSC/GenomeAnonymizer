@@ -32,9 +32,12 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
     private String platform;
     private SamReader normalSamReader;
     private SamReader tumorSamReader;
-    private boolean removeUncovered = false;
+
+//    private boolean removeUncovered = false;
+//    private Set<String> uncoveredReads = new HashSet<>();
     private int minimumMappingQuality = DEFAULT_MIN_MAPPING_QUALITY;
     private boolean includeDuplicates = true;
+
     private Set<String> readsToExclude;
     private byte[] referenceSequence = new byte[0];
 
@@ -74,13 +77,25 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         this.minimumMappingQuality = minimumMappingQuality;
     }
 
+//    public Set<String> getUncoveredReads() {
+//        return uncoveredReads;
+//    }
+
+    public SAMFileHeader getNormalSamHeader() {
+        return normalSamHeader;
+    }
+
+    public SAMFileHeader getTumorSamHeader() {
+        return tumorSamHeader;
+    }
+
     public void setIncludeDuplicates(boolean includeDuplicates) {
         this.includeDuplicates = includeDuplicates;
     }
 
-    public void setRemoveUncovered(boolean removeUncovered){
-        this.removeUncovered = removeUncovered;
-    }
+//    public void setRemoveUncovered(boolean removeUncovered){
+//        this.removeUncovered = removeUncovered;
+//    }
 
     public void setReadsToExclude(Set<String> readsToExclude){
         this.readsToExclude = readsToExclude;
@@ -111,14 +126,6 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
     public void close() throws IOException {
         normalSamReader.close();
         tumorSamReader.close();
-    }
-
-    public SAMFileHeader getNormalSamHeader() {
-        return normalSamHeader;
-    }
-
-    public SAMFileHeader getTumorSamHeader() {
-        return tumorSamHeader;
     }
 
     private class PairedPileupIterator implements Iterator<PairedPileup> {
@@ -153,69 +160,85 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
             return currentPileup;
         }
 
-        private PairedPileup getNext(){
-            return getPairs();
-        }
+//        private PairedPileup getNext(){
+//            return getPairs();
+//        }
 
         /**
          *
          * @return currentPileup
          */
-        private PairedPileup getPairs() {
-            PairedPileup currentPileup = null;
-            while(true){
-                if (nextNormalLocus != null && nextTumorLocus != null){
-                    int cmp = compare(nextNormalLocus.getSequenceIdx(), nextNormalLocus.getLocation(), nextNormalLocus.getEnd(),
-                            nextTumorLocus.getSequenceIdx(), nextTumorLocus.getLocation(), nextTumorLocus.getEnd());
-                    if (cmp < -1){
-                        if (removeUncovered){
-                            flagUncoveredForRemoval(nextNormalLocus);
-                        }
-                        nextNormalLocus =  nextOrNull(normalPileupIter);
-                    }
-                    else if(cmp > 1){
-                        if(removeUncovered){
-                            flagUncoveredForRemoval(nextTumorLocus);
-                        }
-                        nextTumorLocus = nextOrNull(tumorPileupIter);
-                    }
-                    else{
-                        currentPileup = new PairedPileup(nextNormalLocus, nextTumorLocus);
-                        nextNormalLocus = nextOrNull(normalPileupIter);
-                        nextTumorLocus = nextOrNull(tumorPileupIter);
-                        break;
-                    }
+        private PairedPileup getNext() {
+            PairedPileup currentPileup;
+            if (nextNormalLocus != null && nextTumorLocus != null){
+                int cmp = compare(nextNormalLocus.getSequenceIdx(), nextNormalLocus.getLocation(), nextNormalLocus.getEnd(),
+                        nextTumorLocus.getSequenceIdx(), nextTumorLocus.getLocation(), nextTumorLocus.getEnd());
+                if (cmp < -1){
+                    currentPileup = new PairedPileup(nextNormalLocus, true);
+                    nextNormalLocus = nextOrNull(normalPileupIter);
                 }
-                else if(nextNormalLocus == null && nextTumorLocus == null){
-                    break;
+                else if(cmp > 1){
+                    //DEBUG
+//                    if(nextTumorLocus.getLocation() == 36861478){
+//                        System.out.println("#cmp>1 locus at: " + nextTumorLocus.getLocation() + " with reads: " + nextTumorLocus.size());
+//                    }
+                    //DEBUG
+//                        if(removeUncovered){
+//                            flagUncoveredForRemoval(nextTumorLocus);
+//                        }
+                    currentPileup = new PairedPileup(nextTumorLocus, false);
+                    nextTumorLocus = nextOrNull(tumorPileupIter);
                 }
                 else{
-                    if(nextTumorLocus == null){
-                        if (removeUncovered){
-                            flagUncoveredForRemoval(nextNormalLocus);
-                        }
-                        nextNormalLocus = nextOrNull(normalPileupIter);
-                    }
-                    else{
-                        if(removeUncovered){
-                            flagUncoveredForRemoval(nextTumorLocus);
-                        }
-                        nextTumorLocus = nextOrNull(tumorPileupIter);
-                    }
-                    break;
+                    //DEBUG
+//                    if(nextTumorLocus.getLocation() == 36861478){
+//                        System.out.println("#cmp==0 locus at: " + nextTumorLocus.getLocation() + " with reads: " + nextTumorLocus.size());
+//                    }
+                    //DEBUG
+                    currentPileup = new PairedPileup(nextNormalLocus, nextTumorLocus);
+                    nextNormalLocus = nextOrNull(normalPileupIter);
+                    nextTumorLocus = nextOrNull(tumorPileupIter);
+                }
+            }
+            else if(nextNormalLocus == null && nextTumorLocus == null){
+                return null;
+            }
+            else{
+                if(nextTumorLocus == null){
+//                        if (removeUncovered){
+//                            flagUncoveredForRemoval(nextNormalLocus);
+//                        }
+                    currentPileup = new PairedPileup(nextNormalLocus, true);
+                    nextNormalLocus = nextOrNull(normalPileupIter);
+                }
+                else{
+                    currentPileup = new PairedPileup(nextTumorLocus, false);
+                    nextTumorLocus = nextOrNull(tumorPileupIter);
                 }
             }
             return currentPileup;
         }
 
-        private void flagUncoveredForRemoval(LocusPileUp locusPileUp){
-            List<PileupRead> uncoveredReads = locusPileUp.claimReadsOnPileup();
-            readsToExclude.addAll(uncoveredReads
-                    .stream()
-                    .map(PileupRead::getReadName)
-                    .toList()
-            );
-        }
+//        private void flagUncoveredForRemoval(LocusPileUp locusPileUp){
+//            //DEBUG
+//            if(locusPileUp.getLocation() == 36861478){
+//                System.out.println("#Testing uncovered locus at: " + locusPileUp.getLocation() + " with reads: " + locusPileUp.size());
+//            }
+//            //DEBUG
+//            List<PileupRead> uncoveredPileupReads = locusPileUp.claimReadsOnPileup();
+//            uncoveredReads.addAll(uncoveredPileupReads
+//                    .stream()
+//                    .map(PileupRead::getReadName)
+//                    .toList()
+//            );
+//            //DEBUG
+//            for ( PileupRead read : uncoveredPileupReads){
+//                if ( read.getReadName().equals("C26FMACXX130603:5:2116:4262:12835")) {
+//                    System.out.println("#Removing uncovered read: " + read.toString());
+//                }
+//            }
+//            //DEBUG
+//        }
 
         private LocusPileUp nextOrNull(Iterator<LocusPileUp> iterator){
             return iterator.hasNext() ? iterator.next() : null;

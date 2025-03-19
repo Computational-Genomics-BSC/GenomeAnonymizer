@@ -1,10 +1,12 @@
 package genomicelements;
 
+import static utils.Operations.compare;
+
 /**
  * Represents a signal from a variation at a genomic location in a given read.
  * @author Nicolas Gaitan
  */
-public class Signal {
+public class Signal implements GenomicRegion{
 
     private String sequenceName;
     private int location;
@@ -34,7 +36,7 @@ public class Signal {
      * @param pairCalledVariation
      */
     public Signal(String readAlnName, PairCalledVariation pairCalledVariation) {
-        this(pairCalledVariation.getSeqName(), pairCalledVariation.getPos(), readAlnName, pairCalledVariation.getInReadPosition(readAlnName),
+        this(pairCalledVariation.getSequenceName(), pairCalledVariation.getStart(), readAlnName, pairCalledVariation.getInReadPosition(readAlnName),
                 pairCalledVariation.getLength(), Source.SIMPLE_VARIATION);
         this.pairCalledVariation = pairCalledVariation;
     }
@@ -49,6 +51,14 @@ public class Signal {
      *  if it is at the end, returns the position of the alignment end
      */
     public int getLocation() {
+        return location;
+    }
+
+    public int getStart() {
+        return location;
+    }
+
+    public int getEnd() {
         return location;
     }
 
@@ -119,6 +129,11 @@ public class Signal {
                 ", location=" + location +
                 ", inReadPosition=" + inReadPosition +
                 '}';
+    }
+
+    @Override
+    public int compareTo(GenomicRegion genomicRegion) {
+        return compare(this, genomicRegion);
     }
 
     public enum Source{

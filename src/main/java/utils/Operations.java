@@ -17,13 +17,13 @@ public class Operations {
     //}
 
     public static int compare(int seqIdx1, int first1, int last1, int seqIdx2, int first2, int last2) {
-        boolean ovp = overlap(first1, first2, last1, last2);
         if (seqIdx1 < seqIdx2) {
             return -3;
         }
         if (seqIdx1 > seqIdx2) {
             return 3;
         }
+        boolean ovp = overlap(first1, first2, last1, last2);
         // For these cases seqIdx1 == seqIdx2
         if (last1 < last2) {
             return ovp ? -1 : -2;
@@ -39,6 +39,16 @@ public class Operations {
             return 1;
         }
         return 0;
+    }
+
+    public static int compare(GenomicRegion region1, GenomicRegion region2) {
+        int seqIdx1 = region1.getSequenceIdx();
+        int first1 = region1.getStart();
+        int last1 = region1.getEnd();
+        int seqIdx2 = region2.getSequenceIdx();
+        int first2 = region2.getStart();
+        int last2 = region2.getEnd();
+        return compare(seqIdx1, first1, last1, seqIdx2, first2, last2);
     }
 
     public static boolean overlap(GenomicRegion  region1, GenomicRegion region2) {

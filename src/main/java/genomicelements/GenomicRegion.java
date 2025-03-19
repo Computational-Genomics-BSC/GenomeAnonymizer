@@ -1,6 +1,6 @@
 package genomicelements;
 
-public interface GenomicRegion {
+public interface GenomicRegion extends Comparable<GenomicRegion> {
     public String getSequenceName();
     public int getSequenceIdx();
     public int getStart();

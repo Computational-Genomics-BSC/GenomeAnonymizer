@@ -3,7 +3,10 @@ package genomicelements;
 import htsjdk.samtools.Cigar;
 import htsjdk.samtools.SAMRecord;
 
+import java.util.Comparator;
+
 import static genomicelements.ShortAnonymizedReadAlignment.generateReadAlnId;
+import static utils.Operations.compare;
 
 public class PileupRead implements GenomicRegion{
     private final int location;
@@ -13,6 +16,8 @@ public class PileupRead implements GenomicRegion{
     private char referenceBase;
     private PileupReadStatus status;
     private String readAlignmentId;
+
+    private int sequenceIdx = 0;
 
     public PileupRead(SAMRecord read, int readPosition, char baseAtPileup, int location) {
         this.read = read;
@@ -38,7 +43,7 @@ public class PileupRead implements GenomicRegion{
 
     @Override
     public int getSequenceIdx() {
-        return 0;
+        return sequenceIdx;
     }
 
     public int getStart(){
@@ -51,7 +56,7 @@ public class PileupRead implements GenomicRegion{
 
     @Override
     public void setSequenceIdx(int sequenceIdx) {
-
+        this.sequenceIdx = sequenceIdx;
     }
 
     public String getReadName(){
@@ -124,6 +129,19 @@ public class PileupRead implements GenomicRegion{
         this.status = status;
     }
 
+    @Override
+    public int compareTo(GenomicRegion genomicRegion) {
+        int cmp = compare(this, genomicRegion);
+        if (cmp < -1 || cmp > 1) {
+            return cmp;
+        }
+        if (genomicRegion instanceof PileupRead pileupRead2){
+            return Comparator.comparingInt(PileupRead::getLocation)
+                    .compare(this, pileupRead2);
+        }
+        return cmp;
+    }
+
     /**
      * Enum representing the status of a read within a pileup.
      * This is used to classify the current state of a read in the context
@@ -139,6 +157,6 @@ public class PileupRead implements GenomicRegion{
 
     @Override
     public String toString() {
-        return "PileupRead [read=" + read + ", readPosition=" + readPosition + ", baseAtPileup=" + baseAtPileup + "]";
+        return "PileupRead [read=" + read + ", readPosition=" + readPosition + " pileupLocus=" + location + ", baseAtPileup=" + baseAtPileup + " status=" + status + "]";
     }
 }

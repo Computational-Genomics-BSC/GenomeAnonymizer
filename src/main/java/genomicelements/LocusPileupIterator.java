@@ -1,21 +1,24 @@
 package genomicelements;
 
+import analysis.AnonymizedReadAlignmentProvider;
 import htsjdk.samtools.*;
 import htsjdk.samtools.SAMRecord;
 import utils.MapCacheFIFO;
 
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import genomicelements.PileupRead.PileupReadStatus;
-
-import static utils.Operations.overlap;
 
 /**
  * @author Nicolas Gaitan
  * Iterable interface to traverse locus pileups over a stream of alignments, as SAMRecord objects
  */
 public class LocusPileupIterator implements Iterable<LocusPileUp> {
+
+    private static final Logger LOGGER = Logger.getLogger(LocusPileupIterator.class.getName());
 
     public static final Set<Character> ALPHABET = new HashSet<>(
             Arrays.asList(
@@ -27,7 +30,7 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
     public static final int CLAIM_NEW_READS_ONLY_PILEUP_MODE = 1;
     public static final int CLAIM_NEW_AND_DIFFERING_READS_ONLY_PILEUP_MODE = 2;
 
-    public static final int DEFAULT_PILEUP_READ_LIMIT = 100_000;
+    public static final int DEFAULT_PILEUP_READ_LIMIT = 100000;
     public static final int DEFAULT_READ_MINIMUM_MAPQ = 0;
 
     private SamReader samReaderStream;
@@ -196,7 +199,6 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
                         nextReferencePosition++;
                         if(currentPileup == null) continue;
                         cache.remove(nextReferencePosition-1);
-                        readQueue.flushUnclaimedReads();
                         return currentPileup;
                     }
                     if(passesFilters(nextRead)){
@@ -232,28 +234,28 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
     }
 
     /**
-     * OnPileupQueue is a specialized implementation that extends a LinkedList of SAMRecord
-     * and implements the Queue interface. This class is used to manage a queue of
-     * SAMRecords for pileup generation while providing additional functionalities
-     * for preventing duplicate reads and handling reads in a specific genomic context.
+     * OnPileupQueue is a specialized implementation that extends a PriorityQueue of PileupRead
+     * to manage a queue of PileupReads for pileup generation
      */
-    public class OnPileupQueue extends LinkedList<PileupRead> implements Queue<PileupRead> {
+    public class OnPileupQueue extends PriorityQueue<PileupRead> {
 
+        // WARNING: Decreasing this parameter may lead to miss reads in very large pileups
         private static final int DEFAULT_MAX_SIZE_LIMIT = 10_000_000;
 
         public OnPileupQueue(){
-            super();
+            super(DEFAULT_MAX_SIZE_LIMIT+1);
         }
 
         public boolean offerNew(PileupRead read){
             //Avoid memory issues when PileupReads from older pileups have not been claimed
             if(this.size() > DEFAULT_MAX_SIZE_LIMIT){
-                flushUnclaimedReads();
+                LOGGER.log(Level.WARNING, "OnPileupQueue reached maximum size, unprocessed reads may be lost. Removing oldest one");
+                this.remove();
             }
             PileupReadStatus status = updatePileupReadStatus(read);
             if(status != null){
                 read.setStatus(status);
-                return super.offer(read);
+                return super.add(read);
             }
             return false;
         }
@@ -267,22 +269,16 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
         public List<PileupRead> claimReadsOnPileup(LocusPileUp pileup){
             List<PileupRead> answer = new ArrayList<>();
             PileupRead nextRead = this.peek();
-            while (!this.isEmpty() && overlap(pileup, nextRead)){
+            while (!this.isEmpty() && nextRead.getLocation() < pileup.getLocation()){
+                this.poll();
+                nextRead = this.peek();
+            }
+            nextRead = this.peek();
+            while (!this.isEmpty() && nextRead.getLocation() == pileup.getLocation()){
                 answer.add(this.poll());
                 nextRead = this.peek();
             }
             return answer;
-        }
-
-        /**
-         * Removes and discards reads from the queue that have a start position less than the specified pileup position.
-         * This is used to ensure that stale or unclaimed reads, which are no longer relevant
-         * based on the current pileup position, are cleared from the queue.
-         * @implicitParam nextReferencePosition the pileup position used as a threshold. Reads with a start position less than this
-         *                       value will be removed from the queue if previously unclaimed.
-         */
-        public void flushUnclaimedReads(){
-            this.removeIf(nextRead -> nextRead.getEnd() < nextReferencePosition-1);
         }
     }
 

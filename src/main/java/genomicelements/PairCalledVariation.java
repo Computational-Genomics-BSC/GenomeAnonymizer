@@ -3,6 +3,7 @@ package genomicelements;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
+import static utils.Operations.compare;
 import static utils.Operations.computeThreeDimEuclideanDistance;
 
 /**
@@ -10,7 +11,7 @@ import static utils.Operations.computeThreeDimEuclideanDistance;
  * with the caveat that it is does not always represent a real genomic variant
  * @author Nicolas Gaitan
  */
-public class PairCalledVariation {
+public class PairCalledVariation implements GenomicRegion {
     public static final String GENERIC_TYPE_SNV = "SNV";
     public static final String GENERIC_TYPE_INDEL = "INDEL";
     public static final String GENERIC_TYPE_SV = "SV";
@@ -87,16 +88,27 @@ public class PairCalledVariation {
         return supportingReadPositions.get(anonReadId);
     }
 
-    public String getSeqName() {
+    @Override
+    public String getSequenceName() {
         return seqName;
     }
 
-    public int getPos() {
+    @Override
+    public int getSequenceIdx() {
+        return 0;
+    }
+
+    public int getStart() {
         return pos;
     }
 
     public int getEnd() {
         return end;
+    }
+
+    @Override
+    public void setSequenceIdx(int sequenceIdx) {
+
     }
 
     public VariantType getVariantType() {
@@ -185,6 +197,11 @@ public class PairCalledVariation {
         return "seq_name: " + seqName + " pos: " + pos + " end: " + end + " var_type: " + variantType +
                 " length: " + length + " alt_allele: " + new String(allele, StandardCharsets.UTF_8) + " ref_allele: " + new String(refAllele, StandardCharsets.UTF_8) +
                 " somatic_variation_type: " + somaticVariationType;
+    }
+
+    @Override
+    public int compareTo(GenomicRegion genomicRegion) {
+        return compare(this, genomicRegion);
     }
 
     public record BreakendSVRecord(String prefix, String bracket, String contig, int pos, String suffix) {}
