@@ -1,16 +1,13 @@
 package analysis;
 
-import genomicelements.PairCalledVariation;
 import utils.GlobalRandom;
 import org.apache.commons.cli.*;
 import java.io.File;
 import java.io.IOException;
-import java.util.*;
 import java.util.logging.ConsoleHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.logging.SimpleFormatter;
-import static io.VCFReader.readVCF;
 
 /**
  * Main class that executes the anonymization method on sequencing data
@@ -22,7 +19,6 @@ public class GenomeAnonymizer {
     private static final Logger LOGGER = logConfigure();
 
     public static final String DEFAULT_RUN_MODE_FUNCTIONALITY = "default";
-    public static final String SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY = "benchmark";
 
     public final static int DEFAULT_MIN_MAPPING_QUALITY = 0;
     public static final int DEFAULT_MAX_READS_IN_RAM = 500_000;
@@ -31,11 +27,9 @@ public class GenomeAnonymizer {
     public final static String SAM_FILE = ".sam";
     public final static String CRAM_FILE = ".cram";
 
-    //Optional arguments as attributes
-    //String bedFile;
+    //Optional arguments attributes
     private int minMappingQuality = DEFAULT_MIN_MAPPING_QUALITY;
     private File tmpDir;
-    private Map<String, Map<Integer, PairCalledVariation>> somaticVariantsToKeep = new HashMap<>();
     private int randomSeed;
     private int maxReadsInMemory;
 
@@ -51,7 +45,7 @@ public class GenomeAnonymizer {
      * @throws IOException
      */
     public void run(String normalPath, String tumorPath, String refGenome, String outputPrefix,
-                    String algorithm, String mode, boolean merge, int nThreads) throws Exception {
+                    String algorithm, String mode, int nThreads) throws Exception {
         LOGGER.info("Beginning anonymization in " + mode + " mode");
         GlobalRandom.setSeed(randomSeed);
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm, normalPath, tumorPath, refGenome, outputPrefix);
@@ -59,7 +53,6 @@ public class GenomeAnonymizer {
         anonymizer.setThreadNumber(nThreads);
         anonymizer.setMaxReadsInRam(maxReadsInMemory);
         anonymizer.setMinimumMappingQuality(minMappingQuality);
-        anonymizer.setVCFVariantsToKeep(somaticVariantsToKeep);
         anonymizer.setPartitions();
         long start1 = System.currentTimeMillis();
         anonymizer.queryReadsToExclude();
@@ -73,10 +66,6 @@ public class GenomeAnonymizer {
 
     public void setTmpDir(File tmpDir) {
         this.tmpDir = tmpDir;
-    }
-
-    public void setSomaticVariantsToKeep(Map<String, Map<Integer, PairCalledVariation>> somaticVariantsToKeep) {
-        this.somaticVariantsToKeep = somaticVariantsToKeep;
     }
 
     private void setMinimumMappingQuality(int minMQ) {
@@ -134,31 +123,18 @@ public class GenomeAnonymizer {
                 String tmpDirPath = commandLine.getOptionValue("tmpDir");
                 appInstance.setTmpDir(new File(tmpDirPath));
             }
-            boolean merge = false;
             LOGGER.info("Running with parameters - \n normalPath: " + normalPath + "\n tumorPath: " + tumorPath +
                         "\n refGenome: " + refGenome + "\n outputPrefix: " + outputPrefix +
                         "\n mode: " + mode + "\n minMQ: " + minMQ + "\n nThreads: " + nThreads);
-//                    + "\n randomSeed: " + randomSeed
-//                     +      "\n merge: " + merge);
-            if (SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY.equals(mode)){
-                if(!commandLine.hasOption("v")) throw new ParseException("benchmark mode requires VCF file, " +
-                        "but none was provided");
-                String vcfFilePath = commandLine.getOptionValue("v");
-                Map<String, Map<Integer, PairCalledVariation>> somaticVariantsToKeep = readVCF(vcfFilePath);
-                appInstance.setSomaticVariantsToKeep(somaticVariantsToKeep);
-                appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, AnonymizerAlgorithm.SHORT_READ_ALGORITHM,
-                        SOMATIC_BENCHMARK_RUN_MODE_FUNCTIONALITY, merge, nThreads);
-            }
-            else{
+            if(DEFAULT_RUN_MODE_FUNCTIONALITY.equals(mode)){
                 if(commandLine.hasOption("v")) LOGGER.warning("Mode is not set to benchmark, but vcf file was provided," +
                         " default mode will be run normally," +
                         " but variants recorded in the vcf will not be kept");
                 appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, AnonymizerAlgorithm.SHORT_READ_ALGORITHM,
-                        DEFAULT_RUN_MODE_FUNCTIONALITY, false, nThreads);
+                        DEFAULT_RUN_MODE_FUNCTIONALITY, nThreads);
             }
         }
         catch (Exception e){
-            //System.err.println(e.getMessage());
             LOGGER.log(Level.SEVERE,
                     "Fatal error happened: " + e.getMessage() + "\n halting execution and" +
                             " printing stacktrace",
@@ -176,31 +152,26 @@ public class GenomeAnonymizer {
                 .desc("Input mappings coming from the normal sample (SAM/BAM/CRAM)")
                 .argName("FILE")
                 .hasArg(true)
-                //.required(true)
                 .build());
         options.addOption(Option.builder("it")
                 .desc("Input mappings coming from the tumoral sample (SAM/BAM/CRAM)")
                 .argName("FILE")
                 .hasArg(true)
-                //.required(true)
                 .build());
         options.addOption(Option.builder("r")
                 .desc("Reference genome against which the samples are aligned (.fasta, .fa)")
                 .argName("FILE")
                 .hasArg(true)
-                //.required(true)
                 .build());
         options.addOption(Option.builder("o")
                 .desc("Prefix to name the output files")
                 .argName("STRING")
                 .hasArg(true)
-                //.required(true)
                 .build());
         options.addOption(Option.builder("t")
                 .desc("Number of threads to run the anonymizer (default=4)")
                 .hasArg(true)
                 .argName("INTEGER")
-                //.required(false)
                 .type(Integer.class)
                 .build());
         options.addOption(Option.builder("maxReadsInMemory")
@@ -208,45 +179,30 @@ public class GenomeAnonymizer {
                         + "(default=" + DEFAULT_MAX_READS_IN_RAM + ")")
                 .hasArg(true)
                 .argName("INTEGER")
-                //.required(false)
                 .type(Integer.class)
                 .build());
         options.addOption(Option.builder("m")
                 .desc("""
                         Mode that defines the functionality of the anonymizer, between: \
-                        
                         'default': Anonymizes all possible germline variants\
-                        
-                        'benchmark': Keeps marked variants for somatic calling benchmarking extracting sample reads
-                         into public mappings (requires a VCF file, and a canvas BAM pair matching the coverage of the samples)""")
-                        // + "'functional:' ")
+                        """)
                 .argName("STRING")
                 .hasArg(true)
-                //.required(false)
-                .build());
-        options.addOption(Option.builder("v")
-                .desc("VCF file containing the variants to be kept  (.VCF), required for running the Anonymizer in benchmark mode")
-                .argName("FILE")
-                .hasArg(true)
-                //.required(false)
                 .build());
         options.addOption(Option.builder("s")
                 .desc("Seed for random number generation. Use -1 for random seed. Default is -1")
                 .argName("INTEGER")
                 .hasArg(true)
-                //.required(false)
                 .build());
         options.addOption(Option.builder("minMQ")
                 .desc("Minimum mapping quality for reads to be considered in the anonymization process (default=0; scale=0-60 PHRED)")
                 .argName("INTEGER")
                 .hasArg(true)
-                //.required(false)
                 .build());
         options.addOption(Option.builder("tmpDir")
                 .desc("Temporary directory to store intermediate files")
                 .argName("DIRECTORY")
                 .hasArg(true)
-                //.required(false)
                 .build());
 //        options.addOption(Option.builder("bed")
 //                .desc("BED file where the regions from the original sample are defined, " +

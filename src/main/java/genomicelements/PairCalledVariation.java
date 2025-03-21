@@ -159,6 +159,10 @@ public class PairCalledVariation implements GenomicRegion {
         this.somaticVariationType = somaticVariationType;
     }
 
+    public boolean isGermline(){
+        return somaticVariationType == SomaticVariationType.NORMAL_ONLY_VARIANT || somaticVariationType == SomaticVariationType.TUMORAL_NORMAL_VARIANT;
+    }
+
     public BreakendSVRecord getBreakendRecord() {
         return breakendRecord;
     }

@@ -13,7 +13,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -32,7 +31,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     public static final int TUMORAL_DATASET_IDX = 1;
     private static final int INSERT_SIZE_BIN_SIZE = 50;
     private static final int INSERT_SIZE_BIN_COUNT = 5000 / INSERT_SIZE_BIN_SIZE + 1;
-    // TODO: Set up as a parameter
     private static final float DEFAULT_INSERT_SIZE_THRESHOLD_FRACTION = 0.005f;
 
     private String inputNormalPath;
@@ -58,8 +56,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private int maxReadsInRam = DEFAULT_MAX_READS_IN_RAM;
 
     //TODO: Save partitioned files names sorted by region coordinates
-
-    private Map<String, Map<Integer, PairCalledVariation>> somaticVariantsToKeep = new HashMap<>();
 
     public ShortReadAnonymizer(String inputNormalPath, String inputTumorPath, String refGenomePath, String outputPrefix) {
         this.inputNormalPath = inputNormalPath;
@@ -94,10 +90,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
     public void setMaxReadsInRam(int maxReadsInRam) {
         this.maxReadsInRam = maxReadsInRam;
-    }
-
-    public void setVCFVariantsToKeep(Map<String, Map<Integer, PairCalledVariation>> variantsToKeep){
-        this.somaticVariantsToKeep = variantsToKeep;
     }
 
     private SAMFileHeader buildFileHeader(String bamFile, String sampleSuffix) throws IOException {
@@ -304,7 +296,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 anonymizedReadProvider.setInsertSizeMinThreshold(insertSizeMinThreshold);
                 anonymizedReadProvider.setInsertSizeMaxThreshold(insertSizeMaxThreshold);
                 anonymizedReadProvider.setRefSequence(referenceSequences.get(genomicPartition.getSequenceName()));
-                anonymizedReadProvider.setVCFVariantsToKeep(somaticVariantsToKeep);
                 anonymizedReadProvider.init(inputNormalPath, inputTumorPath, refGenomePath, genomicPartition);
                 long startcallVariation = System.currentTimeMillis();
                 for (AnonymizedRead anonymizedRead : anonymizedReadProvider) {
@@ -350,15 +341,13 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         factory.setMaxRecordsInRam(maxReadsInRam / threads);
         SAMFileHeader fileHeader = buildFileHeader(path, isNormalDataset ? "_N" : "_T");
         fileHeader.setSortOrder(SAMFileHeader.SortOrder.coordinate);
-        SAMFileWriter writer = factory.makeWriter(fileHeader, false, new File(outputPath), new File(refGenomePath));
-        return writer;
+        return factory.makeWriter(fileHeader, false, new File(outputPath), new File(refGenomePath));
     }
 
     public String getBAMOutputName(String outputPrefix, int datasetIdx){
         String anonTag = ".anonymized";
         String datasetIdStr = datasetIdx == NORMAL_DATASET_IDX ? ".N" : ".T";
-        String extension = BAM_FILE;
-        return outputPrefix + anonTag + datasetIdStr + extension;
+        return outputPrefix + anonTag + datasetIdStr + BAM_FILE;
     }
 
     private void writeRead(SAMFileWriter samWriter, SAMRecord read) {
@@ -428,7 +417,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         while (iterator.hasNext()) {
             final SAMRecord record = iterator.next();
             // Set the read name to the hash of the read name + salt
-//            record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
+            record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
                 writer.addAlignment(record);
 //            }
         }
