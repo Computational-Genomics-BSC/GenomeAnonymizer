@@ -413,7 +413,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
     public static String generateReadAlnId(SAMRecord alignment){
         StringBuilder builder = new StringBuilder();
         int pairIdx = alignment.getFirstOfPairFlag() ? PAIR_1_IDX : PAIR_2_IDX;
-//        String baseName = generateReadAlnId(alignment.getReadName(), pairIdx, alignment.getAlignmentStart());
         builder.append(alignment.getReadName());
         builder.append(DEFAULT_ID_NAME_SEPARATOR);
         builder.append(pairIdx);
@@ -422,7 +421,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         builder.append(alignment.getCigar().toString());
         builder.append(alignment.getBaseQualityString());
         builder.append(alignment.getReadString());
-//        String complement = generateComplement(alignment);
         return builder.toString();
     }
 

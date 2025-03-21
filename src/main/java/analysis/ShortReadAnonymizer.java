@@ -169,8 +169,9 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         for(GenomicRegion partition : genomicPartitions){
             for(String path : paths){
                 CompletableFuture<Tuple<Set<String>, List<Integer>>> future = CompletableFuture.supplyAsync (() -> {
+                    Tuple<Set<String>, List<Integer>> answer;
                     try {
-                        return queryReadsToExcludeInPartition(path, partition);
+                        answer = queryReadsToExcludeInPartition(path, partition);
                     }
                     catch (IOException e) {
                         LOGGER.log(Level.SEVERE,
@@ -180,6 +181,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                                 e);
                         throw new RuntimeException(e);
                     }
+                    return answer;
                 }, exec);
                 futures.add(future);
             }
@@ -426,7 +428,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         while (iterator.hasNext()) {
             final SAMRecord record = iterator.next();
             // Set the read name to the hash of the read name + salt
-            record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
+//            record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
                 writer.addAlignment(record);
 //            }
         }

@@ -1,6 +1,5 @@
 package genomicelements;
 
-import analysis.AnonymizedReadAlignmentProvider;
 import htsjdk.samtools.*;
 import htsjdk.samtools.SAMRecord;
 import utils.MapCacheFIFO;

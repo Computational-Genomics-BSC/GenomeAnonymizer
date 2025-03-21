@@ -46,8 +46,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
 
     // Assuming a maximum position distance of 4, and 4 of length difference
     public static final double INDEL_SIGNAL_THRESHOLD = 5.65;
-    // Assuming a maximum position distance of 10, and 15 of length difference
-    public static final double COMPLEX_SIGNAL_THRESHOLD = 18;
+    // Assuming a maximum position distance of 15, and 25 of length difference
+    public static final double COMPLEX_SIGNAL_THRESHOLD = 29.15;
 
     SamplePairReadAlignmentReader pairPileupReader;
     private int currentPileupPosition = 0;
@@ -139,7 +139,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         pairPileupReader.setReadsToExclude(readsToExclude);
     }
 
-    public void processNextPairedPileup(PairedPileup pileup){
+    public void processNextPairedPileup(PairedPileup pileup, boolean hasNext){
         int refPosition = pileup.getLocation();
         currentPileupPosition = refPosition;
         initializeSignalsInPos(refPosition);
@@ -155,7 +155,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         METHOD_TIME_MAP.compute("processSimpleSNVSignals",  (k,v) -> v == null ?
                 endprocessSimpleSignals-startprocessSimpleSignals :
                 v + endprocessSimpleSignals-startprocessSimpleSignals);
-        if (genomicRegion.getEnd() == currentPileupPosition || signals.size() >= MAX_SIGNAL_PER_REGION_LIMIT) {
+        if (!hasNext || signals.size() >= MAX_SIGNAL_PER_REGION_LIMIT) {
             long startprocessComplexSignals = System.currentTimeMillis();
             processSignals(signals);
             long endprocessComplexSignals = System.currentTimeMillis();
@@ -588,7 +588,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                             anonymizedReadQueue.offer(answer);
                         }
                     }
-                    processNextPairedPileup(pairedPileupIterator.next());
+                    processNextPairedPileup(pairedPileupIterator.next(), pairedPileupIterator.hasNext());
                 }
                 //Get the next remaining reads from the queue
                 if(!anonymizedReadQueue.isEmpty()){
