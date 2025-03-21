@@ -4,6 +4,7 @@ import genomicelements.PairCalledVariation.SomaticVariationType;
 import genomicelements.PairCalledVariation.VariantType;
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
+import htsjdk.samtools.SAMRecord;
 import io.SamplePairReadAlignmentReader;
 import utils.MapCacheFIFO;
 import utils.Operations;
@@ -61,6 +62,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     private Set<Integer> partiallyUncoveredPositions;
 
     private Set<String> readsToExclude;
+    private int insertSizeMinThreshold;
+    private int insertSizeMaxThreshold;
     private Map<String, Map<Integer, PairCalledVariation>> somaticVariantsToKeep;
     private boolean anonymizePotentialLeaksInVCFSomatics;
 
@@ -107,6 +110,14 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
 
     public void setRefSequence(byte[] refSequence) {
         this.refSequence = refSequence;
+    }
+
+    public void setInsertSizeMinThreshold(int insertSizeMinThreshold) {
+        this.insertSizeMinThreshold = insertSizeMinThreshold;
+    }
+
+    public void setInsertSizeMaxThreshold(int insertSizeMaxThreshold) {
+        this.insertSizeMaxThreshold = insertSizeMaxThreshold;
     }
 
     /**
@@ -205,6 +216,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 METHOD_TIME_MAP.compute("discoverIndelsAndComplexSignalsFromCIGAR", (k, v) -> v == null ?
                         enddiscoverIndelsAndSignalsFromCIGAR - startdiscoverIndelsAndSignalsFromCIGAR :
                         v + enddiscoverIndelsAndSignalsFromCIGAR - startdiscoverIndelsAndSignalsFromCIGAR);
+                // One signal per mate
+                complexSignalsFromMates(pileupRead);
             }
             //Check for potential SNVs
             if(pileupRead.differsFromReferenceAtPileup()){
@@ -215,6 +228,38 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                         enddiscoverSNVsFromRead - startdiscoverSNVsFromRead :
                         v + enddiscoverSNVsFromRead - startdiscoverSNVsFromRead);
             }
+        }
+    }
+
+    public void complexSignalsFromMates(PileupRead pileupRead) {
+        SAMRecord samRecord = pileupRead.getRead();
+        // Check if reads are in different chromosomes
+        if (!samRecord.getReferenceIndex().equals(samRecord.getMateReferenceIndex())) {
+            Signal calledSignal = new Signal(samRecord.getContig(), samRecord.getAlignmentStart(), pileupRead.getReadAlignmentId(), 0, 0, Signal.Source.CHROM_CHANGE);
+            signals.add(calledSignal);
+            return;
+        }
+        // Check signal strands: FF, RF and RR
+        // Check if this is the first or second pair (assume both are mapped)
+        boolean firstRead = samRecord.getAlignmentStart() <= samRecord.getMateAlignmentStart();
+        boolean firstForward, secondForward;
+        if (firstRead) {
+            firstForward = !samRecord.getReadNegativeStrandFlag();
+            secondForward = !samRecord.getMateNegativeStrandFlag();
+        } else {
+            firstForward = !samRecord.getMateNegativeStrandFlag();
+            secondForward = !samRecord.getReadNegativeStrandFlag();
+        }
+        int insertSize = Math.abs(samRecord.getInferredInsertSize());
+        if ((firstForward && secondForward) || (!firstForward && !secondForward) || (!firstForward && secondForward)) {
+            Signal calledSignal = new Signal(samRecord.getContig(), samRecord.getAlignmentStart(), pileupRead.getReadAlignmentId(), 0, insertSize, Signal.Source.STRAND_ORIENTATION);
+            signals.add(calledSignal);
+            return;
+        }
+        // Check insert size
+        if (insertSize < insertSizeMinThreshold || insertSize > insertSizeMaxThreshold) {
+            Signal calledSignal = new Signal(samRecord.getContig(), samRecord.getAlignmentStart(), pileupRead.getReadAlignmentId(), 0, insertSize, Signal.Source.INSERT_SIZE);
+            signals.add(calledSignal);
         }
     }
 
@@ -413,19 +458,21 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
      *
      */
     private void processSignals(List<Signal> signals) {
-        List<Signal> simpleSignals = new ArrayList<>();
-        List<Signal> softClipSignals = new ArrayList<>();
-        //TODO: Add other types of signals
-        for(Signal signal : signals){
-            if(Signal.Source.SOFT_CLIP == signal.getSource()){
-                softClipSignals.add(signal);
-            }
-            if (Signal.Source.SIMPLE_VARIATION == signal.getSource()){
-                simpleSignals.add(signal);
-            }
+        Map<String, List<Signal>> signalTypeMap = new HashMap<>();
+        // For each source of signal, create an empty list
+        for(Signal.Source source : Signal.Source.values()){
+            signalTypeMap.put(source.name(), new ArrayList<>());
         }
-        processTypeSignals(simpleSignals, INDEL_SIGNAL_PER_REGION_LIMIT, INDEL_SIGNAL_THRESHOLD);
-        processTypeSignals(softClipSignals, COMPLEX_SIGNAL_PER_REGION_LIMIT, COMPLEX_SIGNAL_THRESHOLD);
+        for(Signal signal : signals){
+            // Get the signal list
+            List<Signal> signalList = signalTypeMap.get(signal.getSource().name());
+            signalList.add(signal);
+        }
+        processTypeSignals(signalTypeMap.get(Signal.Source.SIMPLE_VARIATION.name()), INDEL_SIGNAL_PER_REGION_LIMIT, INDEL_SIGNAL_THRESHOLD);
+        processTypeSignals(signalTypeMap.get(Signal.Source.SOFT_CLIP.name()), COMPLEX_SIGNAL_PER_REGION_LIMIT, COMPLEX_SIGNAL_THRESHOLD);
+        processTypeSignals(signalTypeMap.get(Signal.Source.INSERT_SIZE.name()), COMPLEX_SIGNAL_PER_REGION_LIMIT, COMPLEX_SIGNAL_THRESHOLD);
+        processTypeSignals(signalTypeMap.get(Signal.Source.STRAND_ORIENTATION.name()), COMPLEX_SIGNAL_PER_REGION_LIMIT, COMPLEX_SIGNAL_THRESHOLD);
+        processTypeSignals(signalTypeMap.get(Signal.Source.CHROM_CHANGE.name()), COMPLEX_SIGNAL_PER_REGION_LIMIT, COMPLEX_SIGNAL_THRESHOLD);
     }
 
     private void processTypeSignals(List<Signal> typeSignals, int signalPerRegionLimit, double signalTypeThreshold) {
