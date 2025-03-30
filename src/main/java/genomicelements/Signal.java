@@ -17,6 +17,7 @@ public class Signal implements GenomicRegion{
     private byte[] sequenceBytes;
     private Source source;
     private boolean isFromNormalDataset;
+    private boolean isGermline = false;
     private PairCalledVariation pairCalledVariation = null;
 
 
@@ -94,6 +95,10 @@ public class Signal implements GenomicRegion{
         return !isFromNormalDataset;
     }
 
+    public boolean isGermline() {
+        return isGermline;
+    }
+
     public PairCalledVariation getCalledVariation() {
         return pairCalledVariation;
     }
@@ -108,6 +113,10 @@ public class Signal implements GenomicRegion{
 
     public void setIsFromNormalDataset(boolean isNormal){
         this.isFromNormalDataset = isNormal;
+    }
+
+    public void setIsGermline(boolean isGermline) {
+        this.isGermline = isGermline;
     }
 
     public boolean locatedAtReadStart(){

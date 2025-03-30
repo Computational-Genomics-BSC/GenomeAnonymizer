@@ -418,8 +418,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             final SAMRecord record = iterator.next();
             // Set the read name to the hash of the read name + salt
             record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
-                writer.addAlignment(record);
-//            }
+            writer.addAlignment(record);
         }
         // Close the files
         writer.close();

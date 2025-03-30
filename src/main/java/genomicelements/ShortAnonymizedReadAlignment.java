@@ -150,9 +150,42 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
             }
             c++;
         }
-        // Add reference bases to fill read to its original length for base-removing operations, exclude reads that would fall out of reference bounds
+        // Add reference bases to fill read to its original length (or more) for base-removing operations, exclude reads that would fall out of reference bounds
         if(j < expectedSize){
             makeAdditiveChange(j, currentRefAlnPos, avgQual, expectedSize-j);
+        }
+        // Cut the read if the new size is larger than the original
+        int cutLength;
+        if(anonymizedSequenceArray.length > originalSeqLength){
+            cutLength = anonymizedSequenceArray.length - originalSeqLength;
+            anonymizedSequenceArray = Arrays.copyOf(anonymizedSequenceArray, originalSeqLength);
+            anonymizedQualitiesArray = Arrays.copyOf(anonymizedQualitiesArray, originalSeqLength);
+            // Adjust CIGAR operators according to the cut length
+            for(int k = anonymizedCigarElements.size() - 1; k >= 0; k--){
+                CigarElement cigarElement = anonymizedCigarElements.get(k);
+                int cigarLength = cigarElement.getLength();
+                int diff = cigarLength - cutLength;
+                if(!cigarElement.getOperator().consumesReadBases()){
+                    anonymizedCigarElements.remove(k);
+                    continue;
+                }
+                if(diff > 0){
+                    CigarOperator op = cigarElement.getOperator();
+                    if(op == CigarOperator.I){
+                        op = CigarOperator.S;
+                    }
+                    anonymizedCigarElements.set(k, new CigarElement(diff, op));
+                    break;
+                }
+                else if(diff == 0){
+                    anonymizedCigarElements.remove(k);
+                    break;
+                }
+                else{
+                    anonymizedCigarElements.remove(k);
+                    cutLength = Math.abs(diff);
+                }
+            }
         }
         generateDefinitiveCigar();
         isAnonymized = true;
