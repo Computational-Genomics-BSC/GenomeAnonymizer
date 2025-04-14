@@ -18,20 +18,30 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
     public static final int PAIR_1_IDX = 0;
     public static final int PAIR_2_IDX = 1;
     public static final String DEFAULT_ID_NAME_SEPARATOR = ";";
+    public static final String ORIGIN_PAIR_TAG = "op";
 
     private final SAMRecord readAlignment;
     private String readAlnId;
     private byte[] referenceContigSequence;
     private int alnStart;
+    private byte averageBaseQuality;
     private boolean isAnonymized;
     private byte[] anonymizedSequenceArray;
     private byte[] anonymizedQualitiesArray;
+    private boolean isNormalDataset = true;
+
     List<CigarElement> anonymizedCigarElements;
     private Cigar anonymizedCigar;
     private List<PairCalledVariation> SNVsimpleSignals;
     private List<PairCalledVariation> indelSimpleSignals;
     private List<Signal> complexSignals;
-    private boolean isNormalDataset = true;
+
+    //Anonymization behaviour modifiers
+    private boolean fixOrientation = false;
+    private boolean hasDestructiveSignal = false;
+    private boolean hasChromChangeSignal = false;
+    private boolean updateInfoForMate = false;
+    private boolean extendLeft = false;
 
     public ShortAnonymizedReadAlignment(SAMRecord readAlignment) {
         this.readAlignment = readAlignment;
@@ -52,17 +62,116 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         this.isNormalDataset = isNormalDataset;
     }
 
-    public SAMRecord getAnonymizedSamRecord() {
+    public SAMRecord getAnonymizedSamRecord() throws IllegalStateException {
         if (!isAnonymized()) {
-            anonymizeVariants();
+            throw new IllegalStateException("Read is not anonymized, so the anonymized SAMRecord cannot be generated");
         }
-        SAMRecord answer = this.cloneRecord();
-        answer.setAlignmentStart(alnStart);
-        answer.setReadBases(anonymizedSequenceArray);
-        answer.setBaseQualities(anonymizedQualitiesArray);
-        answer.setCigar(anonymizedCigar);
-        SequenceUtil.calculateMdAndNmTags(answer, referenceContigSequence, true, true);
-        return answer;
+        return readAlignment;
+    }
+
+    private void correctOrientation(SAMRecord answer) {
+        boolean comesFirst = answer.getAlignmentStart() <= answer.getMateAlignmentStart();
+        if (comesFirst){
+            answer.setReadNegativeStrandFlag(false);
+            answer.setMateNegativeStrandFlag(true);
+            answer.setInferredInsertSize(Math.abs(answer.getInferredInsertSize()));
+        }
+        else {
+            answer.setReadNegativeStrandFlag(true);
+            answer.setMateNegativeStrandFlag(false);
+            answer.setInferredInsertSize(-Math.abs(answer.getInferredInsertSize()));
+        }
+    }
+
+    public SAMRecord getNewPair(int insertSize) {
+        SAMRecord newPair = new SAMRecord(readAlignment.getHeader());
+        //Determine pair number and gather related information
+        int newPairIdx = 1 - getPairIdx();
+        boolean newPairIsFirstOfPair = newPairIdx == PAIR_1_IDX;
+        int newPairStart;
+        int newPairLength = getLength();
+        int distanceFromMate = insertSize - (getLength()*2);
+        boolean newMapsFirst = hasChromChangeSignal ? readAlignment.getReadNegativeStrandFlag() : readAlignment.getMateAlignmentStart() <= readAlignment.getAlignmentStart();
+        if(newMapsFirst) {
+            newPairStart = Math.max(alnStart - distanceFromMate - newPairLength + 1, 1);
+            if(newPairStart + newPairLength >= referenceContigSequence.length){
+                newPairStart = referenceContigSequence.length - newPairLength;
+            }
+        }
+        else {
+            newPairStart = Math.min(getEnd() + distanceFromMate, referenceContigSequence.length - newPairLength);
+        }
+        //Generate read sequence from the reference, according complying with the input insert size
+        byte[] newPairSequenceArray = new byte[newPairLength];
+        int refPos = newPairStart - 1;
+        for(int i = 0; i < newPairLength; i++){
+            newPairSequenceArray[i] = referenceContigSequence[refPos];
+            refPos++;
+        }
+        //Generate read qualities from the average base quality of the mate
+        byte[] newPairQualitiesArray = new byte[newPairLength];
+        Arrays.fill(newPairQualitiesArray, averageBaseQuality);
+        //Generate CIGAR
+        List<CigarElement> newPairCigarElements = new ArrayList<>();
+        newPairCigarElements.add(new CigarElement(newPairLength, CigarOperator.M));
+        Cigar newPairCigar = new Cigar(newPairCigarElements);
+        //Set mate information (this)
+        newPair.setMateReferenceName(getSequenceName());
+        newPair.setMateAlignmentStart(alnStart);
+        newPair.setMateReferenceIndex(readAlignment.getReferenceIndex());
+        //Set the new pair information
+        newPair.setReadName(getReadName());
+        newPair.setReferenceName(getSequenceName());
+        newPair.setAlignmentStart(newPairStart);
+        newPair.setReadBases(newPairSequenceArray);
+        newPair.setBaseQualities(newPairQualitiesArray);
+        newPair.setCigar(newPairCigar);
+        newPair.setMappingQuality(getMappingQuality());
+        newPair.setReferenceIndex(readAlignment.getReferenceIndex());
+        //Set all the flags
+        newPair.setFirstOfPairFlag(newPairIsFirstOfPair);
+        newPair.setSecondOfPairFlag(!newPairIsFirstOfPair);
+        newPair.setReadPairedFlag(true);
+        newPair.setMateUnmappedFlag(false);
+        newPair.setProperPairFlag(true);
+        newPair.setDuplicateReadFlag(readAlignment.getDuplicateReadFlag());
+        newPair.setReadFailsVendorQualityCheckFlag(readAlignment.getReadFailsVendorQualityCheckFlag());
+        newPair.setSupplementaryAlignmentFlag(false);
+        //Correct insert size
+        int correctedInsertSize = newMapsFirst ?
+                this.getEnd() - newPair.getStart() + 1:
+                newPair.getEnd() - this.getStart() + 1;
+        if(newMapsFirst){
+            newPair.setInferredInsertSize(correctedInsertSize);
+            readAlignment.setInferredInsertSize(-correctedInsertSize);
+        }
+        else{
+            newPair.setInferredInsertSize(-correctedInsertSize);
+            readAlignment.setInferredInsertSize(correctedInsertSize);
+        }
+        //Update this pair information based on new pair
+        readAlignment.setProperPairFlag(true);
+        readAlignment.setMateReferenceName(getSequenceName());
+        readAlignment.setMateAlignmentStart(newPairStart);
+        readAlignment.setMateReferenceIndex(readAlignment.getReferenceIndex());
+        //Correct orientations
+        correctOrientation(newPair);
+        correctOrientation(readAlignment);
+        //Set TAGs for new pair: NM, MD, AS, XN, RG
+        SequenceUtil.calculateMdAndNmTags(newPair, referenceContigSequence, true, true);
+        newPair.setAttribute("AS", newPairLength);
+        newPair.setAttribute("RG", readAlignment.getAttribute("RG"));
+        newPair.setAttribute("MQ", getMappingQuality());
+        newPair.setAttribute("MC", anonymizedCigar.toString());
+        //Custom tag to identify the origin pair (will be removed before writing)
+        newPair.setAttribute(ORIGIN_PAIR_TAG, getPairIdx());
+        //Set TAGs for this pair: NM, MD, AS, XN, RG
+        readAlignment.setAttribute("MC", newPairCigar.toString());
+        return newPair;
+    }
+
+    public boolean fixOrientation() {
+        return fixOrientation;
     }
 
     public void setReferenceContigSequence(byte[] referenceContigSequence) {
@@ -70,25 +179,26 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         this.referenceContigSequence = referenceContigSequence;
     }
 
-    private void anonymizeVariants() throws IllegalStateException{
+    public void setFixOrientation(boolean fixOrientation) {
+        this.fixOrientation = fixOrientation;
+    }
+
+    public void anonymizeRead() throws IllegalStateException{
         if(referenceContigSequence == null){
             throw new IllegalStateException("The ShortAnonymizedReadAlignment.anonymizeVariants was called" +
                     "without setting the contigReferenceSequence first. setContigReferenceSequence, should always" +
                     " be alled after the constructor.");
         }
         int originalSeqLength = getOriginalSequenceArray().length;
-        int expectedSize = estimateNewReadSize(originalSeqLength);
+        int expectedSize = Math.max(originalSeqLength, estimateNewReadSize(originalSeqLength));
         anonymizedSequenceArray = new byte[expectedSize];
         anonymizedQualitiesArray = new byte[expectedSize];
-        byte avgQual = getAverageOfBytes(getOriginalQualitiesArray());
-        List<CigarElement> originalCigarElements = readAlignment.getCigar().getCigarElements();
+        averageBaseQuality = getAverageOfBytes(getOriginalQualitiesArray());
+        List<CigarElement> initialCigarElements = new ArrayList<>(readAlignment.getCigar().getCigarElements());
         //Except a starting PG SoftClip, alignment start is invariant, as the anonymized read will map to the exact start coordinate as the original
-        //final int alnStart = getStart();
-        int alnOrgEnd = getEnd();
         //0 based coordinate
         int currentRefAlnPos = alnStart-1;
         //Should be the same if we fill or remove bases from the end of the read
-        //int alnNewEnd = 0;
         //Holds the position over the original read
         int i = 0;
         //Holds the position over the anonymized read
@@ -98,26 +208,21 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         //SNV Operations (value: byte as new base) to perform using the original read index
         byte[] SNVops = processSNVoperations(originalSeqLength);
         //Indel Operations (value: number of bases to remove or add) to perform using the CIGAR index
-        int[] indelOps = processCigarOperations(originalCigarElements.size());
-        while(c < originalCigarElements.size()){
-            CigarElement cigarElem = originalCigarElements.get(c);
+        int[] operations = processComplexOperations(initialCigarElements);
+        while(c < initialCigarElements.size()){
+            CigarElement cigarElem = initialCigarElements.get(c);
             CigarOperator currentCigarOp = cigarElem.getOperator();
             int opLength = cigarElem.getLength();
-            int indelOp = indelOps[c];
-            if(indelOp > 0){
-                //For softclips, if it begins the read, substract exactly the length from currentRefAlnPos, if it ends add also exactly the length
-                if(CigarOperator.S == currentCigarOp){
-                    currentRefAlnPos -= indelOp;
-                    //Update alignment start in 1-based coordinates
-                    alnStart = currentRefAlnPos+1;
-                    i += indelOp;
-                }
-                makeAdditiveChange(j, currentRefAlnPos, avgQual, indelOp);
-                j += indelOp;
-                currentRefAlnPos += indelOp;
+            int op = operations[c];
+            if(op > 0){
+                makeAdditiveChange(j, currentRefAlnPos, op);
+                j += op;
+                currentRefAlnPos += op;
+                updateInfoForMate = true;
             }
-            else if(indelOp < 0){
-                i += Math.abs(indelOp);
+            else if(op < 0){
+                i += Math.abs(op);
+                updateInfoForMate = true;
             }
             else{
                 if(CigarOperator.M.equals(currentCigarOp)){
@@ -152,55 +257,69 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         }
         // Add reference bases to fill read to its original length (or more) for base-removing operations, exclude reads that would fall out of reference bounds
         if(j < expectedSize){
-            makeAdditiveChange(j, currentRefAlnPos, avgQual, expectedSize-j);
+            if(extendLeft){
+                byte[] tempSequenceArray = new byte[anonymizedSequenceArray.length];
+                byte[] tempQualitiesArray = new byte[anonymizedQualitiesArray.length];
+                int m = tempSequenceArray.length - 1;
+                for(int k = j-1; k >= 0; k--){
+                    tempSequenceArray[m] = anonymizedSequenceArray[k];
+                    tempQualitiesArray[m] = anonymizedQualitiesArray[k];
+                    m--;
+                }
+                anonymizedSequenceArray = tempSequenceArray;
+                anonymizedQualitiesArray = tempQualitiesArray;
+                alnStart -= (m+1);
+                makeAdditiveChange(0, alnStart - 1, m + 1, true);
+            }
+            else {
+                makeAdditiveChange(j, currentRefAlnPos, expectedSize-j);
+            }
         }
         // Cut the read if the new size is larger than the original
-        int cutLength;
         if(anonymizedSequenceArray.length > originalSeqLength){
-            cutLength = anonymizedSequenceArray.length - originalSeqLength;
-            anonymizedSequenceArray = Arrays.copyOf(anonymizedSequenceArray, originalSeqLength);
-            anonymizedQualitiesArray = Arrays.copyOf(anonymizedQualitiesArray, originalSeqLength);
-            // Adjust CIGAR operators according to the cut length
-            for(int k = anonymizedCigarElements.size() - 1; k >= 0; k--){
-                CigarElement cigarElement = anonymizedCigarElements.get(k);
-                int cigarLength = cigarElement.getLength();
-                int diff = cigarLength - cutLength;
-                if(!cigarElement.getOperator().consumesReadBases()){
-                    anonymizedCigarElements.remove(k);
-                    continue;
-                }
-                if(diff > 0){
-                    CigarOperator op = cigarElement.getOperator();
-                    if(op == CigarOperator.I){
-                        op = CigarOperator.S;
-                    }
-                    anonymizedCigarElements.set(k, new CigarElement(diff, op));
-                    break;
-                }
-                else if(diff == 0){
-                    anonymizedCigarElements.remove(k);
-                    break;
-                }
-                else{
-                    anonymizedCigarElements.remove(k);
-                    cutLength = Math.abs(diff);
-                }
-            }
+            cutRead(originalSeqLength);
         }
         generateDefinitiveCigar();
         isAnonymized = true;
+        //Anonymize the SAMRecord read alignment
+        readAlignment.setAlignmentStart(alnStart);
+        readAlignment.setReadBases(anonymizedSequenceArray);
+        readAlignment.setBaseQualities(anonymizedQualitiesArray);
+        readAlignment.setCigar(anonymizedCigar);
+        SequenceUtil.calculateMdAndNmTags(readAlignment, referenceContigSequence, true, true);
+        if(fixOrientation) {
+            correctOrientation(readAlignment);
+        }
     }
 
-    private void makeAdditiveChange(int initPos, int refInitPos, byte avgQual, int length) {
+    private void makeAdditiveChange(int initPos, int refInitPos, int length) {
+        makeAdditiveChange(initPos, refInitPos, length, false);
+    }
+
+    /**
+     * Fills the read with bases from the reference genome, starting at the given position
+     * @param initPos Position in the read to start filling
+     * @param refInitPos Position in the reference genome to start filling
+     * @param length Number of bases to fill
+     */
+    private void makeAdditiveChange(int initPos, int refInitPos, int length, boolean extendLeft) {
         int j = initPos;
         int r = refInitPos;
         for(int l = 0; l < length; l++){
             anonymizedSequenceArray[j] = referenceContigSequence[r];
-            anonymizedQualitiesArray[j] = avgQual;
+            anonymizedQualitiesArray[j] = averageBaseQuality;
             j++;
             r++;
         }
-        anonymizedCigarElements.add(new CigarElement(length, CigarOperator.M));
+        if(extendLeft){
+            List<CigarElement> tempCigarElements = new ArrayList<>();
+            tempCigarElements.add(new CigarElement(length, CigarOperator.M));
+            tempCigarElements.addAll(anonymizedCigarElements);
+            anonymizedCigarElements = tempCigarElements;
+        }
+        else{
+            anonymizedCigarElements.add(new CigarElement(length, CigarOperator.M));
+        }
     }
 
     private int estimateNewReadSize(int originalSeqLength) {
@@ -217,6 +336,38 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         return newSize;
     }
 
+    private void cutRead(int originalSeqLength) {
+        int cutLength = anonymizedSequenceArray.length - originalSeqLength;
+        anonymizedSequenceArray = Arrays.copyOf(anonymizedSequenceArray, originalSeqLength);
+        anonymizedQualitiesArray = Arrays.copyOf(anonymizedQualitiesArray, originalSeqLength);
+        // Adjust CIGAR operators according to the cut length
+        for(int k = anonymizedCigarElements.size() - 1; k >= 0; k--){
+            CigarElement cigarElement = anonymizedCigarElements.get(k);
+            int cigarLength = cigarElement.getLength();
+            int diff = cigarLength - cutLength;
+            if(!cigarElement.getOperator().consumesReadBases()){
+                anonymizedCigarElements.remove(k);
+                continue;
+            }
+            if(diff > 0){
+                CigarOperator op = cigarElement.getOperator();
+                if(op == CigarOperator.I){
+                    op = CigarOperator.S;
+                }
+                anonymizedCigarElements.set(k, new CigarElement(diff, op));
+                break;
+            }
+            else if(diff == 0){
+                anonymizedCigarElements.remove(k);
+                break;
+            }
+            else{
+                anonymizedCigarElements.remove(k);
+                cutLength = Math.abs(diff);
+            }
+        }
+    }
+
     private byte[] processSNVoperations(int originalSeqLength) {
         byte[] snvOps = new byte[originalSeqLength];
         for (PairCalledVariation snv : SNVsimpleSignals){
@@ -228,26 +379,50 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         return snvOps;
     }
 
-    private int[] processCigarOperations(int originalCigarLength) {
-        int[] indelOps = new int[originalCigarLength];
+    private int[] processComplexOperations(List<CigarElement> originalCigarElems) {
+        int n = originalCigarElems.size();
+        int[] operations = new int[n];
         // A negative operation (op) value, causes an elimination of the signal, whereas a positive value generates
         // an additive change with base pair filling from the reference genome
         for (PairCalledVariation indel : indelSimpleSignals){
             int indelOpPos = indel.getInReadPosition(this);
             int op = PairCalledVariation.VariantType.INS == indel.getVariantType() ?
                     -(indel.getLength()) : indel.getLength();
-            indelOps[indelOpPos] = op;
+            operations[indelOpPos] = op;
         }
         for (Signal signal : complexSignals){
             if(Signal.Source.SOFT_CLIP == signal.getSource()){
-                int softClipSignalPos = signal.getInReadPosition();
-                int op = signal.getLength();
                 //SoftClips are always filled, but the filling is done either at the beginning or end of the read, such that
                 //starting softclips are treated as deletions, and ending softclips as insertions
-                indelOps[softClipSignalPos] = softClipSignalPos == 0 ? op : -op;
+                int softClipSignalPos = signal.getInReadPosition();
+                int op = signal.getLength();
+                boolean mapsFirstInPair = readAlignment.getStart() <= readAlignment.getMateAlignmentStart();
+                boolean isSoftClipAtStart = signal.getStart() == 0;
+                operations[softClipSignalPos] = -op;
+                if (mapsFirstInPair){
+                    extendLeft = true;
+                    CigarElement firstCigarElement = readAlignment.getCigar().getFirstCigarElement();
+                    if (!isSoftClipAtStart && CigarOperator.S == firstCigarElement.getOperator()) {
+                        operations[0] = -firstCigarElement.getLength();
+                    }
+                }
+                else{
+                    extendLeft = false;
+                    CigarElement lastCigarElement = readAlignment.getCigar().getLastCigarElement();
+                    if (isSoftClipAtStart && CigarOperator.S == lastCigarElement.getOperator()){
+                        operations[operations.length - 1] = -lastCigarElement.getLength();
+                    }
+                }
+            }
+            if(Signal.Source.STRAND_ORIENTATION == signal.getSource()){
+                setFixOrientation(true);
+            }
+            if(signal.isDestructiveSignal()){
+                if(Signal.Source.CHROM_CHANGE == signal.getSource()) hasChromChangeSignal = true;
+                hasDestructiveSignal = true;
             }
         }
-        return indelOps;
+        return operations;
     }
 
     private void generateDefinitiveCigar() {
@@ -303,7 +478,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
     }
 
     public boolean addSignalToAnonymize(Signal signal){
-        // Can change when dealing with SVs
         boolean added = false;
         if (Signal.Source.SIMPLE_VARIATION == signal.getSource()){
             PairCalledVariation variation = signal.getCalledVariation();
@@ -315,10 +489,11 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
             if(PairCalledVariation.GENERIC_TYPE_INDEL.equals(varType)){
                 added = indelSimpleSignals.add(variation);
             }
-        } else if (Signal.Source.SOFT_CLIP == signal.getSource()) {
+        }
+        else {
+            // Add complex signals: SOFT_CLIP, STRAND_ORIENTATION, INSERT_SIZE, CHROM_CHANGE
             added = complexSignals.add(signal);
         }
-        //TODO: Add other signal types
         return added;
     }
 
@@ -343,12 +518,20 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         return readAlignment.getEnd();
     }
 
+    public Cigar getCigar() {
+        return this.anonymizedCigar;
+    }
+
     @Override
     public void setSequenceIdx(int sequenceIdx) {
     }
 
     public int getMappingQuality(){
         return readAlignment.getMappingQuality();
+    }
+
+    public PairInfoToUpdate getPairInfoToUpdate() {
+        return new PairInfoToUpdate(readAlignment.getReadName(), alnStart, anonymizedCigar);
     }
 
     public boolean isSupplementary() {
@@ -377,6 +560,14 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
 
     public boolean isFromTumoralDataset(){
         return !isNormalDataset;
+    }
+
+    public boolean hasDestructiveSignal(){
+        return hasDestructiveSignal;
+    }
+
+    public boolean updateInfoForMate(){
+        return updateInfoForMate;
     }
 
     public String getReadName() {

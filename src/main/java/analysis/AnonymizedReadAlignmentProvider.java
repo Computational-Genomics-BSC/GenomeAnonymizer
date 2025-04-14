@@ -34,16 +34,20 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     public static final int SLIDING_WINDOW_LIMIT = 200;
     public static final int MAX_LOCATION_DISTANCE_THRESHOLD = 400;
 
-//    private static final int INDEL_SIGNAL_PER_REGION_LIMIT = 100;
+    //    private static final int INDEL_SIGNAL_PER_REGION_LIMIT = 100;
     public static final int MAX_SIGNAL_PER_REGION_LIMIT = 5000;
 
-    public static final int INDEL_SIGNAL_PER_REGION_LIMIT = 500;
-    public static final int COMPLEX_SIGNAL_PER_REGION_LIMIT = 1000;
+    public static final int SIGNAL_PER_PARTITION_LIMIT = 1000;
 
-    // Assuming a maximum position distance of 10, and 10 of length difference
-    public static final double INDEL_SIGNAL_THRESHOLD = 14.14;
+    // Assuming a maximum position distance of 5, and 5 of length difference
+    public static final double INDEL_SIGNAL_THRESHOLD = 7.07;
     // Assuming a maximum position distance of 15, and 25 of length difference
-    public static final double COMPLEX_SIGNAL_THRESHOLD = 29.15;
+    public static final double GENERAL_SIGNAL_THRESHOLD = 29.15;
+    // Assuming a maximum position distance of 50, and 250 of length difference
+    public static final double INSERT_SIZE_SIGNAL_THRESHOLD = 250;
+    // Assuming a maximum position distance of 100
+    public static final double STRAND_ORIENTATION_SIGNAL_THRESHOLD = 100;
+
 
     SamplePairReadAlignmentReader pairPileupReader;
     private int currentPileupPosition = 0;
@@ -69,7 +73,6 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     private int numProcessedPileups = 0;
 
     //DEBUG
-    private GenomicRegion extendedRegion;
     public Map<String, Long> METHOD_TIME_MAP = new HashMap<>();
     //DEBUG
 
@@ -122,9 +125,6 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, refSequence, leftExtendedRegion);
         pairPileupReader.setIncludeDuplicates(true);
         pairPileupReader.setReadsToExclude(readsToExclude);
-        //DEBUG
-        extendedRegion = leftExtendedRegion;
-        //DEBUG
     }
 
     public void processNextPairedPileup(PairedPileup pileup, boolean hasNext){
@@ -205,7 +205,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                         enddiscoverIndelsAndSignalsFromCIGAR - startdiscoverIndelsAndSignalsFromCIGAR :
                         v + enddiscoverIndelsAndSignalsFromCIGAR - startdiscoverIndelsAndSignalsFromCIGAR);
                 // One signal per mate
-                discoverSignalsFromMates(pileupRead);
+                discoverSignalsFromMates(pileupRead, isNormalDataset);
             }
             //Check for potential SNVs
             if(pileupRead.differsFromReferenceAtPileup()){
@@ -280,24 +280,19 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 Signal calledSignal = new Signal(readAlnId, calledVar);
                 calledSignal.setIsFromNormalDataset(isNormalDataset);
                 signals.add(calledSignal);
-                if (anonymizedReadCache.containsKey(readAlnId)) {
-                    onHoldReads.compute(readAlnId, (k, v) -> v == null ? 1 : v + 1);
-                }
+                putReadOnHold(readAlnId);
             }
             if(op.isClipping()){
                 int currentRefPos = cigarPos == 0 ? initRefPos : initRefPos + cigarPos-1;
                 int length = cigarElement.getLength();
                 if(CigarOperator.S == op){
-                    //Avoid soft-clipping signals that fall outside the beginning of the reference sequence,
+                    //Avoid soft-clip signals that fall outside the beginning of the reference sequence,
                     // or from reads that overlap with the last position
-                    if(initRefPos-length-1 >= 0 && !overlap(pileupRead.getStart(), pileupRead.getEnd()+length+1, refSequence.length-1)){
-                        Signal calledSignal = new Signal(sequenceName, currentRefPos, readAlnId, i, length,
-                                Signal.Source.SOFT_CLIP);
+                    if(initRefPos - pileupRead.getReadLength() - 1 >= 0 && !overlap(pileupRead.getStart(), pileupRead.getEnd()+pileupRead.getReadLength()+1, refSequence.length-1)){
+                        Signal calledSignal = new Signal(sequenceName, currentRefPos, readAlnId, i, length, Signal.Source.SOFT_CLIP);
                         calledSignal.setIsFromNormalDataset(isNormalDataset);
                         signals.add(calledSignal);
-                        if (anonymizedReadCache.containsKey(readAlnId)) {
-                            onHoldReads.compute(readAlnId, (k, v) -> v == null ? 1 : v + 1);
-                        }
+                        putReadOnHold(readAlnId);
                     }
                 }
             }
@@ -310,17 +305,33 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         }
     }
 
-    public void discoverSignalsFromMates(PileupRead pileupRead) {
+    public void discoverSignalsFromMates(PileupRead pileupRead, boolean isNormalDataset) {
+        String readAlnId = pileupRead.getReadAlignmentId();
         SAMRecord samRecord = pileupRead.getRead();
+        // Check if the read is primary
+        if (samRecord.isSecondaryOrSupplementary()) {
+            return;
+        }
+        // Check if this is the first or second pair (assume both are mapped)
+        boolean firstRead = samRecord.getAlignmentStart() <= samRecord.getMateAlignmentStart();
+        // Check insert size
+        int insertSize = Math.abs(samRecord.getInferredInsertSize());
         // Check if reads are in different chromosomes
         if (!samRecord.getReferenceIndex().equals(samRecord.getMateReferenceIndex())) {
             Signal calledSignal = new Signal(samRecord.getContig(), samRecord.getAlignmentStart(), pileupRead.getReadAlignmentId(), 0, 0, Signal.Source.CHROM_CHANGE);
+            calledSignal.setIsFromNormalDataset(isNormalDataset);
             signals.add(calledSignal);
+            putReadOnHold(readAlnId);
+            return;
+        }
+        if (insertSize < insertSizeMinThreshold || insertSize > insertSizeMaxThreshold) {
+            Signal calledSignal = new Signal(samRecord.getContig(), samRecord.getAlignmentStart(), pileupRead.getReadAlignmentId(), 0, insertSize, Signal.Source.INSERT_SIZE);
+            calledSignal.setIsFromNormalDataset(isNormalDataset);
+            signals.add(calledSignal);
+            putReadOnHold(readAlnId);
             return;
         }
         // Check signal strands: FF, RF and RR
-        // Check if this is the first or second pair (assume both are mapped)
-        boolean firstRead = samRecord.getAlignmentStart() <= samRecord.getMateAlignmentStart();
         boolean firstForward;
         boolean secondForward;
         if (firstRead) {
@@ -331,16 +342,17 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
             firstForward = !samRecord.getMateNegativeStrandFlag();
             secondForward = !samRecord.getReadNegativeStrandFlag();
         }
-        int insertSize = Math.abs(samRecord.getInferredInsertSize());
         if ((firstForward && secondForward) || (!firstForward && !secondForward) || (!firstForward && secondForward)) {
             Signal calledSignal = new Signal(samRecord.getContig(), samRecord.getAlignmentStart(), pileupRead.getReadAlignmentId(), 0, insertSize, Signal.Source.STRAND_ORIENTATION);
+            calledSignal.setIsFromNormalDataset(isNormalDataset);
             signals.add(calledSignal);
-            return;
+            putReadOnHold(readAlnId);
         }
-        // Check insert size
-        if (insertSize < insertSizeMinThreshold || insertSize > insertSizeMaxThreshold) {
-            Signal calledSignal = new Signal(samRecord.getContig(), samRecord.getAlignmentStart(), pileupRead.getReadAlignmentId(), 0, insertSize, Signal.Source.INSERT_SIZE);
-            signals.add(calledSignal);
+    }
+
+    private void putReadOnHold(String readAlnId) {
+        if (anonymizedReadCache.containsKey(readAlnId)) {
+            onHoldReads.compute(readAlnId, (k, v) -> v == null ? 1 : v + 1);
         }
     }
 
@@ -419,37 +431,35 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
      *
      */
     private void processSignals(List<Signal> signals) {
-        Map<String, List<Signal>> signalTypeMap = new HashMap<>();
-        // For each source of signal, create an empty list
-        for(Signal.Source source : Signal.Source.values()){
-            signalTypeMap.put(source.name(), new ArrayList<>());
-        }
+        List<Signal> cigarSignals = new ArrayList<>();
+        List<Signal> insertSizeSignals = new ArrayList<>();
+        List<Signal> strandOrientationSignals = new ArrayList<>();
+        List<Signal> chromChangeSignals = new ArrayList<>();
+        // For each source of signal, create a partition, mixed for cigarSignals
         for(Signal signal : signals){
-            // Get the signal list
-            List<Signal> signalList = signalTypeMap.get(signal.getSource().name());
-            signalList.add(signal);
-        }
-        processTypeSignals(signalTypeMap.get(Signal.Source.SIMPLE_VARIATION.name()), INDEL_SIGNAL_PER_REGION_LIMIT, INDEL_SIGNAL_THRESHOLD);
-        processTypeSignals(signalTypeMap.get(Signal.Source.SOFT_CLIP.name()), COMPLEX_SIGNAL_PER_REGION_LIMIT, COMPLEX_SIGNAL_THRESHOLD);
-        processTypeSignals(signalTypeMap.get(Signal.Source.INSERT_SIZE.name()), COMPLEX_SIGNAL_PER_REGION_LIMIT, COMPLEX_SIGNAL_THRESHOLD);
-        processTypeSignals(signalTypeMap.get(Signal.Source.STRAND_ORIENTATION.name()), COMPLEX_SIGNAL_PER_REGION_LIMIT, COMPLEX_SIGNAL_THRESHOLD);
-        processTypeSignals(signalTypeMap.get(Signal.Source.CHROM_CHANGE.name()), COMPLEX_SIGNAL_PER_REGION_LIMIT, COMPLEX_SIGNAL_THRESHOLD);
-        //Compare remaining cigar signals from different concordant types
-        List<Signal> remainingSignals = new ArrayList<>();
-        List<String> remainingSignalTypes = new ArrayList<>();
-        remainingSignalTypes.add(Signal.Source.SIMPLE_VARIATION.name());
-        remainingSignalTypes.add(Signal.Source.SOFT_CLIP.name());
-        for (String type : remainingSignalTypes){
-            for (Signal signal : signalTypeMap.get(type)){
-                if( !signal.isGermline() ){
-                    remainingSignals.add(signal);
-                }
+            if(signal.getSource() == Signal.Source.SIMPLE_VARIATION){
+                cigarSignals.add(signal);
+            }
+            else if(signal.getSource() == Signal.Source.SOFT_CLIP){
+                cigarSignals.add(signal);
+            }
+            else if(signal.getSource() == Signal.Source.INSERT_SIZE){
+                insertSizeSignals.add(signal);
+            }
+            else if(signal.getSource() == Signal.Source.STRAND_ORIENTATION){
+                strandOrientationSignals.add(signal);
+            }
+            else if(signal.getSource() == Signal.Source.CHROM_CHANGE){
+                chromChangeSignals.add(signal);
             }
         }
-        processTypeSignals(remainingSignals, COMPLEX_SIGNAL_PER_REGION_LIMIT, COMPLEX_SIGNAL_THRESHOLD);
+        processTypeSignals(cigarSignals, SIGNAL_PER_PARTITION_LIMIT*2);
+        processTypeSignals(insertSizeSignals, SIGNAL_PER_PARTITION_LIMIT);
+        processTypeSignals(strandOrientationSignals, SIGNAL_PER_PARTITION_LIMIT);
+        processTypeSignals(chromChangeSignals, SIGNAL_PER_PARTITION_LIMIT);
     }
 
-    private void processTypeSignals(List<Signal> typeSignals, int signalPerRegionLimit, double signalTypeThreshold) {
+    private void processTypeSignals(List<Signal> typeSignals, int signalPerPartitionLimit) {
         int n = typeSignals.size();
         List<Signal> currentPartition = new ArrayList<>();
         for(int i = 0; i < n-1; i++){
@@ -458,23 +468,28 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
             Signal nextSignal = typeSignals.get(i+1);
             int locationDistance = Math.abs(nextSignal.getLocation() - currentSignal.getLocation());
             boolean lastSignalUnreachable = locationDistance > MAX_LOCATION_DISTANCE_THRESHOLD;
-            if(lastSignalUnreachable || currentPartition.size() >= signalPerRegionLimit || (i==n-2)){
+            if(lastSignalUnreachable || currentPartition.size() >= signalPerPartitionLimit || (i==n-2)){
                 if(!lastSignalUnreachable){
                     currentPartition.add(nextSignal);
                     i++;
                 }
-                processPartition(currentPartition, signalTypeThreshold);
+                processPartition(currentPartition);
                 currentPartition = new ArrayList<>();
             }
         }
     }
 
-    private void processPartition(List<Signal> signals, double signalTypeThreshold) {
+    private void processPartition(List<Signal> signals) {
         int n = signals.size();
         for (int i = 0; i < n; i++){
             Signal firstSignal = signals.get(i);
             for (int j = i + 1; j < n; j++){
                 Signal secondSignal = signals.get(j);
+                //Avoid comparing signals from small deletions against insertions
+                if(isDifferentSimpleVariation(firstSignal, secondSignal)) continue;
+                //Avoid comparing signals from the same read
+                if(firstSignal.getReadAlnName().contains(secondSignal.getReadAlnName())) continue;
+                double signalTypeThreshold = getSignalThreshold(firstSignal, secondSignal);
                 double signalDistance = Operations.computeTwoDimEuclideanDistance(firstSignal.getLocation(), secondSignal.getLocation(),
                         firstSignal.getLength(), secondSignal.getLength());
                 //Classify signals that are close enough to be considered as a germline signal
@@ -512,6 +527,26 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 }
             }
         }
+    }
+
+    private double getSignalThreshold(Signal firstSignal, Signal secondSignal) {
+        if (firstSignal.isSimpleVariation() && secondSignal.isSimpleVariation()){
+            return INDEL_SIGNAL_THRESHOLD;
+        }
+        if (Signal.Source.INSERT_SIZE == firstSignal.getSource() && Signal.Source.INSERT_SIZE == secondSignal.getSource()){
+            return INSERT_SIZE_SIGNAL_THRESHOLD;
+        }
+        if (Signal.Source.STRAND_ORIENTATION == firstSignal.getSource() && Signal.Source.STRAND_ORIENTATION == secondSignal.getSource()){
+            return STRAND_ORIENTATION_SIGNAL_THRESHOLD;
+        }
+        return GENERAL_SIGNAL_THRESHOLD;
+    }
+
+    private boolean isDifferentSimpleVariation(Signal firstSignal, Signal secondSignal) {
+        if (firstSignal.isSimpleVariation() && secondSignal.isSimpleVariation()){
+            return firstSignal.getCalledVariation().getVariantType() != secondSignal.getCalledVariation().getVariantType();
+        }
+        return false;
     }
 
     private void classifyGermlineComplexSignal(Signal signal) {

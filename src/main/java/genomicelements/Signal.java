@@ -87,6 +87,14 @@ public class Signal implements GenomicRegion{
         return inReadPosition;
     }
 
+    public boolean isSimpleVariation() {
+        return source == Source.SIMPLE_VARIATION;
+    }
+
+    public boolean isDestructiveSignal() {
+        return source == Source.INSERT_SIZE || source == Source.CHROM_CHANGE;
+    }
+
     public boolean isFromNormalDataset() {
         return isFromNormalDataset;
     }

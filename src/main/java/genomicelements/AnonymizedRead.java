@@ -12,7 +12,7 @@ public interface AnonymizedRead {
     public String getReadName();
     public String getReadAlignmentId();
     public void setSignalsToAnonymize(List<Signal> signals);
-//    public void anonymizeVariants();
+    public void anonymizeRead();
     public boolean isFromNormalDataset();
     public boolean isFromTumoralDataset();
     public boolean isAnonymized();

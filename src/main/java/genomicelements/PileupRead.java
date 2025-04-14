@@ -95,6 +95,10 @@ public class PileupRead implements GenomicRegion{
         this.referenceBase = referenceBase;
     }
 
+    public int getReadLength() {
+        return read.getReadLength();
+    }
+
     public boolean isNew(){
         return status == PileupRead.PileupReadStatus.PILEUP_READ_STATUS_NEW ||
                 status == PileupRead.PileupReadStatus.PILEUP_READ_STATUS_NEW_AND_DIFFERING_BASE;
