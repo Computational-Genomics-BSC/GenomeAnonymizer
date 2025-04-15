@@ -162,11 +162,10 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         newPair.setAttribute("AS", newPairLength);
         newPair.setAttribute("RG", readAlignment.getAttribute("RG"));
         newPair.setAttribute("MQ", getMappingQuality());
-        newPair.setAttribute("MC", anonymizedCigar.toString());
         //Custom tag to identify the origin pair (will be removed before writing)
         newPair.setAttribute(ORIGIN_PAIR_TAG, getPairIdx());
+        readAlignment.setAttribute(ORIGIN_PAIR_TAG, getPairIdx());
         //Set TAGs for this pair: NM, MD, AS, XN, RG
-        readAlignment.setAttribute("MC", newPairCigar.toString());
         return newPair;
     }
 
@@ -218,11 +217,9 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
                 makeAdditiveChange(j, currentRefAlnPos, op);
                 j += op;
                 currentRefAlnPos += op;
-                updateInfoForMate = true;
             }
             else if(op < 0){
                 i += Math.abs(op);
-                updateInfoForMate = true;
             }
             else{
                 if(CigarOperator.M.equals(currentCigarOp)){
@@ -276,20 +273,34 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
             }
         }
         // Cut the read if the new size is larger than the original
-        if(anonymizedSequenceArray.length > originalSeqLength){
-            cutRead(originalSeqLength);
-        }
+        if(anonymizedSequenceArray.length > originalSeqLength) cutRead(originalSeqLength);
+        // Process the CIGAR elements to remove redundant ones
         generateDefinitiveCigar();
-        isAnonymized = true;
+        //Set the read alignment start position if modified
+        if(alnStart != getStart()) updateInfoForMate = true;
         //Anonymize the SAMRecord read alignment
         readAlignment.setAlignmentStart(alnStart);
         readAlignment.setReadBases(anonymizedSequenceArray);
         readAlignment.setBaseQualities(anonymizedQualitiesArray);
         readAlignment.setCigar(anonymizedCigar);
         SequenceUtil.calculateMdAndNmTags(readAlignment, referenceContigSequence, true, true);
-        if(fixOrientation) {
-            correctOrientation(readAlignment);
+        // Fix orientation if needed
+        if(fixOrientation) correctOrientation(readAlignment);
+        isAnonymized = true;
+    }
+
+    private int estimateNewReadSize(int originalSeqLength) {
+        int newSize = originalSeqLength;
+        for(PairCalledVariation indel : indelSimpleSignals) {
+            PairCalledVariation.VariantType variantType = indel.getVariantType();
+            if (PairCalledVariation.VariantType.DEL.equals(variantType)) {
+                newSize += indel.getLength();
+            }
+            if (PairCalledVariation.VariantType.INS.equals(variantType)) {
+                newSize -= indel.getLength();
+            }
         }
+        return newSize;
     }
 
     private void makeAdditiveChange(int initPos, int refInitPos, int length) {
@@ -320,20 +331,6 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         else{
             anonymizedCigarElements.add(new CigarElement(length, CigarOperator.M));
         }
-    }
-
-    private int estimateNewReadSize(int originalSeqLength) {
-        int newSize = originalSeqLength;
-        for(PairCalledVariation indel : indelSimpleSignals) {
-            PairCalledVariation.VariantType variantType = indel.getVariantType();
-            if (PairCalledVariation.VariantType.DEL.equals(variantType)) {
-                newSize += indel.getLength();
-            }
-            if (PairCalledVariation.VariantType.INS.equals(variantType)) {
-                newSize -= indel.getLength();
-            }
-        }
-        return newSize;
     }
 
     private void cutRead(int originalSeqLength) {
@@ -530,8 +527,11 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         return readAlignment.getMappingQuality();
     }
 
-    public PairInfoToUpdate getPairInfoToUpdate() {
-        return new PairInfoToUpdate(readAlignment.getReadName(), alnStart, anonymizedCigar);
+    public int getPairUpdatedPos() {
+        if (!isAnonymized()) {
+            throw new IllegalStateException("Read is not anonymized, so this position may not be updated");
+        }
+        return alnStart;
     }
 
     public boolean isSupplementary() {

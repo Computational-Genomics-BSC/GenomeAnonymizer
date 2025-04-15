@@ -16,8 +16,7 @@ import java.util.function.Consumer;
 import java.util.logging.Logger;
 
 import static analysis.GenomeAnonymizer.DEFAULT_MIN_MAPPING_QUALITY;
-import static utils.Operations.isContained;
-import static utils.Operations.overlap;
+import static utils.Operations.*;
 
 
 /**
@@ -34,7 +33,6 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     public static final int SLIDING_WINDOW_LIMIT = 200;
     public static final int MAX_LOCATION_DISTANCE_THRESHOLD = 400;
 
-    //    private static final int INDEL_SIGNAL_PER_REGION_LIMIT = 100;
     public static final int MAX_SIGNAL_PER_REGION_LIMIT = 5000;
 
     public static final int SIGNAL_PER_PARTITION_LIMIT = 1000;
@@ -45,8 +43,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     public static final double GENERAL_SIGNAL_THRESHOLD = 29.15;
     // Assuming a maximum position distance of 50, and 250 of length difference
     public static final double INSERT_SIZE_SIGNAL_THRESHOLD = 250;
-    // Assuming a maximum position distance of 100
-    public static final double STRAND_ORIENTATION_SIGNAL_THRESHOLD = 100;
+    // Assuming a maximum position distance of 150
+    public static final double STRAND_ORIENTATION_SIGNAL_THRESHOLD = 150;
 
 
     SamplePairReadAlignmentReader pairPileupReader;
@@ -308,12 +306,15 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     public void discoverSignalsFromMates(PileupRead pileupRead, boolean isNormalDataset) {
         String readAlnId = pileupRead.getReadAlignmentId();
         SAMRecord samRecord = pileupRead.getRead();
-        // Check if the read is primary
-        if (samRecord.isSecondaryOrSupplementary()) {
+        // Check if the read maps before the mate
+        int cmp = compare(samRecord.getReferenceIndex(), samRecord.getAlignmentStart(), samRecord.getAlignmentEnd(),
+                samRecord.getMateReferenceIndex(), samRecord.getMateAlignmentStart(),
+                samRecord.getMateAlignmentStart() + samRecord.getReadLength() - 1);
+        boolean thisPairMapsFirst = cmp <= 0;
+        // Check if the read is the pair mapped first
+        if (samRecord.isSecondaryOrSupplementary() || !thisPairMapsFirst) {
             return;
         }
-        // Check if this is the first or second pair (assume both are mapped)
-        boolean firstRead = samRecord.getAlignmentStart() <= samRecord.getMateAlignmentStart();
         // Check insert size
         int insertSize = Math.abs(samRecord.getInferredInsertSize());
         // Check if reads are in different chromosomes
@@ -331,6 +332,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
             putReadOnHold(readAlnId);
             return;
         }
+        // Check if this is the first or second pair (assume both are mapped)
+        boolean firstRead = samRecord.getAlignmentStart() <= samRecord.getMateAlignmentStart();
         // Check signal strands: FF, RF and RR
         boolean firstForward;
         boolean secondForward;
