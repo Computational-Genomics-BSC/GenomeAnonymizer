@@ -28,7 +28,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
     private boolean isAnonymized;
     private byte[] anonymizedSequenceArray;
     private byte[] anonymizedQualitiesArray;
-    private boolean isNormalDataset = true;
+    private boolean isNormalDataset;
 
     List<CigarElement> anonymizedCigarElements;
     private Cigar anonymizedCigar;
@@ -90,7 +90,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         boolean newPairIsFirstOfPair = newPairIdx == PAIR_1_IDX;
         int newPairStart;
         int newPairLength = getLength();
-        int distanceFromMate = insertSize - (getLength()*2);
+        int distanceFromMate = insertSize - (getLength()+getLength());
         boolean newMapsFirst = hasChromChangeSignal ? readAlignment.getReadNegativeStrandFlag() : readAlignment.getMateAlignmentStart() <= readAlignment.getAlignmentStart();
         if(newMapsFirst) {
             newPairStart = Math.max(alnStart - distanceFromMate - newPairLength + 1, 1);
@@ -99,7 +99,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
             }
         }
         else {
-            newPairStart = Math.min(getEnd() + distanceFromMate, referenceContigSequence.length - newPairLength);
+            newPairStart = Math.min(getEnd() + distanceFromMate + 1, referenceContigSequence.length - newPairLength);
         }
         //Generate read sequence from the reference, according complying with the input insert size
         byte[] newPairSequenceArray = new byte[newPairLength];

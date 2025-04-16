@@ -45,7 +45,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     // Set that contains all the reads that will be excluded from the result (e.g. Unmapped and MAPQ < filter)
     private Set<String> readsToExclude;
     private Map<String, Integer> updatedMatePositions;
-    private Set<String> generatedReadPairs;
 
     // Thresholds for the insert sizes
     private int insertSizeMinThreshold = Integer.MIN_VALUE;
@@ -67,14 +66,13 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         this.inputTumorPath = inputTumorPath;
         this.refGenomePath = refGenomePath;
         this.outputPrefix = outputPrefix;
-        readsToExclude = new HashSet<>();
-        generatedReadPairs = new HashSet<>();
-        updatedMatePositions = new HashMap<>();
-        factory = SamReaderFactory.makeDefault();
-        factory.setUseAsyncIo(true);
-        factory.validationStringency(ValidationStringency.SILENT);
+        this.readsToExclude = new HashSet<>();
+        this.updatedMatePositions = new HashMap<>();
+        this.factory = SamReaderFactory.makeDefault();
+        this.factory.setUseAsyncIo(true);
+        this.factory.validationStringency(ValidationStringency.SILENT);
         // Initialize hash_salt with a random value
-        hashSalt = GlobalRandom.getInstance().nextInt();
+        this.hashSalt = GlobalRandom.getInstance().nextInt();
     }
 
     @Override
@@ -242,7 +240,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 SAMRecord samRecord = it.next();
                 if((samRecord.getReadUnmappedFlag() || samRecord.getMateUnmappedFlag()) ||
                         (samRecord.getMappingQuality() < minimumMappingQuality && !samRecord.isSecondaryOrSupplementary())){
-                readsToExcludeInPartition.add(samRecord.getReadName());
+                    readsToExcludeInPartition.add(samRecord.getReadName());
                     continue;
                 }
                 // Only use the first read
@@ -490,20 +488,22 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         writerFactory.setMaxRecordsInRam(maxReadsInRam / 2);
         writerFactory.setUseAsyncIo(true);
         writerFactory.setCreateIndex(true);
-        final SAMFileWriter writer = writerFactory.makeWriter(headerMerger.getMergedHeader(), true, new File(outputPath), new File(refGenomePath));
+        final SAMFileWriter writer = writerFactory.makeWriter(headerMerger.getMergedHeader(), true,
+                new File(outputPath), new File(refGenomePath));
         // Merge the records
         final MergingSamRecordIterator iterator = new MergingSamRecordIterator(headerMerger, readers, false);
+        Set<String> generatedReadPairs = new HashSet<>();
         while (iterator.hasNext()) {
             final SAMRecord record = iterator.next();
             String pairName = record.getPairedReadName();
-            if(!keepPair(record)) {
-                updatedMatePositions.remove(pairName);
+            if(!keepPair(record, generatedReadPairs)) {
+//                updatedMatePositions.remove(pairName);
                 continue;
             }
             if(updatedMatePositions.containsKey(pairName)){
                 int updatedMateInfo = updatedMatePositions.get(pairName);
                 record.setMateAlignmentStart(updatedMateInfo);
-                updatedMatePositions.remove(pairName);
+//                updatedMatePositions.remove(pairName);
             }
             // Set the read name to the hash of the read name + salt
 //            record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
@@ -524,7 +524,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
      * @return true if the read pair should be kept, false otherwise.
      */
 
-    public boolean keepPair(SAMRecord record){
+    public boolean keepPair(SAMRecord record, Set<String> generatedReadPairs) {
         boolean hasOriginPairTag = record.getAttribute(ORIGIN_PAIR_TAG) != null;
         if (hasOriginPairTag){
             generatedReadPairs.add(record.getReadName());
