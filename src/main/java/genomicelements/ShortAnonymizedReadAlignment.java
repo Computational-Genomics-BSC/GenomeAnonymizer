@@ -29,6 +29,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
     private byte[] anonymizedSequenceArray;
     private byte[] anonymizedQualitiesArray;
     private boolean isNormalDataset;
+    private boolean mateOriginalPosIsEqual;
 
     List<CigarElement> anonymizedCigarElements;
     private Cigar anonymizedCigar;
@@ -48,6 +49,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         this.readAlnId = generateReadAlnId(readAlignment);
         this.alnStart = getStart();
         this.isAnonymized = false;
+        this.mateOriginalPosIsEqual = readAlignment.getMateAlignmentStart() == getStart();
         this.anonymizedSequenceArray = readAlignment.getReadBases();
         this.anonymizedQualitiesArray = readAlignment.getBaseQualities();
         this.anonymizedCigar = readAlignment.getCigar();
@@ -532,6 +534,10 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
             throw new IllegalStateException("Read is not anonymized, so this position may not be updated");
         }
         return alnStart;
+    }
+
+    public boolean mateOriginalPosIsEqual() {
+        return mateOriginalPosIsEqual;
     }
 
     public boolean isSupplementary() {

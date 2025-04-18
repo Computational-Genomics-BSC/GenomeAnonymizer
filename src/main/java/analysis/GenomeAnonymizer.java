@@ -204,13 +204,6 @@ public class GenomeAnonymizer {
                 .argName("DIRECTORY")
                 .hasArg(true)
                 .build());
-//        options.addOption(Option.builder("bed")
-//                .desc("BED file where the regions from the original sample are defined, " +
-//                        "and therefore will not be covered with the canvas")
-//                .argName("FILE")
-//                .hasArg(true)
-//                //.required(false)
-//                .build());
         return options;
     }
 

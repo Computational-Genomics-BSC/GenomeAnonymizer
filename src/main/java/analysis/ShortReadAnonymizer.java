@@ -357,7 +357,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                     }
                     if(shortAnonymizedRead.hasDestructiveSignal() && !shortAnonymizedRead.isSupplementary()){
                         partitionPairsToUpdate.remove(thisPairName);
-                        partitionPairsToUpdate.remove(otherPairName);
+                        if(shortAnonymizedRead.mateOriginalPosIsEqual()) partitionPairsToUpdate.put(otherPairName, -1);
+                        else partitionPairsToUpdate.remove(otherPairName);
                         SAMRecord newPairAlnRecord = shortAnonymizedRead.getNewPair(insertSizeMedian);
                         writeRead(writer, newPairAlnRecord);
                     }
@@ -492,24 +493,17 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 new File(outputPath), new File(refGenomePath));
         // Merge the records
         final MergingSamRecordIterator iterator = new MergingSamRecordIterator(headerMerger, readers, false);
-        Set<String> generatedReadPairs = new HashSet<>();
+        Map<String, Integer> generatedReadPairs = new HashMap<>();
         while (iterator.hasNext()) {
             final SAMRecord record = iterator.next();
-            String pairName = record.getPairedReadName();
-            if(!keepPair(record, generatedReadPairs)) {
-//                updatedMatePositions.remove(pairName);
-                continue;
-            }
-            if(updatedMatePositions.containsKey(pairName)){
-                int updatedMateInfo = updatedMatePositions.get(pairName);
-                record.setMateAlignmentStart(updatedMateInfo);
-//                updatedMatePositions.remove(pairName);
-            }
-            // Set the read name to the hash of the read name + salt
+            boolean keepPair = keepPair(record, generatedReadPairs);
+            if(keepPair) {
+                // Set the read name to the hash of the read name + salt
 //            record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
-            record.setAttribute(ORIGIN_PAIR_TAG, null);
-            record.setAttribute("MC", null);
-            writer.addAlignment(record);
+                record.setAttribute(ORIGIN_PAIR_TAG, null);
+                record.setAttribute("MC", null);
+                writer.addAlignment(record);
+            }
         }
         // Close the files
         writer.close();
@@ -524,12 +518,27 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
      * @return true if the read pair should be kept, false otherwise.
      */
 
-    public boolean keepPair(SAMRecord record, Set<String> generatedReadPairs) {
+    public boolean keepPair(SAMRecord record, Map<String, Integer> generatedReadPairs) {
         boolean hasOriginPairTag = record.getAttribute(ORIGIN_PAIR_TAG) != null;
-        if (hasOriginPairTag){
-            generatedReadPairs.add(record.getReadName());
-            return true;
+        if(generatedReadPairs.containsKey(record.getReadName())){
+            if(hasOriginPairTag){
+                int originPair = record.getIntegerAttribute(ORIGIN_PAIR_TAG);
+                int keptOriginPair = generatedReadPairs.get(record.getReadName());
+                return keptOriginPair == originPair;
+            }
+            else return false;
         }
-        else return !generatedReadPairs.contains(record.getReadName());
+        if(hasOriginPairTag) {
+            generatedReadPairs.put(record.getReadName(), record.getIntegerAttribute(ORIGIN_PAIR_TAG));
+        }
+        else{
+            String pairName = record.getPairedReadName();
+            if(updatedMatePositions.containsKey(pairName)){
+                int updatedMateInfo = updatedMatePositions.get(pairName);
+                record.setMateAlignmentStart(updatedMateInfo);
+            }
+            if(record.getMateAlignmentStart() == -1) return false;
+        }
+        return true;
     }
 }
