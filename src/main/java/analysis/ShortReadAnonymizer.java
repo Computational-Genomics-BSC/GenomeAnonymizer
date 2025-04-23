@@ -351,7 +351,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                         partitionPairsToUpdate.remove(thisPairName);
                     }
                     // Update info from this pair into the other mate
-                    if (shortAnonymizedRead.updateInfoForMate()) {
+                    if (shortAnonymizedRead.updateInfoForMate() && !shortAnonymizedRead.isSupplementary()){
                         int thisMateUpdatedPos = shortAnonymizedRead.getPairUpdatedPos();
                         partitionPairsToUpdate.put(otherPairName, thisMateUpdatedPos);
                     }

@@ -396,7 +396,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
                 int softClipSignalPos = signal.getInReadPosition();
                 int op = signal.getLength();
                 boolean mapsFirstInPair = readAlignment.getStart() <= readAlignment.getMateAlignmentStart();
-                boolean isSoftClipAtStart = signal.getStart() == 0;
+                boolean isSoftClipAtStart = softClipSignalPos == 0;
                 operations[softClipSignalPos] = -op;
                 if (mapsFirstInPair){
                     extendLeft = true;
