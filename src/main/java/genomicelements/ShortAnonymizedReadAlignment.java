@@ -388,6 +388,23 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
             int op = PairCalledVariation.VariantType.INS == indel.getVariantType() ?
                     -(indel.getLength()) : indel.getLength();
             operations[indelOpPos] = op;
+            if(op < 0){
+                boolean mapsFirstInPair = readAlignment.getStart() <= readAlignment.getMateAlignmentStart();
+                if (mapsFirstInPair){
+                    extendLeft = true;
+                    CigarElement firstCigarElement = readAlignment.getCigar().getFirstCigarElement();
+                    if (CigarOperator.S == firstCigarElement.getOperator()) {
+                        operations[0] = -firstCigarElement.getLength();
+                    }
+                }
+                else{
+                    extendLeft = false;
+                    CigarElement lastCigarElement = readAlignment.getCigar().getLastCigarElement();
+                    if (CigarOperator.S == lastCigarElement.getOperator()){
+                        operations[operations.length - 1] = -lastCigarElement.getLength();
+                    }
+                }
+            }
         }
         for (Signal signal : complexSignals){
             if(Signal.Source.SOFT_CLIP == signal.getSource()){
