@@ -292,9 +292,26 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             // Get all pairs to update with info from the mate (indexed by the  name of the pair to be updated)
             updatedMatePositions.putAll(answer.partitionPairsToUpdate());
         }
+        // Free memory cleaning unused attributes
+        readsToExclude = new HashSet<>();
         // Merge the anonymized reads from all partition files
         mergeAnonymizedReads(normalPaths, tumorPaths);
-        // TODO: Remove temp files?
+        // Delete the temporary files
+        deleteTempFiles(normalPaths);
+        deleteTempFiles(tumorPaths);
+    }
+
+    private void deleteTempFiles(List<String> paths) {
+        for (String path : paths) {
+            File file = new File(path);
+            if (file.exists()) {
+                try {
+                    file.delete();
+                } catch (SecurityException e) {
+                    LOGGER.log(Level.WARNING, "Unable to delete file: " + file.getAbsolutePath(), e);
+                }
+            }
+        }
     }
 
     public class PartitionProviderRunner implements Runnable {
