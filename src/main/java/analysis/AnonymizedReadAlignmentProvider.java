@@ -35,10 +35,12 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
 
     public static final int MAX_SIGNAL_PER_REGION_LIMIT = 5000;
 
-    public static final int SIGNAL_PER_PARTITION_LIMIT = 1000;
+    public static final int SIGNAL_PER_PARTITION_LIMIT = 1500;
 
     // Assuming a maximum position distance of 5, and 5 of length difference
     public static final double INDEL_SIGNAL_THRESHOLD = 7.07;
+    // Assuming a maximum position distance of 3, and 3 of length difference
+    public static final double INDEL_SOFTCLIP_SIGNAL_THRESHOLD = 4.24;
     // Assuming a maximum position distance of 15, and 25 of length difference
     public static final double GENERAL_SIGNAL_THRESHOLD = 29.15;
     // Assuming a maximum position distance of 50, and 250 of length difference
@@ -535,6 +537,10 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     private double getSignalThreshold(Signal firstSignal, Signal secondSignal) {
         if (firstSignal.isSimpleVariation() && secondSignal.isSimpleVariation()){
             return INDEL_SIGNAL_THRESHOLD;
+        }
+        if ((firstSignal.isSimpleVariation() && secondSignal.getSource() == Signal.Source.SOFT_CLIP)
+                || (firstSignal.getSource() == Signal.Source.SOFT_CLIP && secondSignal.isSimpleVariation())){
+            return INDEL_SOFTCLIP_SIGNAL_THRESHOLD;
         }
         if (Signal.Source.INSERT_SIZE == firstSignal.getSource() && Signal.Source.INSERT_SIZE == secondSignal.getSource()){
             return INSERT_SIZE_SIGNAL_THRESHOLD;
