@@ -12,6 +12,7 @@ repositories {
 
 dependencies {
     implementation(fileTree(mapOf("dir" to "lib", "include" to listOf("*.jar"))))
+    //implementation("com.github.haifengl:smile-core:4.3.0")
     // implementation("com.github.samtools:htsjdk:4.1.3")
     // implementation("commons-cli:commons-cli:1.9.0")
     testImplementation(platform("org.junit:junit-bom:5.10.0"))

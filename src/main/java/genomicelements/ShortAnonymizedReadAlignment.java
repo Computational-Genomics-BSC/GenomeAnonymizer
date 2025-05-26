@@ -71,7 +71,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         return readAlignment;
     }
 
-    private void correctOrientation(SAMRecord answer) {
+    public static void correctOrientation(SAMRecord answer) {
         boolean comesFirst = answer.getAlignmentStart() <= answer.getMateAlignmentStart();
         if (comesFirst){
             answer.setReadNegativeStrandFlag(false);
@@ -180,8 +180,9 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         this.referenceContigSequence = referenceContigSequence;
     }
 
-    public void setFixOrientation(boolean fixOrientation) {
-        this.fixOrientation = fixOrientation;
+    public void setFixOrientation() {
+        this.fixOrientation = true;
+        this.isAnonymized = false;
     }
 
     public void anonymizeRead() throws IllegalStateException{
@@ -431,7 +432,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
                 }
             }
             if(Signal.Source.STRAND_ORIENTATION == signal.getSource()){
-                setFixOrientation(true);
+                setFixOrientation();
             }
             if(signal.isDestructiveSignal()){
                 if(Signal.Source.CHROM_CHANGE == signal.getSource()) hasChromChangeSignal = true;

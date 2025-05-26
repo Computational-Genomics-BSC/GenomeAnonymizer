@@ -45,6 +45,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     // Set that contains all the reads that will be excluded from the result (e.g. Unmapped and MAPQ < filter)
     private Set<String> readsToExclude;
     private Map<String, Integer> updatedMatePositions;
+    private Map<String, Integer> readsToCorrectOrientation;
 
     // Thresholds for the insert sizes
     private int insertSizeMinThreshold = Integer.MIN_VALUE;
@@ -68,6 +69,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         this.outputPrefix = outputPrefix;
         this.readsToExclude = new HashSet<>();
         this.updatedMatePositions = new HashMap<>();
+        this.readsToCorrectOrientation = new HashMap<>();
         this.factory = SamReaderFactory.makeDefault();
         this.factory.setUseAsyncIo(true);
         this.factory.validationStringency(ValidationStringency.SILENT);
@@ -291,6 +293,10 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             PartitionAnswer answer = runnable.getAnswer();
             // Get all pairs to update with info from the mate (indexed by the  name of the pair to be updated)
             updatedMatePositions.putAll(answer.partitionPairsToUpdate());
+            // Get all reads to correct orientation
+            for (String readName : answer.readsToCorrectOrientation()) {
+                readsToCorrectOrientation.putIfAbsent(readName, 0);
+            }
         }
         // Free memory cleaning unused attributes
         readsToExclude = new HashSet<>();
@@ -319,7 +325,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         private final String normalOutputPath;
         private final String tumorOutputPath;
 
-        private Set<String> readsToCorrectOrientation = new HashSet<>();
+        private Set<String> partitionReadsToCorrectOrientation = new HashSet<>();
         private Map<String, Integer> partitionPairsToUpdate = new HashMap<>();
 
         private PartitionAnswer answer;
@@ -353,14 +359,14 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                     String thisPairName = getPairedReadName(readName, pairIdx);
                     String otherPairName = getPairedReadName(readName, 1 - pairIdx);
                     //If the first pair contained a signal mandating orientation to be fixed, fix the second pair orientation also
-                    if(readsToCorrectOrientation.contains(readName) && !shortAnonymizedRead.isSupplementary()) {
-                        shortAnonymizedRead.setFixOrientation(true);
-                        readsToCorrectOrientation.remove(readName);
+                    if(partitionReadsToCorrectOrientation.contains(readName) && !shortAnonymizedRead.isSupplementary()) {
+                        shortAnonymizedRead.setFixOrientation();
+                        partitionReadsToCorrectOrientation.remove(readName);
                     }
                     //Anonymize read if it has germline signals
                     if(!shortAnonymizedRead.isAnonymized()) shortAnonymizedRead.anonymizeRead();
                     //If the first pair contains a signal mandating orientation to be fixed, save the read name to fix the second pair orientation
-                    if(shortAnonymizedRead.fixOrientation()) readsToCorrectOrientation.add(readName);
+                    if(shortAnonymizedRead.fixOrientation()) partitionReadsToCorrectOrientation.add(readName);
                     // Update info from the other mate into this pair
                     if (partitionPairsToUpdate.containsKey(thisPairName)){
                         int updatedMatePos = partitionPairsToUpdate.get(thisPairName);
@@ -389,7 +395,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                             writeReadTime :
                             v + writeReadTime);
                 }
-                answer = new PartitionAnswer(partitionPairsToUpdate);
+                answer = new PartitionAnswer(partitionPairsToUpdate, partitionReadsToCorrectOrientation);
                 long endcallVariation = System.currentTimeMillis();
                 //TIME DEBUG
                 anonymizedReadProvider.METHOD_TIME_MAP.put("callVariation", endcallVariation - startcallVariation);
@@ -416,7 +422,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         }
     }
 
-    public record PartitionAnswer(Map<String, Integer> partitionPairsToUpdate) { }
+    public record PartitionAnswer(Map<String, Integer> partitionPairsToUpdate, Set<String> readsToCorrectOrientation) { }
 
     private SAMFileWriter openSingleOutputStream(String path, String outputPath, boolean isNormalDataset) throws IOException {
         SAMFileWriterFactory factory = new SAMFileWriterFactory();
@@ -517,6 +523,17 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             if(keepPair) {
                 // Set the read name to the hash of the read name + salt
 //            record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
+                if(readsToCorrectOrientation.containsKey(record.getReadName())){
+                    int pairCount = readsToCorrectOrientation.get(record.getReadName());
+                    if (pairCount == 0) {
+                        ShortAnonymizedReadAlignment.correctOrientation(record);
+                        readsToCorrectOrientation.put(record.getReadName(), 1);
+                    }
+                    else if (pairCount == 1) {
+                        ShortAnonymizedReadAlignment.correctOrientation(record);
+                        readsToCorrectOrientation.remove(record.getReadName());
+                    }
+                }
                 record.setAttribute(ORIGIN_PAIR_TAG, null);
                 record.setAttribute("MC", null);
                 writer.addAlignment(record);
