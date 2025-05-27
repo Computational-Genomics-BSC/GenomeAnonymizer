@@ -71,8 +71,12 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         return readAlignment;
     }
 
-    public static void correctOrientation(SAMRecord answer) {
+    public static void correctOrientation(SAMRecord answer, boolean foundFirst) {
         boolean comesFirst = answer.getAlignmentStart() <= answer.getMateAlignmentStart();
+        if (answer.getAlignmentStart() == answer.getMateAlignmentStart()){
+            // If the alignment start is equal, we assume that the read that was found first is the one that comes first
+            comesFirst = foundFirst;
+        }
         if (comesFirst){
             answer.setReadNegativeStrandFlag(false);
             answer.setMateNegativeStrandFlag(true);
@@ -83,6 +87,10 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
             answer.setMateNegativeStrandFlag(false);
             answer.setInferredInsertSize(-Math.abs(answer.getInferredInsertSize()));
         }
+    }
+
+    public static void correctOrientation(SAMRecord answer) {
+        correctOrientation(answer, false);
     }
 
     public SAMRecord getNewPair(int insertSize) {

@@ -523,10 +523,10 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             if(keepPair) {
                 // Set the read name to the hash of the read name + salt
 //            record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
-                if(readsToCorrectOrientation.containsKey(record.getReadName())){
+                if(readsToCorrectOrientation.containsKey(record.getReadName()) && !record.isSecondaryOrSupplementary()) {
                     int pairCount = readsToCorrectOrientation.get(record.getReadName());
                     if (pairCount == 0) {
-                        ShortAnonymizedReadAlignment.correctOrientation(record);
+                        ShortAnonymizedReadAlignment.correctOrientation(record, true);
                         readsToCorrectOrientation.put(record.getReadName(), 1);
                     }
                     else if (pairCount == 1) {
