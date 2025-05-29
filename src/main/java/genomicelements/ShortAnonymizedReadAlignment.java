@@ -101,7 +101,9 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         int newPairStart;
         int newPairLength = getLength();
         int distanceFromMate = insertSize - (getLength()+getLength());
-        boolean newMapsFirst = hasChromChangeSignal ? readAlignment.getReadNegativeStrandFlag() : readAlignment.getMateAlignmentStart() < readAlignment.getAlignmentStart();
+        boolean newMapsFirst = hasChromChangeSignal ? readAlignment.getReadNegativeStrandFlag()
+                && (alnStart - distanceFromMate - newPairLength + 1 >= 1)
+                : readAlignment.getMateAlignmentStart() < readAlignment.getAlignmentStart();
         if(newMapsFirst) {
             newPairStart = Math.max(alnStart - distanceFromMate - newPairLength + 1, 1);
             if(newPairStart + newPairLength >= referenceContigSequence.length){
