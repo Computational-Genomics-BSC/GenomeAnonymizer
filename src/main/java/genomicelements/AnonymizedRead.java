@@ -18,5 +18,5 @@ public interface AnonymizedRead {
     public boolean isAnonymized();
     public SAMRecord getAnonymizedSamRecord();
     public void setReferenceContigSequence(byte[] referenceContigSequence);
-
+    public void rescueIndelSignalToAnonymize(Signal signal);
 }

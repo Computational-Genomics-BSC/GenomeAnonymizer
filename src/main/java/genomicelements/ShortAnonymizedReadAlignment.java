@@ -524,6 +524,11 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         return added;
     }
 
+    public void rescueIndelSignalToAnonymize(Signal signal) {
+        PairCalledVariation variation = signal.getCalledVariation();
+        indelSimpleSignals.remove(variation);
+    }
+
     public String getReadAlignmentId(){
         return readAlnId;
     }

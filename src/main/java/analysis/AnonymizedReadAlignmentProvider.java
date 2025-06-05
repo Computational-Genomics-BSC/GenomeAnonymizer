@@ -6,6 +6,12 @@ import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.SAMRecord;
 import io.SamplePairReadAlignmentReader;
+import smile.clustering.*;
+import smile.clustering.linkage.*;
+import smile.graph.AdjacencyList;
+import smile.math.distance.Distance;
+import static smile.math.MathEx.*;
+
 import utils.MapCacheFIFO;
 import utils.Operations;
 
@@ -458,15 +464,91 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 chromChangeSignals.add(signal);
             }
         }
-        processTypeSignals(cigarSignals, SIGNAL_PER_PARTITION_LIMIT*2);
-        processTypeSignals(insertSizeSignals, SIGNAL_PER_PARTITION_LIMIT);
-        processTypeSignals(strandOrientationSignals, SIGNAL_PER_PARTITION_LIMIT);
-        processTypeSignals(chromChangeSignals, SIGNAL_PER_PARTITION_LIMIT);
+        processTypeSignals(insertSizeSignals);
+        processTypeSignals(strandOrientationSignals);
+        processTypeSignals(chromChangeSignals);
+        List<List<Signal>> indelGraphs = processTypeSignals(cigarSignals, SIGNAL_PER_PARTITION_LIMIT*2, true);
+        rescueMissedSomaticIndelSignals(indelGraphs);
     }
 
-    private void processTypeSignals(List<Signal> typeSignals, int signalPerPartitionLimit) {
+    private void rescueMissedSomaticIndelSignals(List<List<Signal>> indelGraphs) {
+        for(List<Signal> indelPartitionGraph : indelGraphs) {
+            if(indelPartitionGraph.size() < 2) {
+                // If there are not enough signals to form a graph, skip processing
+                continue;
+            }
+            // Process the indel graph to declassify leaked somatic signals using hierarchical clustering
+            Signal[] indelGraphArray = indelPartitionGraph.toArray(new Signal[0]);
+            // Generate the linkage for hierarchical clustering, using the Euclidean distance between signals (location and length)
+            Linkage linkage = WardLinkage.of(indelGraphArray, new SignalDistance());
+            HierarchicalClustering hierarchicClusters = HierarchicalClustering.fit(linkage);
+            // Check if there is a clear first cluster split, and rescue the signals if they are only somatic
+            int[][] tree = hierarchicClusters.tree();
+            double[] heights = hierarchicClusters.height().clone();
+            // Save signals from the two biggest clusters, if they are too far apart and one is only somatic
+            double heightCutoff = mean(heights); //+ stdev(heights);
+            if(heightCutoff == 0){
+                // If the height cutoff is zero, it means that all signals are at identical, so skip processing
+                continue;
+            }
+            boolean isNonMonotonicTree = false;
+            for (int i = 0; i < heights.length - 1; i++) {
+                if (heights[i] > heights[i + 1]) {
+                    isNonMonotonicTree = true;
+                    break;
+                }
+            }
+            if(isNonMonotonicTree) continue;
+            int[] clusters = hierarchicClusters.partition(heightCutoff);
+            boolean[] isSomaticCluster = new boolean[clusters.length];
+            Arrays.fill(isSomaticCluster, true);
+            List<List<Signal>> clusteredSignals = new ArrayList<>(clusters.length);
+            for(int i = 0; i < clusters.length; i++) {
+                clusteredSignals.add(new ArrayList<>());
+            }
+            Set<Integer> clusterSet = new HashSet<>();
+            for(int i = 0; i < clusters.length; i++) {
+                Signal signal = indelGraphArray[i];
+                int clusterId = clusters[i];
+                if(signal.isFromNormalDataset()){
+                    isSomaticCluster[clusterId] = false;
+                }
+                clusteredSignals.get(clusterId).add(signal);
+                clusterSet.add(clusterId);
+            }
+            for(int clusterId : clusterSet) {
+                if(isSomaticCluster[clusterId]){
+                    List<Signal> rescuedSomaticSignals = clusteredSignals.get(clusterId);
+                    for(Signal signal : rescuedSomaticSignals) {
+                        if ( !signal.isClassifiedByDistance() ) continue;
+                        String readAlnName = signal.getReadAlnName();
+                        AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnName);
+                        if(anonymizedRead != null) anonymizedRead.rescueIndelSignalToAnonymize(signal);
+                        signal.setIsGermline(false);
+                        // If the signal is somatic, remove it from the onHoldReads map
+                        manageAnalyzedSignalsInHoldedReadAln(signal);
+                    }
+                }
+            }
+        }
+    }
+
+    static class SignalDistance implements Distance<Signal> {
+        @Override
+        public double d(Signal a, Signal b) {
+            return Operations.computeTwoDimEuclideanDistance(a.getLocation(), b.getLocation(),
+                    a.getLength(), b.getLength());
+        }
+    }
+
+    private void processTypeSignals(List<Signal> typeSignals) {
+        processTypeSignals(typeSignals, AnonymizedReadAlignmentProvider.SIGNAL_PER_PARTITION_LIMIT, false);
+    }
+
+    private List<List<Signal>> processTypeSignals(List<Signal> typeSignals, int signalPerPartitionLimit, boolean returnConnectedSignals) {
         int n = typeSignals.size();
         List<Signal> currentPartition = new ArrayList<>();
+        List<List<Signal>> connectedPartitionSignals = new ArrayList<>();
         for(int i = 0; i < n-1; i++){
             Signal currentSignal = typeSignals.get(i);
             currentPartition.add(currentSignal);
@@ -478,14 +560,29 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                     currentPartition.add(nextSignal);
                     i++;
                 }
-                processPartition(currentPartition);
+                if(returnConnectedSignals) {
+                    processPartition(currentPartition, true, connectedPartitionSignals);
+                }
+                else{
+                    processPartition(currentPartition);
+                }
                 currentPartition = new ArrayList<>();
             }
         }
+        return connectedPartitionSignals;
     }
 
-    private void processPartition(List<Signal> signals) {
+    private void processPartition(List<Signal> signals){
+        processPartition(signals, false, new ArrayList<>());
+    }
+
+    /**
+     * Process a partition of signals, classifying them as germline complex signals
+     * @param signals
+     */
+    private void processPartition(List<Signal> signals, boolean returnConnectedComponents, List<List<Signal>> connectedSignals) {
         int n = signals.size();
+        AdjacencyList signalsGraph = new AdjacencyList(n, false);
         for (int i = 0; i < n; i++){
             Signal firstSignal = signals.get(i);
             for (int j = i + 1; j < n; j++){
@@ -498,11 +595,17 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 double signalDistance = Operations.computeTwoDimEuclideanDistance(firstSignal.getLocation(), secondSignal.getLocation(),
                         firstSignal.getLength(), secondSignal.getLength());
                 //Classify signals that are close enough to be considered as a germline signal
-                if ( signalDistance < signalTypeThreshold &&
+                if( signalDistance < signalTypeThreshold &&
                         (firstSignal.isFromNormalDataset() || secondSignal.isFromNormalDataset()) ) {
+                    if(returnConnectedComponents){
+                        signalsGraph.addEdge(i, j);
+                        signalsGraph.addEdge(j, i);
+                    }
                     long startclassifyPGcomplexSignal = System.currentTimeMillis();
                     classifyGermlineComplexSignal(firstSignal);
+                    firstSignal.setClassifiedByDistance(true);
                     classifyGermlineComplexSignal(secondSignal);
+                    secondSignal.setClassifiedByDistance(true);
                     long endclassifyPGcomplexSignal = System.currentTimeMillis();
                     METHOD_TIME_MAP.compute("classifyPGcomplexSignal", (k, v) -> v == null ?
                             endclassifyPGcomplexSignal - startclassifyPGcomplexSignal :
@@ -522,14 +625,33 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                     }
                 }
             }
-            if(onHoldReads.containsKey(firstSignal.getReadAlnName())){
-                int remainingReadSignals = onHoldReads.get(firstSignal.getReadAlnName());
-                if(remainingReadSignals == 1){
-                    onHoldReads.remove(firstSignal.getReadAlnName());
+            // Manage the read that has been analyzed, removing it from the onHoldReads map
+            manageAnalyzedSignalsInHoldedReadAln(firstSignal);
+        }
+        if(returnConnectedComponents){
+            // Add the connected signals to the list of connected components
+            //connectedSignals.add(connectedSignalsInPartition);
+            // Get the connected components from the graph
+            int[][] connectedComponentsArray = signalsGraph.bfcc();
+            for (int[] component : connectedComponentsArray) {
+                List<Signal> connectedComponentSignals = new ArrayList<>();
+                for (int idx : component) {
+                    connectedComponentSignals.add(signals.get(idx));
                 }
-                else{
-                    onHoldReads.put(firstSignal.getReadAlnName(), remainingReadSignals-1);
-                }
+                connectedSignals.add(connectedComponentSignals);
+            }
+        }
+    }
+
+    private void manageAnalyzedSignalsInHoldedReadAln(Signal signal){
+        String readAlnName = signal.getReadAlnName();
+        if(onHoldReads.containsKey(readAlnName)){
+            int remainingReadSignals = onHoldReads.get(readAlnName);
+            if(remainingReadSignals == 1){
+                onHoldReads.remove(readAlnName);
+            }
+            else{
+                onHoldReads.put(readAlnName, remainingReadSignals-1);
             }
         }
     }

@@ -18,6 +18,7 @@ public class Signal implements GenomicRegion{
     private Source source;
     private boolean isFromNormalDataset;
     private boolean isGermline = false;
+    private boolean classifiedByDistance = false;
     private PairCalledVariation pairCalledVariation = null;
 
 
@@ -107,6 +108,10 @@ public class Signal implements GenomicRegion{
         return isGermline;
     }
 
+    public boolean isClassifiedByDistance() {
+        return classifiedByDistance;
+    }
+
     public PairCalledVariation getCalledVariation() {
         return pairCalledVariation;
     }
@@ -125,6 +130,10 @@ public class Signal implements GenomicRegion{
 
     public void setIsGermline(boolean isGermline) {
         this.isGermline = isGermline;
+    }
+
+    public void setClassifiedByDistance(boolean classifiedByDistance) {
+        this.classifiedByDistance = classifiedByDistance;
     }
 
     public boolean locatedAtReadStart(){
@@ -146,6 +155,11 @@ public class Signal implements GenomicRegion{
                 ", location=" + location +
                 ", inReadPosition=" + inReadPosition +
                 '}';
+    }
+
+    public String toAbridgedString() {
+        return this.getLocation() + ":" + this.getLength() + ":" + this.getSource() + ":" +
+                (this.isFromNormalDataset() ? "normal" : "tumor");
     }
 
     @Override
