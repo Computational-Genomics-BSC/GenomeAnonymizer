@@ -517,9 +517,10 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         // Merge the records
         final MergingSamRecordIterator iterator = new MergingSamRecordIterator(headerMerger, readers, false);
         Map<String, Integer> generatedReadPairs = new HashMap<>();
+        Map<String, ModifiedPairsRequired> readPairRequirements = new HashMap<>();
         while (iterator.hasNext()) {
             final SAMRecord record = iterator.next();
-            boolean keepPair = keepPair(record, generatedReadPairs);
+            boolean keepPair = keepPair(record, generatedReadPairs, readPairRequirements);
             if(keepPair) {
                 // Set the read name to the hash of the read name + salt
 //            record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
@@ -538,6 +539,12 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 record.setAttribute("MC", null);
                 writer.addAlignment(record);
             }
+            // Remove the read pair from the requirements map after they have been met
+            ModifiedPairsRequired readPairStatus = readPairRequirements.get(record.getReadName());
+            if (readPairStatus != null && readPairStatus.collectedAllPairs()) {
+                generatedReadPairs.remove(record.getReadName());
+                readPairRequirements.remove(record.getReadName());
+            }
         }
         // Close the files
         writer.close();
@@ -552,19 +559,37 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
      * @return true if the read pair should be kept, false otherwise.
      */
 
-    public boolean keepPair(SAMRecord record, Map<String, Integer> generatedReadPairs) {
+    public boolean keepPair(SAMRecord record, Map<String, Integer> generatedReadPairs, Map<String, ModifiedPairsRequired> readPairRequirements) {
         boolean hasOriginPairTag = record.getAttribute(ORIGIN_PAIR_TAG) != null;
+        boolean isSupplementary = record.isSecondaryOrSupplementary();
         if(generatedReadPairs.containsKey(record.getReadName())){
             if(hasOriginPairTag){
                 int originPair = record.getIntegerAttribute(ORIGIN_PAIR_TAG);
                 int keptOriginPair = generatedReadPairs.get(record.getReadName());
-                return keptOriginPair == originPair;
+                ModifiedPairsRequired readPairStatus = readPairRequirements.get(record.getReadName());
+                if(originPair == keptOriginPair) {
+                    readPairStatus.addFirstRighmostPair();
+                    return true;
+                }
+                else {
+                    if(readPairStatus.collectedSecondLeftmost()) readPairStatus.addSecondRighmostPair();
+                    else readPairStatus.addSecondLeftmostPair();
+                    readPairStatus.setNeedsBothSecondPairs();
+                    return false;
+                }
             }
-            else return false;
+            else {
+                ModifiedPairsRequired readPairStatus = readPairRequirements.get(record.getReadName());
+                if(!isSupplementary) readPairStatus.addSecondLeftmostPair();
+                return false;
+            }
         }
         if(hasOriginPairTag) {
             generatedReadPairs.put(record.getReadName(), record.getIntegerAttribute(ORIGIN_PAIR_TAG));
+            readPairRequirements.put(record.getReadName(), new ModifiedPairsRequired());
         }
+        // Every read that was not modified, or anonymized but did not have a destructive signal falls into this category,
+        // as well as unwanted pairs mapping to the same position as first found reads with destructive signals
         else{
             String pairName = record.getPairedReadName();
             if(updatedMatePositions.containsKey(pairName)){
@@ -574,5 +599,44 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             if(record.getMateAlignmentStart() == -1) return false;
         }
         return true;
+    }
+
+    public class ModifiedPairsRequired{
+        boolean[] collectedFirstPairs = new boolean[2];
+        boolean[] collectedSecondPairs = new boolean[2];
+        boolean needsBothSecondPairs = false;
+
+        public ModifiedPairsRequired() {
+            this.collectedFirstPairs[0] = true;
+        }
+
+        public boolean collectedAllPairs(){
+            if(needsBothSecondPairs){
+                return collectedFirstPairs[0] && collectedFirstPairs[1] && collectedSecondPairs[0] && collectedSecondPairs[1];
+            }
+            else{
+                return collectedFirstPairs[0] && collectedFirstPairs[1] && collectedSecondPairs[0];
+            }
+        }
+
+        public boolean collectedSecondLeftmost(){
+            return collectedSecondPairs[0];
+        }
+
+        public void setNeedsBothSecondPairs() {
+            this.needsBothSecondPairs = true;
+        }
+
+        public void addFirstRighmostPair(){
+            this.collectedFirstPairs[1] = true;
+        }
+
+        public void addSecondLeftmostPair(){
+            this.collectedSecondPairs[0] = true;
+        }
+
+        public void addSecondRighmostPair(){
+            this.collectedSecondPairs[1] = true;
+        }
     }
 }

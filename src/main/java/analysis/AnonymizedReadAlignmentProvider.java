@@ -48,7 +48,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     // Assuming a maximum position distance of 3, and 3 of length difference
     public static final double INDEL_SOFTCLIP_SIGNAL_THRESHOLD = 4.24;
     // Assuming a maximum position distance of 15, and 25 of length difference
-    public static final double GENERAL_SIGNAL_THRESHOLD = 29.15;
+    public static final double SOFTCLIP_SIGNAL_THRESHOLD = 29.15;
     // Assuming a maximum position distance of 50, and 250 of length difference
     public static final double INSERT_SIZE_SIGNAL_THRESHOLD = 250;
     // Assuming a maximum position distance of 150
@@ -660,6 +660,10 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         if (firstSignal.isSimpleVariation() && secondSignal.isSimpleVariation()){
             return INDEL_SIGNAL_THRESHOLD;
         }
+        if(firstSignal.getSource() == Signal.Source.SOFT_CLIP && secondSignal.getSource() == Signal.Source.SOFT_CLIP){
+            // If both signals are soft-clips, use a different threshold
+            return SOFTCLIP_SIGNAL_THRESHOLD;
+        }
         if ((firstSignal.isSimpleVariation() && secondSignal.getSource() == Signal.Source.SOFT_CLIP)
                 || (firstSignal.getSource() == Signal.Source.SOFT_CLIP && secondSignal.isSimpleVariation())){
             return INDEL_SOFTCLIP_SIGNAL_THRESHOLD;
@@ -670,7 +674,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         if (Signal.Source.STRAND_ORIENTATION == firstSignal.getSource() && Signal.Source.STRAND_ORIENTATION == secondSignal.getSource()){
             return STRAND_ORIENTATION_SIGNAL_THRESHOLD;
         }
-        return GENERAL_SIGNAL_THRESHOLD;
+        return SOFTCLIP_SIGNAL_THRESHOLD;
     }
 
     private boolean isDifferentSimpleVariation(Signal firstSignal, Signal secondSignal) {
