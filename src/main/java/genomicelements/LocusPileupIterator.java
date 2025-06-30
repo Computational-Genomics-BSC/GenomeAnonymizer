@@ -6,8 +6,6 @@ import utils.MapCacheFIFO;
 
 import java.util.*;
 import java.util.function.Consumer;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 import genomicelements.PileupRead.PileupReadStatus;
 
@@ -16,8 +14,6 @@ import genomicelements.PileupRead.PileupReadStatus;
  * Iterable interface to traverse locus pileups over a stream of alignments, as SAMRecord objects
  */
 public class LocusPileupIterator implements Iterable<LocusPileUp> {
-
-    private static final Logger LOGGER = Logger.getLogger(LocusPileupIterator.class.getName());
 
     public static final Set<Character> ALPHABET = new HashSet<>(
             Arrays.asList(
@@ -246,11 +242,6 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
         }
 
         public boolean offerNew(PileupRead read){
-            //Avoid memory issues when PileupReads from older pileups have not been claimed
-            if(this.size() > DEFAULT_MAX_SIZE_LIMIT){
-                LOGGER.log(Level.WARNING, "OnPileupQueue reached maximum size, unprocessed reads may be lost. Removing oldest one");
-                this.remove();
-            }
             PileupReadStatus status = updatePileupReadStatus(read);
             if(status != null){
                 read.setStatus(status);

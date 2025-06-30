@@ -129,7 +129,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 leftLimit, genomicRegion.getEnd());
         leftExtendedRegion.setSequenceIdx(region.getSequenceIdx());
         pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, refSequence, leftExtendedRegion);
-        pairPileupReader.setIncludeDuplicates(true);
+        pairPileupReader.setIncludeDuplicates(false);
         pairPileupReader.setReadsToExclude(readsToExclude);
     }
 

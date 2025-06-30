@@ -46,6 +46,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private Set<String> readsToExclude;
     private Map<String, Integer> updatedMatePositions;
     private Map<String, Integer> readsToCorrectOrientation;
+    private Set<String> supplementariesToEliminate;
 
     // Thresholds for the insert sizes
     private int insertSizeMinThreshold = Integer.MIN_VALUE;
@@ -70,6 +71,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         this.readsToExclude = new HashSet<>();
         this.updatedMatePositions = new HashMap<>();
         this.readsToCorrectOrientation = new HashMap<>();
+        this.supplementariesToEliminate = new HashSet<>();
         this.factory = SamReaderFactory.makeDefault();
         this.factory.setUseAsyncIo(true);
         this.factory.validationStringency(ValidationStringency.SILENT);
@@ -288,18 +290,20 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         }
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
         executorService.shutdown();
+        // Free memory cleaning unused attributes
+        readsToExclude = new HashSet<>();
         // Collect the answers from all the threads
         for(PartitionProviderRunner runnable : partitionRunnables){
             PartitionAnswer answer = runnable.getAnswer();
             // Get all pairs to update with info from the mate (indexed by the  name of the pair to be updated)
             updatedMatePositions.putAll(answer.partitionPairsToUpdate());
+            // Get all supplementaries to exclude from the result
+            supplementariesToEliminate.addAll(answer.partitionSupplementariesToEliminate());
             // Get all reads to correct orientation
             for (String readName : answer.readsToCorrectOrientation()) {
                 readsToCorrectOrientation.putIfAbsent(readName, 0);
             }
         }
-        // Free memory cleaning unused attributes
-        readsToExclude = new HashSet<>();
         // Merge the anonymized reads from all partition files
         mergeAnonymizedReads(normalPaths, tumorPaths);
         // Delete the temporary files
@@ -327,6 +331,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
         private Set<String> partitionReadsToCorrectOrientation = new HashSet<>();
         private Map<String, Integer> partitionPairsToUpdate = new HashMap<>();
+        private Set<String> partitionSupplementariesToEliminate = new HashSet<>();
 
         private PartitionAnswer answer;
 
@@ -385,6 +390,9 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                         SAMRecord newPairAlnRecord = shortAnonymizedRead.getNewPair(insertSizeMedian);
                         writeRead(writer, newPairAlnRecord);
                     }
+                    if(shortAnonymizedRead.eliminateSupplementaries()) {
+                        partitionSupplementariesToEliminate.add(readName);
+                    }
                     // With all updated information, get this anonymized sam record
                     SAMRecord alnRecord = shortAnonymizedRead.getAnonymizedSamRecord();
                     long startWriteRead = System.currentTimeMillis();
@@ -395,7 +403,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                             writeReadTime :
                             v + writeReadTime);
                 }
-                answer = new PartitionAnswer(partitionPairsToUpdate, partitionReadsToCorrectOrientation);
+                answer = new PartitionAnswer(partitionPairsToUpdate, partitionReadsToCorrectOrientation, partitionSupplementariesToEliminate);
                 long endcallVariation = System.currentTimeMillis();
                 //TIME DEBUG
                 anonymizedReadProvider.METHOD_TIME_MAP.put("callVariation", endcallVariation - startcallVariation);
@@ -422,7 +430,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         }
     }
 
-    public record PartitionAnswer(Map<String, Integer> partitionPairsToUpdate, Set<String> readsToCorrectOrientation) { }
+    public record PartitionAnswer(Map<String, Integer> partitionPairsToUpdate, Set<String> readsToCorrectOrientation, Set<String> partitionSupplementariesToEliminate) { }
 
     private SAMFileWriter openSingleOutputStream(String path, String outputPath, boolean isNormalDataset) throws IOException {
         SAMFileWriterFactory factory = new SAMFileWriterFactory();
@@ -537,6 +545,10 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 }
                 record.setAttribute(ORIGIN_PAIR_TAG, null);
                 record.setAttribute("MC", null);
+                //Very specific tags that are not needed
+                record.setAttribute("mc", null);
+                record.setAttribute("ms", null);
+                // Add the record to the writer
                 writer.addAlignment(record);
             }
             // Remove the read pair from the requirements map after they have been met
@@ -562,6 +574,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     public boolean keepPair(SAMRecord record, Map<String, Integer> generatedReadPairs, Map<String, ModifiedPairsRequired> readPairRequirements) {
         boolean hasOriginPairTag = record.getAttribute(ORIGIN_PAIR_TAG) != null;
         boolean isSupplementary = record.isSecondaryOrSupplementary();
+        // If the read is marked as a supplementary to eliminate it is not included in the STT output
+        if (isSupplementary && supplementariesToEliminate.contains(record.getReadName())) return false;
         if(generatedReadPairs.containsKey(record.getReadName())){
             if(hasOriginPairTag){
                 int originPair = record.getIntegerAttribute(ORIGIN_PAIR_TAG);

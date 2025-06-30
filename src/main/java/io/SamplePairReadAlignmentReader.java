@@ -2,19 +2,12 @@ package io;
 
 import genomicelements.*;
 import htsjdk.samtools.*;
-import htsjdk.samtools.reference.FastaSequenceIndex;
-import htsjdk.samtools.reference.FastaSequenceIndexEntry;
-import htsjdk.samtools.reference.IndexedFastaSequenceFile;
-import htsjdk.samtools.util.Interval;
-import htsjdk.samtools.util.IntervalList;
-import htsjdk.samtools.util.SamLocusIterator;
 
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 import static analysis.GenomeAnonymizer.DEFAULT_MIN_MAPPING_QUALITY;
 import static utils.Operations.compare;
@@ -33,8 +26,6 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
     private SamReader normalSamReader;
     private SamReader tumorSamReader;
 
-//    private boolean removeUncovered = false;
-//    private Set<String> uncoveredReads = new HashSet<>();
     private int minimumMappingQuality = DEFAULT_MIN_MAPPING_QUALITY;
     private boolean includeDuplicates = true;
 
@@ -77,10 +68,6 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         this.minimumMappingQuality = minimumMappingQuality;
     }
 
-//    public Set<String> getUncoveredReads() {
-//        return uncoveredReads;
-//    }
-
     public SAMFileHeader getNormalSamHeader() {
         return normalSamHeader;
     }
@@ -92,10 +79,6 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
     public void setIncludeDuplicates(boolean includeDuplicates) {
         this.includeDuplicates = includeDuplicates;
     }
-
-//    public void setRemoveUncovered(boolean removeUncovered){
-//        this.removeUncovered = removeUncovered;
-//    }
 
     public void setReadsToExclude(Set<String> readsToExclude){
         this.readsToExclude = readsToExclude;
@@ -160,10 +143,6 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
             return currentPileup;
         }
 
-//        private PairedPileup getNext(){
-//            return getPairs();
-//        }
-
         /**
          *
          * @return currentPileup
@@ -178,23 +157,10 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
                     nextNormalLocus = nextOrNull(normalPileupIter);
                 }
                 else if(cmp > 1){
-                    //DEBUG
-//                    if(nextTumorLocus.getLocation() == 36861478){
-//                        System.out.println("#cmp>1 locus at: " + nextTumorLocus.getLocation() + " with reads: " + nextTumorLocus.size());
-//                    }
-                    //DEBUG
-//                        if(removeUncovered){
-//                            flagUncoveredForRemoval(nextTumorLocus);
-//                        }
                     currentPileup = new PairedPileup(nextTumorLocus, false);
                     nextTumorLocus = nextOrNull(tumorPileupIter);
                 }
                 else{
-                    //DEBUG
-//                    if(nextTumorLocus.getLocation() == 36861478){
-//                        System.out.println("#cmp==0 locus at: " + nextTumorLocus.getLocation() + " with reads: " + nextTumorLocus.size());
-//                    }
-                    //DEBUG
                     currentPileup = new PairedPileup(nextNormalLocus, nextTumorLocus);
                     nextNormalLocus = nextOrNull(normalPileupIter);
                     nextTumorLocus = nextOrNull(tumorPileupIter);
@@ -205,9 +171,6 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
             }
             else{
                 if(nextTumorLocus == null){
-//                        if (removeUncovered){
-//                            flagUncoveredForRemoval(nextNormalLocus);
-//                        }
                     currentPileup = new PairedPileup(nextNormalLocus, true);
                     nextNormalLocus = nextOrNull(normalPileupIter);
                 }
@@ -219,27 +182,6 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
             return currentPileup;
         }
 
-//        private void flagUncoveredForRemoval(LocusPileUp locusPileUp){
-//            //DEBUG
-//            if(locusPileUp.getLocation() == 36861478){
-//                System.out.println("#Testing uncovered locus at: " + locusPileUp.getLocation() + " with reads: " + locusPileUp.size());
-//            }
-//            //DEBUG
-//            List<PileupRead> uncoveredPileupReads = locusPileUp.claimReadsOnPileup();
-//            uncoveredReads.addAll(uncoveredPileupReads
-//                    .stream()
-//                    .map(PileupRead::getReadName)
-//                    .toList()
-//            );
-//            //DEBUG
-//            for ( PileupRead read : uncoveredPileupReads){
-//                if ( read.getReadName().equals("C26FMACXX130603:5:2116:4262:12835")) {
-//                    System.out.println("#Removing uncovered read: " + read.toString());
-//                }
-//            }
-//            //DEBUG
-//        }
-
         private LocusPileUp nextOrNull(Iterator<LocusPileUp> iterator){
             return iterator.hasNext() ? iterator.next() : null;
         }
@@ -248,211 +190,5 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
         public boolean hasNext(){
             return nextPileup != null;
         }
-    }
-
-    //TESTS
-
-    //Temp test for new pileup iterator
-    public static void main(String[] args) throws Exception{
-        String normalFilePath = args[0];
-        String tumorFilePath =  args[1];
-        String referenceGenome =  args[2];
-//        GenomicRegion region1 = new GenomicRegionBaseImpl("1", 196256968, 196329019);
-//        GenomicRegion region1 = new GenomicRegionBaseImpl("1", 1, 249250621);
-        int nTests = 1;
-        boolean passedAll = true;
-        boolean passed;
-        for(int i = 0; i < nTests; i++){
-            passed = verifyPileupMethod(tumorFilePath, referenceGenome);
-            if(!passed){
-                System.out.println("Did not pass test #" + i);
-                passedAll = false;
-            }
-        }
-        if(passedAll) System.out.println("Passed all tests");
-//        try(SamplePairReadAlignmentReader pairPileupReader = new SamplePairReadAlignmentReader(normalFilePath, tumorFilePath, referenceGenome, region1);
-//            IndexedFastaSequenceFile referenceWalker = new IndexedFastaSequenceFile(new File(referenceGenome))){
-//            pairPileupReader.setReturnNormal(true);
-//            Iterator<PairedPileup> pileupIterator = pairPileupReader.iterator();
-//            while (pileupIterator.hasNext()) {
-//                PairedPileup pileup = pileupIterator.next();
-//                int pos = pileup.getReferencePos();
-//                System.out.println("POS=" + pos);
-//
-//            }
-//        }
-    }
-    public static boolean verifyPileupMethod(String tumorFilePath, String refGenome) throws IOException {
-        boolean passed = true;
-        int testWindow = 10_000_000;
-        Map<Integer, Set<String>> truthPileupReadNames = new HashMap<>();
-        Map<Integer, Set<String>> myPileupReadNames = new HashMap<>();
-        long myPileupExecTime = 0;
-        long samLocusPileupExecTime = 0;
-        //List<String> truthReads = new ArrayList<>();
-        Map<String, byte[]> referenceSequences = new HashMap<>();
-        Random rand = new Random();
-        Map<String, Integer> refSequencesLength = new HashMap<>();
-        IndexedFastaSequenceFile reference = new IndexedFastaSequenceFile(new File(refGenome));
-        FastaSequenceIndex refIndexes = reference.getIndex();
-        int idx = 0;
-        for (FastaSequenceIndexEntry refEntry : refIndexes){
-            String contig = refEntry.getContig();
-            refSequencesLength.put(refEntry.getContig(), (int) refEntry.getSize());
-            referenceSequences.put(contig, reference.getSequence(contig).getBases());
-            idx++;
-        }
-        reference.close();
-        String chr = Integer.toString(rand.nextInt(1, 22));
-        int start = rand.nextInt(1, refSequencesLength.get(chr) - testWindow);
-        int end = start + testWindow;
-//        String chr = "1";
-//        int start = 180513307;
-//        int end = 181513307;
-        System.out.println("Testing window=" + chr + " " + start + " " + end);
-        System.out.println("Testing SamLocusIterator");
-        int samLocusPositions = 0;
-        try(SamReader tumorSamReader = SamReaderFactory.makeDefault()
-                .referenceSequence(new File(refGenome))
-                .open(new File(tumorFilePath))){
-            IntervalList intervalList = new IntervalList(tumorSamReader.getFileHeader());
-            Interval intervalRegion = new Interval(chr, start, end);
-            intervalList.add(intervalRegion);
-            SamLocusIterator samIter = new SamLocusIterator(tumorSamReader, intervalList, true);
-            //SAMRecordIterator samIter = tumorSamReader.query(region1.getSequenceName(), region1.getStart(), region1.getEnd(), false);
-            samIter.setSamFilters(null);
-            samIter.setEmitUncoveredLoci(false);
-            samIter.setMappingQualityScoreCutoff(1);
-            samIter.setIncludeNonPfReads(true);
-            long samLocusPileupBegin = System.currentTimeMillis();
-            while (samIter.hasNext()) {
-                SamLocusIterator.LocusInfo rec = samIter.next();
-                Set<String> readNames = rec.getRecordAndOffsets().stream()
-                        //.filter(v -> v.getRecord().getMappingQuality() > 0)
-                        .map(SamLocusIterator.RecordAndOffset::getReadName)
-                        //.map(SAMRecord::getReadName)
-                        //.distinct()
-                        .collect(Collectors.toSet());
-                truthPileupReadNames.put(rec.getPosition(), readNames);
-                samLocusPositions++;
-            }
-            long samLocusPileupEnd = System.currentTimeMillis();
-            samLocusPileupExecTime = samLocusPileupEnd - samLocusPileupBegin;
-        }
-//        List<String> testReads = new ArrayList<>();
-//        System.out.println("Testing MyPileup");
-//        int myPileupPositions = 0;
-//        try(SamReader tumorSamReader = SamReaderFactory.makeDefault()
-//                .referenceSequence(new File(refGenome))
-//                .open(new File(tumorFilePath))){
-////            SAMRecordIterator samIter = tumorSamReader.iterator();
-//            LocusPileupIterator pileupIterator = new LocusPileupIterator(tumorSamReader, chr, start, end);
-//            pileupIterator.setMinimumMappingQuality(1);
-//            pileupIterator.setIncludeDuplicates(true);
-//            Iterator<LocusPileUp> it = pileupIterator.iterator();
-//            long myPileupBegin = System.currentTimeMillis();
-//            while (it.hasNext()) {
-//                LocusPileUp pileup = it.next();
-//                int pos = pileup.getLocation();
-//                Set<String> readNames = pileup.getPileupReads().stream()
-//                        //.filter(v -> !v.isSecondaryOrSupplementary())
-//                        .map(PileupRead::getReadName)
-//                        //.distinct()
-//                        .collect(Collectors.toSet());
-//                myPileupReadNames.put(pos, readNames);
-////                System.out.println("POS=" + pos);
-//                myPileupPositions++;
-//            }
-//            long myPileupEnd = System.currentTimeMillis();
-//            myPileupExecTime = myPileupEnd - myPileupBegin;
-//        }
-//        System.out.print("SamLocusPileup executed in : " + samLocusPileupExecTime + "ms ");
-//        System.out.println("across " + samLocusPositions + " positions");
-//        System.out.print("MyPileup executed in : " + myPileupExecTime + "ms ");
-//        System.out.println("across " + myPileupPositions + " positions");
-        Set<String> allTruthReads = new HashSet<>();
-        for(int i = start; i <= end; i++){
-            Set<String> posTruthReads = truthPileupReadNames.getOrDefault(i, new HashSet<>());
-            allTruthReads.addAll(posTruthReads);
-//            Set<String> posMyPileupReads = myPileupReadNames.getOrDefault(i, new HashSet<>());
-//            Set<String> commonReads = new HashSet<>(posTruthReads);
-//            commonReads.retainAll(posMyPileupReads);
-//            boolean areEqualAt = (commonReads.size() == posTruthReads.size()) && (commonReads.size() == posMyPileupReads.size());
-//            if(!areEqualAt) {
-//                passed = false;
-//                Set<String> posMyPileupReadsDiff = new HashSet<>(posMyPileupReads);
-//                posMyPileupReadsDiff.removeAll(commonReads);
-//                Set<String> posTruthReadsDiff = new HashSet<>(posTruthReads);
-//                posTruthReadsDiff.removeAll(commonReads);
-//                System.out.print("Reads are not equal at pos=" + i);
-//                System.out.println(" where common reads are: " + commonReads.size() + ", SamLocusIterator reads are: " + posTruthReads.size() +
-//                        ", myPileup reads are: " + posMyPileupReads.size());
-//                if(!posTruthReadsDiff.isEmpty()) {
-//                    System.out.println("Different reads in SamLocusIterator are: ");
-//                    posTruthReadsDiff.forEach(System.out::println);
-//                }
-//                if(!posMyPileupReadsDiff.isEmpty()) {
-//                    System.out.println("Different reads in myPileup are: ");
-//                    posMyPileupReadsDiff.forEach(System.out::println);
-//                }
-//            }
-        }
-//        myPileupReadNames.clear();
-        System.out.println("Testing new on-demand read retrieval functionality");
-        Set<String> onDemandTestReads = new HashSet<>();
-        int onDemandPileupPositions = 0;
-        long onDemandPileupExecTime;
-        try(SamReader tumorSamReader = SamReaderFactory.makeDefault()
-                .referenceSequence(new File(refGenome))
-                .open(new File(tumorFilePath))){
-            LocusPileupIterator pileupIterator = new LocusPileupIterator(tumorSamReader, chr, start, end,
-                    referenceSequences.get(chr));
-            pileupIterator.setMinimumMappingQuality(1);
-            pileupIterator.setIncludeDuplicates(false);
-            Iterator<LocusPileUp> it = pileupIterator.iterator();
-            long onDemandPileupBegin = System.currentTimeMillis();
-            while (it.hasNext()) {
-                LocusPileUp pileup = it.next();
-                Set<String> readNames = pileup.claimReadsOnPileup().stream()
-                        .map(PileupRead::getReadName)
-                        .collect(Collectors.toSet());
-                onDemandTestReads.addAll(readNames);
-                onDemandPileupPositions++;
-            }
-            long onDemandPileupEnd = System.currentTimeMillis();
-            onDemandPileupExecTime = onDemandPileupEnd - onDemandPileupBegin;
-        }
-        System.out.println("onDemandPileup executed across: " + onDemandPileupPositions + " positions" );
-        System.out.println("onDemandPileup executed in : " + onDemandPileupExecTime + "ms while " +
-                "SamLocusPileup executed in : " + samLocusPileupExecTime + "ms ,and " +
-                "MyPileup executed in : " + myPileupExecTime + "ms ");
-        if (!onDemandTestReads.equals(allTruthReads)) {
-            Set<String> uniqueToTestReads = new HashSet<>(onDemandTestReads);
-            uniqueToTestReads.removeAll(allTruthReads);
-            Set<String> uniqueToAllTruthReads = new HashSet<>(allTruthReads);
-            uniqueToAllTruthReads.removeAll(onDemandTestReads);
-            if(!uniqueToTestReads.isEmpty()) {
-                System.out.println("Unique elements in onDemandPileupReads: " + uniqueToTestReads.size() + " from " + onDemandTestReads.size() + " total" );
-                System.out.println("Showing sample of unique elements in onDemandPileup: ");
-                for(int i = 0; i < 10; i++){
-                    String readName = uniqueToTestReads.stream().skip(new Random().nextInt(uniqueToTestReads.size())).findFirst().orElse(null);
-                    if(readName == null) break;
-                    System.out.println(readName);
-                }
-            }
-            if(!uniqueToAllTruthReads.isEmpty()) {
-                System.out.println("Unique elements in allTruthReads: " + uniqueToAllTruthReads.size() + " from " + allTruthReads.size() + " total");
-                System.out.println("Showing sample of unique elements in allTruthReads: ");
-                for(int i = 0; i < 10; i++){
-                    String readName = uniqueToAllTruthReads.stream().skip(new Random().nextInt(uniqueToAllTruthReads.size())).findFirst().orElse(null);
-                    if(readName == null) break;
-                    System.out.println(readName);
-                }
-            }
-            passed = false;
-        } else {
-            System.out.println("onDemandPileupReads and allTruthReads have the same elements.");
-        }
-        return passed;
     }
 }

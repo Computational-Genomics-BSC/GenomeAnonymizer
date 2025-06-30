@@ -30,6 +30,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
     private byte[] anonymizedQualitiesArray;
     private boolean isNormalDataset;
     private boolean mateOriginalPosIsEqual;
+    private boolean hasSupplementaries = false;
 
     List<CigarElement> anonymizedCigarElements;
     private Cigar anonymizedCigar;
@@ -43,6 +44,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
     private boolean hasChromChangeSignal = false;
     private boolean updateInfoForMate = false;
     private boolean extendLeft = false;
+    private boolean eliminateSupplementaries = false;
 
     public ShortAnonymizedReadAlignment(SAMRecord readAlignment) {
         this.readAlignment = readAlignment;
@@ -50,6 +52,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         this.alnStart = getStart();
         this.isAnonymized = false;
         this.mateOriginalPosIsEqual = readAlignment.getMateAlignmentStart() == getStart();
+        if (readAlignment.getAttribute("SA") != null) hasSupplementaries = true;
         this.anonymizedSequenceArray = readAlignment.getReadBases();
         this.anonymizedQualitiesArray = readAlignment.getBaseQualities();
         this.anonymizedCigar = readAlignment.getCigar();
@@ -185,6 +188,10 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         return fixOrientation;
     }
 
+    public boolean eliminateSupplementaries() {
+        return eliminateSupplementaries;
+    }
+
     public void setReferenceContigSequence(byte[] referenceContigSequence) {
         // 0-based memoized reference sequence, corresponding to the contig to which this read is mapped
         this.referenceContigSequence = referenceContigSequence;
@@ -299,6 +306,12 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         SequenceUtil.calculateMdAndNmTags(readAlignment, referenceContigSequence, true, true);
         // Fix orientation if needed
         if(fixOrientation) correctOrientation(readAlignment);
+        // Remove alternative alignment tags if present
+        readAlignment.setAttribute("XA", null);
+        readAlignment.setAttribute("XS", null);
+        readAlignment.setAttribute("X0", null);
+        // Remove supplementary alignments if requested
+        if(eliminateSupplementaries) readAlignment.setAttribute("SA", null);
         isAnonymized = true;
     }
 
@@ -447,6 +460,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
             if(signal.isDestructiveSignal()){
                 if(Signal.Source.CHROM_CHANGE == signal.getSource()) hasChromChangeSignal = true;
                 hasDestructiveSignal = true;
+                if(!isSupplementary() && hasSupplementaries) eliminateSupplementaries = true;
             }
         }
         return operations;
@@ -456,7 +470,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         List<CigarElement> fixedCigarElements = new ArrayList<>();
         boolean previousMerged = false;
         CigarElement currentElement = null;
-        CigarElement nextElement = anonymizedCigarElements.get(0);
+        CigarElement nextElement = anonymizedCigarElements.getFirst();
         CigarOperator currentOp;
         //If there is only 1 element, nextElement will hold it and the cycle does not happen
         for(int i = 0; i < anonymizedCigarElements.size()-1; i++){
