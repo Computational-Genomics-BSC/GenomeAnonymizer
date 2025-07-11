@@ -228,10 +228,10 @@ public class UnsafeStringHashSet implements Set<String> {
     }
 
     private void resize() {
-        int newCapacity = table.length * 2;
+        int newCapacity = nextPowerOfTwo(table.length + 1);
         long[] newTable = new long[newCapacity];
         threshold = (int) (newCapacity * LOAD_FACTOR);
-        
+
         for (long hash : table) {
             if (hash != 0) {
                 int index = indexFor(hash, newCapacity);
@@ -242,5 +242,11 @@ public class UnsafeStringHashSet implements Set<String> {
             }
         }
         table = newTable;
+    }
+
+    private int nextPowerOfTwo(int n) {
+        if (n <= 1) return 1;
+        int highestOneBit = Integer.highestOneBit(n - 1);
+        return (highestOneBit << 1);
     }
 }

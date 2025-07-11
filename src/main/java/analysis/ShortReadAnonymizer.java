@@ -271,7 +271,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 // Check if the read is in high coverage
                 boolean inHighCoverage = highCoverageFilter.addRead(samRecord.getAlignmentStart(), samRecord.getAlignmentEnd());
                 if (inHighCoverage) {
-                    // readsToExcludeInPartition.add(samRecord.getReadName());
+                    readsToExcludeInPartition.add(samRecord.getReadName());
                     continue;
                 }
                 // Only use the first read for insert size calculations
