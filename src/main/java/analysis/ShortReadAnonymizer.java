@@ -72,7 +72,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         this.inputTumorPath = inputTumorPath;
         this.refGenomePath = refGenomePath;
         this.outputPrefix = outputPrefix;
-        this.readsToExclude = new UnsafeStringHashSet();
+        this.readsToExclude = new UnsafeStringHashSet(33554432);
         this.updatedMatePositions = new HashMap<>();
         this.readsToCorrectOrientation = new HashMap<>();
         this.supplementariesToEliminate = new HashSet<>();
@@ -252,7 +252,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     }
 
     private Tuple<UnsafeStringHashSet, List<Integer>> queryReadsToExcludeInPartition(String filePath, GenomicRegion partition) throws IOException {
-        UnsafeStringHashSet readsToExcludeInPartition = new UnsafeStringHashSet();
+        UnsafeStringHashSet readsToExcludeInPartition = new UnsafeStringHashSet(65536);
         List<Integer> insertSizesBinsInPartition = new ArrayList<>(Collections.nCopies(INSERT_SIZE_BIN_COUNT, 0));
         HighCoverageFilter highCoverageFilter = new HighCoverageFilter(DEFAULT_MAX_COVERAGE);
         try(SamReader reader = factory.open(new File(filePath))){
