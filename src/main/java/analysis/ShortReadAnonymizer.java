@@ -8,6 +8,7 @@ import htsjdk.samtools.reference.IndexedFastaSequenceFile;
 import htsjdk.samtools.util.IOUtil;
 import utils.GlobalRandom;
 import utils.Tuple;
+import coverage.HighCoverageFilter;
 
 import java.io.File;
 import java.io.IOException;
@@ -33,6 +34,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private static final int INSERT_SIZE_BIN_SIZE = 50;
     private static final int INSERT_SIZE_BIN_COUNT = 5000 / INSERT_SIZE_BIN_SIZE + 1;
     private static final float DEFAULT_INSERT_SIZE_THRESHOLD_FRACTION = 0.05f;
+    // TODO: Add as a parameter
+    private static final int DEFAULT_MAX_COVERAGE = 1000;
 
     private String inputNormalPath;
     private String inputTumorPath;
@@ -238,16 +241,27 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private Tuple<Set<String>, List<Integer>> queryReadsToExcludeInPartition(String filePath, GenomicRegion partition) throws IOException {
         Set<String> readsToExcludeInPartition = new HashSet<>();
         List<Integer> insertSizesBinsInPartition = new ArrayList<>(Collections.nCopies(INSERT_SIZE_BIN_COUNT, 0));
+        HighCoverageFilter highCoverageFilter = new HighCoverageFilter(DEFAULT_MAX_COVERAGE);
         try(SamReader reader = factory.open(new File(filePath))){
             SAMRecordIterator it = reader.query(partition.getSequenceName(), partition.getStart(), partition.getEnd(), false);
             while (it.hasNext()) {
                 SAMRecord samRecord = it.next();
-                if((samRecord.getReadUnmappedFlag() || samRecord.getMateUnmappedFlag()) ||
-                        (samRecord.getMappingQuality() < minimumMappingQuality && !samRecord.isSecondaryOrSupplementary())){
+                // Skip secondary and supplementary reads
+                if (samRecord.isSecondaryOrSupplementary()) {
+                    continue;
+                }
+                // Skip unmapped reads and reads with low mapping quality
+                if(samRecord.getReadUnmappedFlag() || samRecord.getMateUnmappedFlag() || (samRecord.getMappingQuality() < minimumMappingQuality)){
                     readsToExcludeInPartition.add(samRecord.getReadName());
                     continue;
                 }
-                // Only use the first read
+                // Check if the read is in high coverage
+                boolean inHighCoverage = highCoverageFilter.addRead(samRecord.getAlignmentStart(), samRecord.getAlignmentEnd());
+                if (inHighCoverage) {
+                    readsToExcludeInPartition.add(samRecord.getReadName());
+                    continue;
+                }
+                // Only use the first read for insert size calculations
                 if (!samRecord.getReadPairedFlag() || !samRecord.getFirstOfPairFlag()) {
                     continue;
                 }
