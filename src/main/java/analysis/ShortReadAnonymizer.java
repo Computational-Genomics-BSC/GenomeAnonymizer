@@ -8,6 +8,7 @@ import htsjdk.samtools.reference.IndexedFastaSequenceFile;
 import htsjdk.samtools.util.IOUtil;
 import utils.GlobalRandom;
 import utils.Tuple;
+import utils.UnsafeStringHashSet;
 import coverage.HighCoverageFilter;
 
 import java.io.File;
@@ -35,7 +36,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private static final int INSERT_SIZE_BIN_COUNT = 5000 / INSERT_SIZE_BIN_SIZE + 1;
     private static final float DEFAULT_INSERT_SIZE_THRESHOLD_FRACTION = 0.05f;
     // TODO: Add as a parameter
-    private static final int DEFAULT_MAX_COVERAGE = 1000;
+    private static final int DEFAULT_MAX_COVERAGE = 10000;
 
     private String inputNormalPath;
     private String inputTumorPath;
@@ -46,7 +47,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private Map<String, byte[]> referenceSequences = new HashMap<>();
 
     // Set that contains all the reads that will be excluded from the result (e.g. Unmapped and MAPQ < filter)
-    private Set<String> readsToExclude;
+    private UnsafeStringHashSet readsToExclude;
     private Map<String, Integer> updatedMatePositions;
     private Map<String, Integer> readsToCorrectOrientation;
     private Set<String> supplementariesToEliminate;
@@ -71,7 +72,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         this.inputTumorPath = inputTumorPath;
         this.refGenomePath = refGenomePath;
         this.outputPrefix = outputPrefix;
-        this.readsToExclude = new HashSet<>();
+        this.readsToExclude = new UnsafeStringHashSet();
         this.updatedMatePositions = new HashMap<>();
         this.readsToCorrectOrientation = new HashMap<>();
         this.supplementariesToEliminate = new HashSet<>();
@@ -167,13 +168,13 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         paths[0] = inputNormalPath;
         paths[1] = inputTumorPath;
         ExecutorService exec = Executors.newFixedThreadPool(threads);
-        List<CompletableFuture<Tuple<Set<String>, List<Integer>>>> futures = new ArrayList<>();
+        List<CompletableFuture<Tuple<UnsafeStringHashSet, List<Integer>>>> futures = new ArrayList<>();
         //TODO: Check if it is possible to change partitions based on actual content
         // (Implement CoveredGenomicRegion), to improve runtime using parallelization
         for(GenomicRegion partition : genomicPartitions){
             for(String path : paths){
-                CompletableFuture<Tuple<Set<String>, List<Integer>>> future = CompletableFuture.supplyAsync (() -> {
-                    Tuple<Set<String>, List<Integer>> answer;
+                CompletableFuture<Tuple<UnsafeStringHashSet, List<Integer>>> future = CompletableFuture.supplyAsync (() -> {
+                    Tuple<UnsafeStringHashSet, List<Integer>> answer;
                     try {
                         answer = queryReadsToExcludeInPartition(path, partition);
                     }
@@ -193,9 +194,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         CompletableFuture<Void> allFutures = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
         List<Integer> insertSizesBins = new ArrayList<>(Collections.nCopies(INSERT_SIZE_BIN_COUNT, 0));
         try{
-            for (CompletableFuture<Tuple<Set<String>, List<Integer>>> future : futures) {
-                Set<String> answer = future.get().getFirst();
-                readsToExclude.addAll(answer);
+            for (CompletableFuture<Tuple<UnsafeStringHashSet, List<Integer>>> future : futures) {
+                readsToExclude.addAll(future.get().getFirst());
                 List<Integer> insertSizesBinsInPartition = future.get().getSecond();
                 // Sum each element of the list with the corresponding element of the other list
                 for (int i = 0; i < insertSizesBins.size(); i++) {
@@ -236,10 +236,23 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 break;
             }
         }
+        System.gc();
+        System.runFinalization();
+        try{
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            LOGGER.log(Level.WARNING, "Thread interrupted while sleeping after garbage collection", e);
+        }
+        long memoryUsage = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+        LOGGER.info("Memory usage after querying reads to exclude: " + memoryUsage / (1024 * 1024) + " MB");
+        // DEBUG
+        LOGGER.info("Reads to exclude: " + readsToExclude.size());
+        System.exit(0);
+        // END DEBUG
     }
 
-    private Tuple<Set<String>, List<Integer>> queryReadsToExcludeInPartition(String filePath, GenomicRegion partition) throws IOException {
-        Set<String> readsToExcludeInPartition = new HashSet<>();
+    private Tuple<UnsafeStringHashSet, List<Integer>> queryReadsToExcludeInPartition(String filePath, GenomicRegion partition) throws IOException {
+        UnsafeStringHashSet readsToExcludeInPartition = new UnsafeStringHashSet();
         List<Integer> insertSizesBinsInPartition = new ArrayList<>(Collections.nCopies(INSERT_SIZE_BIN_COUNT, 0));
         HighCoverageFilter highCoverageFilter = new HighCoverageFilter(DEFAULT_MAX_COVERAGE);
         try(SamReader reader = factory.open(new File(filePath))){
@@ -247,18 +260,18 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             while (it.hasNext()) {
                 SAMRecord samRecord = it.next();
                 // Skip secondary and supplementary reads
-                if (samRecord.isSecondaryOrSupplementary()) {
+                if (samRecord.isSecondaryOrSupplementary() || samRecord.getReadUnmappedFlag() || samRecord.getMateUnmappedFlag()) {
                     continue;
                 }
                 // Skip unmapped reads and reads with low mapping quality
-                if(samRecord.getReadUnmappedFlag() || samRecord.getMateUnmappedFlag() || (samRecord.getMappingQuality() < minimumMappingQuality)){
+                if (samRecord.getMappingQuality() < minimumMappingQuality) {
                     readsToExcludeInPartition.add(samRecord.getReadName());
                     continue;
                 }
                 // Check if the read is in high coverage
                 boolean inHighCoverage = highCoverageFilter.addRead(samRecord.getAlignmentStart(), samRecord.getAlignmentEnd());
                 if (inHighCoverage) {
-                    readsToExcludeInPartition.add(samRecord.getReadName());
+                    // readsToExcludeInPartition.add(samRecord.getReadName());
                     continue;
                 }
                 // Only use the first read for insert size calculations
@@ -305,7 +318,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
         executorService.shutdown();
         // Free memory cleaning unused attributes
-        readsToExclude = new HashSet<>();
+        readsToExclude.clear();
         // Collect the answers from all the threads
         for(PartitionProviderRunner runnable : partitionRunnables){
             PartitionAnswer answer = runnable.getAnswer();
