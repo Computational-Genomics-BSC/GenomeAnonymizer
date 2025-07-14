@@ -236,19 +236,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 break;
             }
         }
-        System.gc();
-        System.runFinalization();
-        try{
-            Thread.sleep(1000);
-        } catch (InterruptedException e) {
-            LOGGER.log(Level.WARNING, "Thread interrupted while sleeping after garbage collection", e);
-        }
-        long memoryUsage = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
-        LOGGER.info("Memory usage after querying reads to exclude: " + memoryUsage / (1024 * 1024) + " MB");
-        // DEBUG
-        LOGGER.info("Reads to exclude: " + readsToExclude.size());
-        System.exit(0);
-        // END DEBUG
     }
 
     private Tuple<UnsafeStringHashSet, List<Integer>> queryReadsToExcludeInPartition(String filePath, GenomicRegion partition) throws IOException {
