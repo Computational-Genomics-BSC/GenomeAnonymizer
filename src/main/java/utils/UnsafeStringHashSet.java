@@ -228,7 +228,7 @@ public class UnsafeStringHashSet implements Set<String> {
     }
 
     private void resize() {
-        int newCapacity = nextPowerOfTwo(table.length + 1);
+        int newCapacity = nextPowerOfTwo(table.length * 2);
         long[] newTable = new long[newCapacity];
         threshold = (int) (newCapacity * LOAD_FACTOR);
 
