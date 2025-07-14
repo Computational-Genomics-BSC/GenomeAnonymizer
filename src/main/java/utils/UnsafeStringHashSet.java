@@ -204,15 +204,33 @@ public class UnsafeStringHashSet implements Set<String> {
         final int r = 47;
         long h = seed ^ (data.length * m);
 
-        for (int i = 0; i < data.length; i++) {
-            long k = data[i];
+        int length = data.length;
+        int i = 0;
+        while (i + 8 <= length) {
+            long k = 0;
+            for (int j = 0; j < 8; j++) {
+                k |= ((long) data[i + j] & 0xFF) << (j * 8);
+            }
+            k *= m;
+            k ^= k >>> r;
+            k *= m;
+            h ^= k;
+            h *= m;
+            i += 8;
+        }
+
+        // Process remaining bytes
+        long k = 0;
+        for (int j = 0; i < length; j++, i++) {
+            k |= ((long) data[i] & 0xFF) << (j * 8);
+        }
+        if (k != 0) {
             k *= m;
             k ^= k >>> r;
             k *= m;
             h ^= k;
             h *= m;
         }
-
         h ^= h >>> r;
         h *= m;
         h ^= h >>> r;
