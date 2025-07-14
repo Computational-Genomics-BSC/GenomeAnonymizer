@@ -318,7 +318,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
         executorService.shutdown();
         // Free memory cleaning unused attributes
-        readsToExclude.clear();
+        readsToExclude = null;
         // Collect the answers from all the threads
         for(PartitionProviderRunner runnable : partitionRunnables){
             PartitionAnswer answer = runnable.getAnswer();
