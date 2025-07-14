@@ -19,7 +19,8 @@ import java.nio.charset.StandardCharsets;
 public class UnsafeStringHashSet implements Set<String> {
     private static final int DEFAULT_CAPACITY = 16;
     private static final double LOAD_FACTOR = 0.75;
-    
+    private static final long TOMBSTONE = Long.MIN_VALUE; // Used for deleted entries
+
     private long[] table;
     private int size;
     private int threshold;
@@ -67,7 +68,7 @@ public class UnsafeStringHashSet implements Set<String> {
     public boolean addAll(UnsafeStringHashSet other) {
         boolean modified = false;
         for (long hash : other.getRawHashes()) {
-            if (hash != 0 && addRaw(hash)) {
+            if (addRaw(hash)) {
                 modified = true;
             }
         }
@@ -132,7 +133,7 @@ public class UnsafeStringHashSet implements Set<String> {
     public int hashCode() {
         int hash = 0;
         for (long h : table) {
-            if (h != 0) {
+            if (h != 0 && h != TOMBSTONE) {
                 hash += Long.hashCode(h);
             }
         }
@@ -157,7 +158,7 @@ public class UnsafeStringHashSet implements Set<String> {
         
         while (table[index] != 0) {
             if (table[index] == hash) {
-                table[index] = 0; // Remove
+                table[index] = TOMBSTONE; // Mark as deleted
                 size--;
                 return true;
             }
@@ -193,7 +194,7 @@ public class UnsafeStringHashSet implements Set<String> {
     }
 
     public long[] getRawHashes() {
-        return Arrays.stream(table).filter(h -> h != 0).toArray();
+        return Arrays.stream(table).filter(h -> h != 0 && h != TOMBSTONE).toArray();
     }
 
     private long computeHash(String s) {
@@ -234,9 +235,11 @@ public class UnsafeStringHashSet implements Set<String> {
         h ^= h >>> r;
         h *= m;
         h ^= h >>> r;
-        // Ensure the hash is non-zero
+        // Ensure the hash is non-zero and not a tombstone
         if (h == 0) {
-            h = 1; // Avoid zero hash
+            h = 1;
+        } else if (h == TOMBSTONE) {
+            h = TOMBSTONE + 1;
         }
         return h;
     }
@@ -251,13 +254,14 @@ public class UnsafeStringHashSet implements Set<String> {
         threshold = (int) (newCapacity * LOAD_FACTOR);
 
         for (long hash : table) {
-            if (hash != 0) {
-                int index = indexFor(hash, newCapacity);
-                while (newTable[index] != 0) {
-                    index = (index + 1) % newCapacity; // Linear probing
-                }
-                newTable[index] = hash;
+            if (hash == 0 || hash == TOMBSTONE) {
+                continue; // Skip empty and tombstone entries
             }
+            int index = indexFor(hash, newCapacity);
+            while (newTable[index] != 0) {
+                index = (index + 1) % newCapacity; // Linear probing
+            }
+            newTable[index] = hash;
         }
         table = newTable;
     }
