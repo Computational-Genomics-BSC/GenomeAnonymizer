@@ -218,7 +218,7 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
     public boolean passesFilters(SAMRecord read){
         if(readsToExclude.contains(read.getReadName())) return false;
         if(read.getMappingQuality() < minimumMappingQuality) return false;
-        if(read.getReadUnmappedFlag()) return false;
+        if(read.getReadUnmappedFlag() || read.getMateUnmappedFlag()) return false;
         if(!includeDuplicates && read.getDuplicateReadFlag()) return false;
         return true;
     }
