@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "org.example"
-version = "0.0.7.1"
+version = "0.0.7.2"
 
 java {
     toolchain {
@@ -17,15 +17,9 @@ repositories {
 }
 
 dependencies {
-    //implementation(fileTree(mapOf("dir" to "lib", "include" to listOf("*.jar"))))
     implementation("com.github.haifengl:smile-core:4.3.0")
     implementation("com.github.samtools:htsjdk:4.2.0")
     implementation("commons-cli:commons-cli:1.9.0")
-    //TESTING
-    implementation("com.github.haifengl:smile-plot:4.3.0")
-    //TESTING
-    // implementation("com.github.samtools:htsjdk:4.1.3")
-    // implementation("commons-cli:commons-cli:1.9.0")
     testImplementation(platform("org.junit:junit-bom:5.10.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
 }
