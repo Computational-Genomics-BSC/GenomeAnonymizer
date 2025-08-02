@@ -18,4 +18,5 @@ public interface AnonymizerAlgorithm {
     public void setThreadNumber(int threads);
     public void setMaxReadsInRam(int maxReadsInMemory);
     public void setTmpDir(File tmpDir);
+    public void setMaxDepth(int maxDepth);
 }

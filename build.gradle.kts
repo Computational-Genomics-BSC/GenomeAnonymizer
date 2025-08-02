@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "org.example"
-version = "0.0.7.2"
+version = "1.0.0"
 
 java {
     toolchain {

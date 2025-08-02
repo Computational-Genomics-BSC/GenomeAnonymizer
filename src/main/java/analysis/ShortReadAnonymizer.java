@@ -35,8 +35,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private static final int INSERT_SIZE_BIN_SIZE = 50;
     private static final int INSERT_SIZE_BIN_COUNT = 5000 / INSERT_SIZE_BIN_SIZE + 1;
     private static final float DEFAULT_INSERT_SIZE_THRESHOLD_FRACTION = 0.05f;
-    // TODO: Add as a parameter
-    private static final int DEFAULT_MAX_COVERAGE = 10000;
+    private static final int DEFAULT_MAX_DEPTH = 10000;
 
     private String inputNormalPath;
     private String inputTumorPath;
@@ -53,6 +52,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private Set<String> supplementariesToEliminate;
 
     // Thresholds for the insert sizes
+    private int maxDepth = DEFAULT_MAX_DEPTH;
     private int insertSizeMinThreshold = Integer.MIN_VALUE;
     private int insertSizeMedian = Integer.MIN_VALUE;
     private int insertSizeMaxThreshold = Integer.MAX_VALUE;
@@ -95,6 +95,11 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         tmpDir.setWritable(true, false);
         System.setProperty("java.io.tmpdir", tmpDir.getAbsolutePath());
         this.tmpDir = tmpDir;
+    }
+
+    @Override
+    public void setMaxDepth(int maxDepth) {
+        this.maxDepth = maxDepth;
     }
 
     public void setThreadNumber(int threads) {
@@ -169,8 +174,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         paths[1] = inputTumorPath;
         ExecutorService exec = Executors.newFixedThreadPool(threads);
         List<CompletableFuture<Tuple<UnsafeStringHashSet, List<Integer>>>> futures = new ArrayList<>();
-        //TODO: Check if it is possible to change partitions based on actual content
-        // (Implement CoveredGenomicRegion), to improve runtime using parallelization
         for(GenomicRegion partition : genomicPartitions){
             for(String path : paths){
                 CompletableFuture<Tuple<UnsafeStringHashSet, List<Integer>>> future = CompletableFuture.supplyAsync (() -> {
@@ -241,7 +244,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private Tuple<UnsafeStringHashSet, List<Integer>> queryReadsToExcludeInPartition(String filePath, GenomicRegion partition) throws IOException {
         UnsafeStringHashSet readsToExcludeInPartition = new UnsafeStringHashSet(65536);
         List<Integer> insertSizesBinsInPartition = new ArrayList<>(Collections.nCopies(INSERT_SIZE_BIN_COUNT, 0));
-        HighCoverageFilter highCoverageFilter = new HighCoverageFilter(DEFAULT_MAX_COVERAGE);
+        HighCoverageFilter highCoverageFilter = new HighCoverageFilter(maxDepth);
         try(SamReader reader = factory.open(new File(filePath))){
             SAMRecordIterator it = reader.query(partition.getSequenceName(), partition.getStart(), partition.getEnd(), false);
             while (it.hasNext()) {
@@ -439,8 +442,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                                 + genomicPartition.getSequenceName()
                                 + " " + genomicPartition.getStart() + " " + genomicPartition.getEnd(),
                         e);
-                System.exit(1);
-//                    throw new RuntimeException(e);
+                    throw new RuntimeException(e);
             }
         }
     }
@@ -478,10 +480,6 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             builder.append(" 2/2");
         }
         return builder.toString();
-    }
-
-    private void logWrittenReads(int writtenReads, String datasetName) {
-        if (writtenReads % 10_000_000 == 0) LOGGER.info("Written " + writtenReads + " to " + datasetName);
     }
 
     public void mergeAnonymizedReads(List<String> normalPaths, List<String> tumorPaths) {
@@ -546,7 +544,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             boolean keepPair = keepPair(record, generatedReadPairs, readPairRequirements);
             if(keepPair) {
                 // Set the read name to the hash of the read name + salt
-//            record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
+                record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
                 if(readsToCorrectOrientation.containsKey(record.getReadName()) && !record.isSecondaryOrSupplementary()) {
                     int pairCount = readsToCorrectOrientation.get(record.getReadName());
                     if (pairCount == 0) {

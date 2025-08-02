@@ -15,13 +15,14 @@ import java.util.logging.SimpleFormatter;
  */
 public class GenomeAnonymizer {
 
-    public static final String VERSION = "0.0.7.2";
+    public static final String VERSION = "1.0.0";
     private static final Logger LOGGER = logConfigure();
 
     public static final String DEFAULT_RUN_MODE_FUNCTIONALITY = "default";
 
     public final static int DEFAULT_MIN_MAPPING_QUALITY = 0;
     public static final int DEFAULT_MAX_READS_IN_RAM = 500_000;
+    public static final int DEFAULT_MIN_MAX_DEPTH = 100;
 
     public final static String BAM_FILE = ".bam";
     public final static String SAM_FILE = ".sam";
@@ -32,6 +33,7 @@ public class GenomeAnonymizer {
     private File tmpDir;
     private int randomSeed;
     private int maxReadsInMemory;
+    private int maxDepth = -1;
 
     /**
      * Run anonymizer with the benchmark of somatic variants functionality. Any somatic variant will be sparred from anonymization
@@ -50,6 +52,7 @@ public class GenomeAnonymizer {
         GlobalRandom.setSeed(randomSeed);
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm, normalPath, tumorPath, refGenome, outputPrefix);
         if (tmpDir != null) anonymizer.setTmpDir(tmpDir);
+        if(maxDepth > 100) anonymizer.setMaxDepth(maxDepth);
         anonymizer.setThreadNumber(nThreads);
         anonymizer.setMaxReadsInRam(maxReadsInMemory);
         anonymizer.setMinimumMappingQuality(minMappingQuality);
@@ -79,6 +82,8 @@ public class GenomeAnonymizer {
     public void setMaxReadsInMemory(int maxReadsInMemory) {
         this.maxReadsInMemory = maxReadsInMemory;
     }
+
+    private void setMaxDepth(int maxDepth) {this.maxDepth = maxDepth;}
 
     private static AnonymizerAlgorithm getAnonymizer(String algorithm, String normalPath, String tumorPath,
                                                      String refGenome, String outputPrefix) {
@@ -111,7 +116,7 @@ public class GenomeAnonymizer {
             String tumorPath = commandLine.getOptionValue("it");
             String refGenome = commandLine.getOptionValue("r");
             String outputPrefix = commandLine.getOptionValue("o", removeSuffixIfExists(normalPath, BAM_FILE));
-            int nThreads = Integer.parseInt(commandLine.getOptionValue("t", "4"));
+            int nThreads = Integer.parseInt(commandLine.getOptionValue("t", "12"));
             int maxReadsInMemory = Integer.parseInt(commandLine.getOptionValue("maxReadsInMemory", String.valueOf(DEFAULT_MAX_READS_IN_RAM)));
             appInstance.setMaxReadsInMemory(maxReadsInMemory);
             String mode = commandLine.getOptionValue("m", DEFAULT_RUN_MODE_FUNCTIONALITY);
@@ -122,6 +127,14 @@ public class GenomeAnonymizer {
             if (commandLine.hasOption("tmpDir")) {
                 String tmpDirPath = commandLine.getOptionValue("tmpDir");
                 appInstance.setTmpDir(new File(tmpDirPath));
+            }
+            if (commandLine.hasOption("maxDepth")) {
+                int maxDepth = Integer.parseInt(commandLine.getOptionValue("maxDepth"));
+                if (maxDepth <= DEFAULT_MIN_MAX_DEPTH) {
+                    throw new IllegalArgumentException("Maximum depth must be higher than " + DEFAULT_MIN_MAX_DEPTH +
+                            ". If you want to disable this feature, use -1 as value.");
+                }
+                appInstance.setMaxDepth(maxDepth);
             }
             LOGGER.info("Running with parameters - \n normalPath: " + normalPath + "\n tumorPath: " + tumorPath +
                         "\n refGenome: " + refGenome + "\n outputPrefix: " + outputPrefix +
@@ -169,7 +182,7 @@ public class GenomeAnonymizer {
                 .hasArg(true)
                 .build());
         options.addOption(Option.builder("t")
-                .desc("Number of threads to run the anonymizer (default=4)")
+                .desc("Number of threads to run the anonymizer (default=12)")
                 .hasArg(true)
                 .argName("INTEGER")
                 .type(Integer.class)
@@ -202,6 +215,14 @@ public class GenomeAnonymizer {
         options.addOption(Option.builder("tmpDir")
                 .desc("Temporary directory to store intermediate files")
                 .argName("DIRECTORY")
+                .hasArg(true)
+                .build());
+        options.addOption( Option.builder("maxDepth")
+                .desc("Maximum depth of reads to be considered in the anonymization process. If set, reads in regions with depth " +
+                        "higher than this value will be excluded (default=10000)" +
+                        ". Use -1 to disable this feature" +
+                        ". If set to a value lower than 100, it will be ignored.")
+                .argName("INTEGER")
                 .hasArg(true)
                 .build());
         return options;

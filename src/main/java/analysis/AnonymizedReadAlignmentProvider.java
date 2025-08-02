@@ -1,7 +1,5 @@
 package analysis;
 import genomicelements.*;
-import genomicelements.PairCalledVariation.SomaticVariationType;
-import genomicelements.PairCalledVariation.VariantType;
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.SAMRecord;
@@ -36,7 +34,6 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     private static final Logger LOGGER = Logger.getLogger(AnonymizedReadAlignmentProvider.class.getName());
 
     public static final int SHORT_READ_LEFT_PILEUP_REGION_EXTENSION = 500;
-    public static final int SLIDING_WINDOW_LIMIT = 200;
     public static final int MAX_LOCATION_DISTANCE_THRESHOLD = 400;
 
     public static final int MAX_SIGNAL_PER_REGION_LIMIT = 5000;
@@ -62,9 +59,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     private MapCacheFIFO<String, AnonymizedRead> anonymizedReadCache;
     private Map<String, Integer> onHoldReads;
 
-    private Map<Integer, List<PairCalledVariation>> snvsPerPos;
-    private Map<Integer, List<PairCalledVariation>> indelsPerPos;
-    private List<Signal> signals;
+    private List<Signal> snvSignals;
+    private SignalCollection signals;
     private Set<Integer> partiallyUncoveredPositions;
 
     private Set<String> readsToExclude;
@@ -87,9 +83,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         anonymizedReadCache = new MapCacheFIFO<>(10_000_000);
         onHoldReads = new HashMap<>();
         readsToExclude = new HashSet<>();
-        snvsPerPos = new HashMap<>();
-        indelsPerPos = new HashMap<>();
-        signals = new ArrayList<>();
+        snvSignals = new ArrayList<>();
+        signals = new SignalCollection();
         partiallyUncoveredPositions = new HashSet<>();
         refSequence = new byte[0];
     }
@@ -134,9 +129,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     }
 
     public void processNextPairedPileup(PairedPileup pileup, boolean hasNext){
-        int refPosition = pileup.getLocation();
-        currentPileupPosition = refPosition;
-        initializeSignalsInPos(refPosition);
+        currentPileupPosition = pileup.getLocation();
         long startclassifyVariationInPairedPileup = System.currentTimeMillis();
         classifyVariationInPairedPileup(pileup);
         long endclassifyVariationInPairedPileup = System.currentTimeMillis();
@@ -144,33 +137,23 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 endclassifyVariationInPairedPileup-startclassifyVariationInPairedPileup :
                 v + endclassifyVariationInPairedPileup-startclassifyVariationInPairedPileup);
         long startprocessSimpleSignals = System.currentTimeMillis();
-        processSNVSignals(refPosition, snvsPerPos);
+        processSNVSignals();
+        snvSignals.clear();
         long endprocessSimpleSignals = System.currentTimeMillis();
         METHOD_TIME_MAP.compute("processSimpleSNVSignals",  (k,v) -> v == null ?
                 endprocessSimpleSignals-startprocessSimpleSignals :
                 v + endprocessSimpleSignals-startprocessSimpleSignals);
         if ( !hasNext || signals.size() >= MAX_SIGNAL_PER_REGION_LIMIT ) {
             long startprocessComplexSignals = System.currentTimeMillis();
-            processSignals(signals);
+            processSignals();
             long endprocessComplexSignals = System.currentTimeMillis();
             METHOD_TIME_MAP.compute("processComplexSignals",  (k,v) -> v == null ?
                     endprocessComplexSignals-startprocessComplexSignals :
                     v + endprocessComplexSignals-startprocessComplexSignals);
-            signals = new ArrayList<>();
+            signals.clear();
         }
-        clearUnusedSimpleSignals(refPosition - SLIDING_WINDOW_LIMIT);
         numProcessedPileups++;
         logProcessedPileups();
-    }
-
-    private void initializeSignalsInPos(int pos) {
-        snvsPerPos.computeIfAbsent(pos, k -> new ArrayList<>());
-        indelsPerPos.computeIfAbsent(pos, k -> new ArrayList<>());
-    }
-
-    private void clearUnusedSimpleSignals(int posToFlush) {
-        snvsPerPos.remove(posToFlush);
-        indelsPerPos.remove(posToFlush);
     }
 
     /**
@@ -249,20 +232,20 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 int currentRefPos = initRefPos + cigarPos-1;
                 int inReadPos = pileupRead.getRead().getReadPositionAtReferencePosition(currentRefPos);
                 int length = cigarElement.getLength();
-                VariantType indelType;
+                Signal.IndelSignalType indelType;
                 int vcfStdEnd;
                 int inRefend;
                 int inReadEnd;
                 byte[] altAllele;
                 if (CigarOperator.I == op){
-                    indelType = VariantType.INS;
+                    indelType = Signal.IndelSignalType.INSERTION;
                     inRefend = currentRefPos;// + 1;
                     vcfStdEnd = inRefend + 1;
                     inReadEnd = inReadPos + length + 1;
                     altAllele = new byte[1+length];
                 }
                 else{
-                    indelType = VariantType.DEL;
+                    indelType = Signal.IndelSignalType.DELETION;
                     inRefend = currentRefPos + length;
                     vcfStdEnd = inRefend;
                     inReadEnd = inReadPos + 1;
@@ -274,18 +257,12 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 if (CigarOperator.I.equals(op)){
                     System.arraycopy(sequenceBases, inReadPos, altAllele, 1, altAllele.length - 1);
                 }
-                PairCalledVariation calledVar = new PairCalledVariation(sequenceName, currentRefPos, vcfStdEnd, indelType, length,
-                        altAllele, refAllele);
-                List<PairCalledVariation> variationInPos = indelsPerPos.computeIfAbsent(currentRefPos, v -> new ArrayList<>());
-                int indexSearch = variationInPos.indexOf(calledVar);
-                boolean variationExists = indexSearch != -1;
-                if (variationExists) calledVar = variationInPos.get(indexSearch);
-                // Saves the CIGAR index of the INDEL signal
-                calledVar.addSupportingRead(readAlnId, i);
-                processSomaticType(variationInPos, calledVar, variationExists, isNormalDataset);
-                Signal calledSignal = new Signal(readAlnId, calledVar);
-                calledSignal.setIsFromNormalDataset(isNormalDataset);
-                signals.add(calledSignal);
+                Signal signal = new Signal(sequenceName, currentRefPos, readAlnId, i, length, Signal.Source.INDEL);
+                signal.setIndelSignalType(indelType);
+                signal.setAltAllele(altAllele);
+                signal.setRefAllele(refAllele);
+                signal.setIsFromNormalDataset(isNormalDataset);
+                signals.add(signal);
                 putReadOnHold(readAlnId);
             }
             if(op.isClipping()){
@@ -378,60 +355,30 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         altAllele[0] = (byte) readBase;
         byte[] refAllele = new byte[1];
         refAllele[0] = (byte) referenceBase;
-        PairCalledVariation calledVar = new PairCalledVariation(sequenceName, refPosition, refPosition, VariantType.SNV, 1,
-                altAllele, refAllele);
-        List<PairCalledVariation> variationInPos = snvsPerPos.computeIfAbsent(refPosition, v -> new ArrayList<>());
-        int indexSearch = variationInPos.indexOf(calledVar);
-        boolean variationExists = indexSearch != -1;
-        if (variationExists) calledVar = variationInPos.get(indexSearch);
-        calledVar.addSupportingRead(readAlnId, inReadPosition);
-        processSomaticType(variationInPos, calledVar, variationExists, isNormalDataset);
+        Signal snvSignal = new Signal(sequenceName, refPosition, readAlnId, inReadPosition, 1, Signal.Source.SNV);
+        snvSignal.setIsFromNormalDataset(isNormalDataset);
+        snvSignal.setAltAllele(altAllele);
+        snvSignal.setRefAllele(refAllele);
+        snvSignals.add(snvSignal);
     }
 
-    private void processSomaticType(List<PairCalledVariation> variationInPos, PairCalledVariation calledVar,
-                                    boolean variationExists, boolean isNormalDataset) {
-        if (!variationExists){
-            if (isNormalDataset){
-                calledVar.setSomaticVariationType(SomaticVariationType.NORMAL_SINGLE_READ_VARIANT);
-            }
-            else{
-                calledVar.setSomaticVariationType(SomaticVariationType.TUMORAL_SINGLE_READ_VARIANT);
-            }
-            variationInPos.add(calledVar);
-        }
-        else{
-            SomaticVariationType calledVarType = calledVar.getSomaticVariationType();
-            if(isNormalDataset){
-                if (SomaticVariationType.TUMORAL_SINGLE_READ_VARIANT.equals(calledVarType) || SomaticVariationType.TUMORAL_ONLY_VARIANT.equals(calledVarType)){
-                    calledVar.setSomaticVariationType(SomaticVariationType.TUMORAL_NORMAL_VARIANT);
-                }
-                if (SomaticVariationType.NORMAL_SINGLE_READ_VARIANT.equals(calledVarType)){
-                    calledVar.setSomaticVariationType(SomaticVariationType.NORMAL_ONLY_VARIANT);
-                }
-            }
-            else{
-                if (SomaticVariationType.NORMAL_SINGLE_READ_VARIANT.equals(calledVarType) || SomaticVariationType.NORMAL_ONLY_VARIANT.equals(calledVarType)){
-                    calledVar.setSomaticVariationType(SomaticVariationType.TUMORAL_NORMAL_VARIANT);
-                }
-                if (SomaticVariationType.TUMORAL_SINGLE_READ_VARIANT.equals(calledVarType)){
-                    calledVar.setSomaticVariationType(SomaticVariationType.TUMORAL_ONLY_VARIANT);
-                }
+    private void processSNVSignals() {
+        boolean[] seen = new boolean[256]; // Assuming ASCII characters, 256 is enough to cover all bases
+        boolean[] isGermline = new boolean[256];
+        for (Signal var : snvSignals) {
+            seen[var.getAltAllele()[0]] = true;
+            if ( (seen[var.getAltAllele()[0]] && var.isFromNormalDataset())
+                    || overlapsUncoveredPosition(var) ) {
+                isGermline[var.getAltAllele()[0]] = true;
             }
         }
-    }
-
-    private void processSNVSignals(int refPos, Map<Integer, List<PairCalledVariation>> variationTypePerPos) {
-        List<PairCalledVariation> variationInPos = variationTypePerPos.get(refPos);
-        for (PairCalledVariation var : variationInPos){
-            if( var.isGermline() || overlapsUncoveredPosition(var) ) {
-                Map<String, Integer> supportingReads = var.getSupportingReadPositions();
-                for (Map.Entry<String, Integer> entry : supportingReads.entrySet()){
-                    String readAlnId = entry.getKey();
-                    AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnId);
-                    //The anonymizedRead is null if it comes from the offset before the first pileup position,
-                    //it is used for classification but is left to be returned by other thread
-                    if(anonymizedRead != null) anonymizedRead.addSignalToAnonymize(new Signal(readAlnId, var));
-                }
+        for (Signal var : snvSignals){
+            if(isGermline[var.getAltAllele()[0]]) {
+                String readAlnId = var.getReadAlnName();
+                AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnId);
+                //The anonymizedRead is null if it comes from the offset before the first pileup position,
+                //it is used for classification but is left to be returned by other thread
+                if(anonymizedRead != null) anonymizedRead.addSignalToAnonymize(var);
             }
         }
     }
@@ -441,17 +388,18 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
      * signals from the normal dataset, or a bipartite graph from the normal-tumor pair
      *
      */
-    private void processSignals(List<Signal> signals) {
-        List<Signal> cigarSignals = new ArrayList<>();
-        List<Signal> insertSizeSignals = new ArrayList<>();
-        List<Signal> strandOrientationSignals = new ArrayList<>();
-        List<Signal> chromChangeSignals = new ArrayList<>();
+    private void processSignals() {
+        List<ReadSignal> cigarSignals = new ArrayList<>();
+        List<ReadSignal> insertSizeSignals = new ArrayList<>();
+        List<ReadSignal> strandOrientationSignals = new ArrayList<>();
+        List<ReadSignal> chromChangeSignals = new ArrayList<>();
         // For each source of signal, create a partition, mixed for cigarSignals
-        for(Signal signal : signals){
-            if(signal.getSource() == Signal.Source.SIMPLE_VARIATION){
+        List<ReadSignal> signalsList = signals.getSignalsList();
+        for(ReadSignal signal : signalsList){
+            if(signal.isIndel()){
                 cigarSignals.add(signal);
             }
-            else if(signal.getSource() == Signal.Source.SOFT_CLIP){
+            else if(signal.isSoftClip()){
                 cigarSignals.add(signal);
             }
             else if(signal.getSource() == Signal.Source.INSERT_SIZE){
@@ -467,92 +415,141 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         processTypeSignals(insertSizeSignals);
         processTypeSignals(strandOrientationSignals);
         processTypeSignals(chromChangeSignals);
-        List<List<Signal>> indelGraphs = processTypeSignals(cigarSignals, SIGNAL_PER_PARTITION_LIMIT*2, true);
-        rescueMissedSomaticIndelSignals(indelGraphs);
+        List<List<ReadSignal>> indelGraph = processTypeSignals(cigarSignals, SIGNAL_PER_PARTITION_LIMIT*2, true);
+        rescueMissedSomaticIndelSignals(indelGraph);
     }
 
-    private void rescueMissedSomaticIndelSignals(List<List<Signal>> indelGraphs) {
-        for(List<Signal> indelPartitionGraph : indelGraphs) {
+    private void rescueMissedSomaticIndelSignals(List<List<ReadSignal>> indelGraphs) {
+        for(List<ReadSignal> indelPartitionGraph : indelGraphs) {
             if(indelPartitionGraph.size() < 2) {
                 // If there are not enough signals to form a graph, skip processing
                 continue;
             }
-            // Process the indel graph to declassify leaked somatic signals using hierarchical clustering
-            Signal[] indelGraphArray = indelPartitionGraph.toArray(new Signal[0]);
-            // Generate the linkage for hierarchical clustering, using the Euclidean distance between signals (location and length)
-            Linkage linkage = WardLinkage.of(indelGraphArray, new SignalDistance());
-            HierarchicalClustering hierarchicClusters = HierarchicalClustering.fit(linkage);
-            // Check if there is a clear first cluster split, and rescue the signals if they are only somatic
-            int[][] tree = hierarchicClusters.tree();
-            double[] heights = hierarchicClusters.height().clone();
-            // Save signals from the two biggest clusters, if they are too far apart and one is only somatic
-            double heightCutoff = mean(heights); //+ stdev(heights);
-            if(heightCutoff == 0){
-                // If the height cutoff is zero, it means that all signals are at identical, so skip processing
+            // Handle large graphs by spatial partitioning with overlap
+            if(indelPartitionGraph.size() > 10000) {
+
+                int maxPartitionSize = 8000; // Leave room for overlap
+                int overlapSize = 1000; // Overlap between partitions to catch boundary signals
+
+                List<List<ReadSignal>> partitions = new ArrayList<>();
+                int start = 0;
+
+                while (start < indelPartitionGraph.size()) {
+                    int end = Math.min(start + maxPartitionSize, indelPartitionGraph.size());
+
+                    // If this isn't the last partition, extend to include overlap
+                    if (end < indelPartitionGraph.size()) {
+                        int overlapEnd = Math.min(end + overlapSize, indelPartitionGraph.size());
+                        List<ReadSignal> partition = new ArrayList<>(indelPartitionGraph.subList(start, overlapEnd));
+                        partitions.add(partition);
+                        start += maxPartitionSize; // Move start by partition size, not including overlap
+                    } else {
+                        // Last partition - take everything remaining
+                        List<ReadSignal> partition = new ArrayList<>(indelPartitionGraph.subList(start, end));
+                        partitions.add(partition);
+                        break;
+                    }
+                }
+
+                // Process each partition with deduplication
+                Set<String> processedSignals = new HashSet<>(); // Track processed signals to avoid duplicates from overlaps
+                for (List<ReadSignal> partition : partitions) {
+                    processIndelGraphPartition(partition, processedSignals);
+                }
                 continue;
             }
-            boolean isNonMonotonicTree = false;
-            for (int i = 0; i < heights.length - 1; i++) {
-                if (heights[i] > heights[i + 1]) {
-                    isNonMonotonicTree = true;
-                    break;
-                }
+            // Process normally for smaller graphs
+            processIndelGraphPartition(indelPartitionGraph, new HashSet<>());
+        }
+    }
+
+    private void processIndelGraphPartition(List<ReadSignal> indelPartitionGraph, Set<String> processedSignals) {
+        if (indelPartitionGraph.size() < 2) return;
+
+        // Process the indel graph to declassify leaked somatic signals using hierarchical clustering
+        ReadSignal[] indelGraphArray = indelPartitionGraph.toArray(new ReadSignal[0]);
+
+        // Generate the linkage for hierarchical clustering, using the Euclidean distance between signals (location and length)
+        Linkage linkage = WardLinkage.of(indelGraphArray, new SignalDistance());
+        HierarchicalClustering hierarchicClusters = HierarchicalClustering.fit(linkage);
+
+        // Check if there is a clear first cluster split, and rescue the signals if they are only somatic
+        double[] heights = hierarchicClusters.height().clone();
+
+        // Save signals from the two biggest clusters, if they are too far apart and one is only somatic
+        double heightCutoff = mean(heights);
+        if(heightCutoff == 0){
+            // If the height cutoff is zero, it means that all signals are at identical, so skip processing
+            return;
+        }
+
+        boolean isNonMonotonicTree = false;
+        for (int i = 0; i < heights.length - 1; i++) {
+            if (heights[i] > heights[i + 1]) {
+                isNonMonotonicTree = true;
+                break;
             }
-            if(isNonMonotonicTree) continue;
-            int[] clusters = hierarchicClusters.partition(heightCutoff);
-            boolean[] isSomaticCluster = new boolean[clusters.length];
-            Arrays.fill(isSomaticCluster, true);
-            List<List<Signal>> clusteredSignals = new ArrayList<>(clusters.length);
-            for(int i = 0; i < clusters.length; i++) {
-                clusteredSignals.add(new ArrayList<>());
+        }
+        if(isNonMonotonicTree) return;
+
+        int[] clusters = hierarchicClusters.partition(heightCutoff);
+        boolean[] isSomaticCluster = new boolean[clusters.length];
+        Arrays.fill(isSomaticCluster, true);
+        List<List<ReadSignal>> clusteredSignals = new ArrayList<>(clusters.length);
+        for(int i = 0; i < clusters.length; i++) {
+            clusteredSignals.add(new ArrayList<>());
+        }
+        Set<Integer> clusterSet = new HashSet<>();
+        for(int i = 0; i < clusters.length; i++) {
+            ReadSignal signal = indelGraphArray[i];
+            int clusterId = clusters[i];
+            if(signal.isFromNormalDataset()){
+                isSomaticCluster[clusterId] = false;
             }
-            Set<Integer> clusterSet = new HashSet<>();
-            for(int i = 0; i < clusters.length; i++) {
-                Signal signal = indelGraphArray[i];
-                int clusterId = clusters[i];
-                if(signal.isFromNormalDataset()){
-                    isSomaticCluster[clusterId] = false;
-                }
-                clusteredSignals.get(clusterId).add(signal);
-                clusterSet.add(clusterId);
-            }
-            for(int clusterId : clusterSet) {
-                if(isSomaticCluster[clusterId]){
-                    List<Signal> rescuedSomaticSignals = clusteredSignals.get(clusterId);
-                    for(Signal signal : rescuedSomaticSignals) {
-                        if ( !signal.isClassifiedByDistance() ) continue;
-                        String readAlnName = signal.getReadAlnName();
-                        AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnName);
-                        if(anonymizedRead != null) anonymizedRead.rescueIndelSignalToAnonymize(signal);
-                        signal.setIsGermline(false);
-                        // If the signal is somatic, remove it from the onHoldReads map
-                        manageAnalyzedSignalsInHoldedReadAln(signal);
-                    }
+            clusteredSignals.get(clusterId).add(signal);
+            clusterSet.add(clusterId);
+        }
+
+        for(int clusterId : clusterSet) {
+            if(isSomaticCluster[clusterId]){
+                List<ReadSignal> rescuedSomaticSignals = clusteredSignals.get(clusterId);
+                for(ReadSignal signal : rescuedSomaticSignals) {
+                    if (!signal.isClassifiedByDistance()) continue;
+                    // If the signal is somatic, rescue it from anonymization
+                    String readAlnName = signal.getReadAlnName();
+                    // Use readAlnName to avoid processing the same signal multiple times from overlaps
+                    if (processedSignals.contains(readAlnName)) continue;
+                    processedSignals.add(readAlnName);
+                    AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnName);
+                    if (anonymizedRead != null) anonymizedRead.rescueIndelSignalToAnonymize((Signal) signal);
+                    signal.setIsGermline(false);
+                    // If the signal is somatic, remove it from the onHoldReads map
+                    manageAnalyzedSignalsInHoldedReadAln(signal);
                 }
             }
         }
     }
 
-    static class SignalDistance implements Distance<Signal> {
+    static class SignalDistance implements Distance<ReadSignal> {
         @Override
-        public double d(Signal a, Signal b) {
+        public double d(ReadSignal a, ReadSignal b) {
             return Operations.computeTwoDimEuclideanDistance(a.getLocation(), b.getLocation(),
                     a.getLength(), b.getLength());
         }
     }
 
-    private void processTypeSignals(List<Signal> typeSignals) {
+    private void processTypeSignals(List<ReadSignal> typeSignals) {
         processTypeSignals(typeSignals, AnonymizedReadAlignmentProvider.SIGNAL_PER_PARTITION_LIMIT, false);
     }
 
-    private List<List<Signal>> processTypeSignals(List<Signal> typeSignals, int signalPerPartitionLimit, boolean returnConnectedSignals) {
+    private List<List<ReadSignal>> processTypeSignals(List<ReadSignal> typeSignals, int signalPerPartitionLimit, boolean returnConnectedSignals) {
         int n = typeSignals.size();
-        List<Signal> currentPartition = new ArrayList<>();
-        List<List<Signal>> connectedPartitionSignals = new ArrayList<>();
+        List<ReadSignal> currentPartition = new ArrayList<>();
+        List<List<ReadSignal>> connectedPartitionSignals = new ArrayList<>();
         for(int i = 0; i < n-1; i++){
-            Signal currentSignal = typeSignals.get(i);
+            ReadSignal currentSignal = typeSignals.get(i);
             currentPartition.add(currentSignal);
-            Signal nextSignal = typeSignals.get(i+1);
+            ReadSignal nextSignal = typeSignals.get(i+1);
             int locationDistance = Math.abs(nextSignal.getLocation() - currentSignal.getLocation());
             boolean lastSignalUnreachable = locationDistance > MAX_LOCATION_DISTANCE_THRESHOLD;
             if(lastSignalUnreachable || currentPartition.size() >= signalPerPartitionLimit || (i==n-2)){
@@ -572,7 +569,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         return connectedPartitionSignals;
     }
 
-    private void processPartition(List<Signal> signals){
+    private void processPartition(List<ReadSignal> signals){
         processPartition(signals, false, new ArrayList<>());
     }
 
@@ -580,22 +577,22 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
      * Process a partition of signals, classifying them as germline complex signals
      * @param signals
      */
-    private void processPartition(List<Signal> signals, boolean returnConnectedComponents, List<List<Signal>> connectedSignals) {
+    private void processPartition(List<ReadSignal> signals, boolean returnConnectedComponents, List<List<ReadSignal>> connectedSignals) {
         int n = signals.size();
         AdjacencyList signalsGraph = new AdjacencyList(n, false);
         for (int i = 0; i < n; i++){
-            Signal firstSignal = signals.get(i);
+            ReadSignal firstSignal = signals.get(i);
             for (int j = i + 1; j < n; j++){
-                Signal secondSignal = signals.get(j);
+                ReadSignal secondSignal = signals.get(j);
                 //Avoid comparing signals from small deletions against insertions
-                if(isDifferentSimpleVariation(firstSignal, secondSignal)) continue;
+                if(isDifferentIndelVariation(firstSignal, secondSignal)) continue;
                 //Avoid comparing signals from the same read
                 if(firstSignal.getReadAlnName().contains(secondSignal.getReadAlnName())) continue;
                 double signalTypeThreshold = getSignalThreshold(firstSignal, secondSignal);
                 double signalDistance = Operations.computeTwoDimEuclideanDistance(firstSignal.getLocation(), secondSignal.getLocation(),
                         firstSignal.getLength(), secondSignal.getLength());
                 //Classify signals that are close enough to be considered as a germline signal
-                if( signalDistance < signalTypeThreshold &&
+                if(signalDistance < signalTypeThreshold &&
                         (firstSignal.isFromNormalDataset() || secondSignal.isFromNormalDataset()) ) {
                     if(returnConnectedComponents){
                         signalsGraph.addEdge(i, j);
@@ -603,8 +600,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                     }
                     long startclassifyPGcomplexSignal = System.currentTimeMillis();
                     classifyGermlineComplexSignal(firstSignal);
-                    firstSignal.setClassifiedByDistance(true);
                     classifyGermlineComplexSignal(secondSignal);
+                    firstSignal.setClassifiedByDistance(true);
                     secondSignal.setClassifiedByDistance(true);
                     long endclassifyPGcomplexSignal = System.currentTimeMillis();
                     METHOD_TIME_MAP.compute("classifyPGcomplexSignal", (k, v) -> v == null ?
@@ -616,11 +613,11 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                     // but are undecidable as they are not overlapped by reads on the other dataset,
                     // or SIMPLE_VARIATION that is already classified as germline
                     if(overlapsUncoveredPosition(firstSignal) ||
-                            ( firstSignal.getSource() == Signal.Source.SIMPLE_VARIATION && firstSignal.getCalledVariation().isGermline() )){
+                            ( firstSignal.isIntraAlignmentSignal() && firstSignal.isGermline() )){
                         classifyGermlineComplexSignal(firstSignal);
                     }
                     if(overlapsUncoveredPosition(secondSignal) ||
-                            ( secondSignal.getSource() == Signal.Source.SIMPLE_VARIATION && secondSignal.getCalledVariation().isGermline() )){
+                            ( secondSignal.isIntraAlignmentSignal() && secondSignal.isGermline() )){
                         classifyGermlineComplexSignal(secondSignal);
                     }
                 }
@@ -630,42 +627,64 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         }
         if(returnConnectedComponents){
             // Add the connected signals to the list of connected components
-            //connectedSignals.add(connectedSignalsInPartition);
             // Get the connected components from the graph
             int[][] connectedComponentsArray = signalsGraph.bfcc();
             for (int[] component : connectedComponentsArray) {
-                List<Signal> connectedComponentSignals = new ArrayList<>();
+                List<ReadSignal> connectedComponentSignals = new ArrayList<>();
                 for (int idx : component) {
-                    connectedComponentSignals.add(signals.get(idx));
+                    ReadSignal signal = signals.get(idx);
+                    if (signal instanceof  MultiSourceCIGARSignal multiSourceCIGARSignal){
+                        for ( Map.Entry<String, Integer> entry : multiSourceCIGARSignal.getSources().entrySet()) {
+                            connectedComponentSignals.add(multiSourceCIGARSignal.getReadAlnSignal(entry.getKey(), entry.getValue()));
+                        }
+                    }
+                    else {
+                        connectedComponentSignals.add(signal);
+                    }
                 }
                 connectedSignals.add(connectedComponentSignals);
             }
         }
     }
 
-    private void manageAnalyzedSignalsInHoldedReadAln(Signal signal){
-        String readAlnName = signal.getReadAlnName();
-        if(onHoldReads.containsKey(readAlnName)){
-            int remainingReadSignals = onHoldReads.get(readAlnName);
-            if(remainingReadSignals == 1){
-                onHoldReads.remove(readAlnName);
+    private void manageAnalyzedSignalsInHoldedReadAln(ReadSignal signal){
+        if (signal instanceof MultiSourceCIGARSignal multiSourceSignal) {
+            for (String readAlnName : multiSourceSignal.getSources().keySet()) {
+                if(onHoldReads.containsKey(readAlnName)){
+                    int remainingReadSignals = onHoldReads.get(readAlnName);
+                    if(remainingReadSignals == 1){
+                        onHoldReads.remove(readAlnName);
+                    }
+                    else{
+                        onHoldReads.put(readAlnName, remainingReadSignals-1);
+                    }
+                }
             }
-            else{
-                onHoldReads.put(readAlnName, remainingReadSignals-1);
+        }
+        else {
+            String readAlnName = signal.getReadAlnName();
+            if(onHoldReads.containsKey(readAlnName)){
+                int remainingReadSignals = onHoldReads.get(readAlnName);
+                if(remainingReadSignals == 1){
+                    onHoldReads.remove(readAlnName);
+                }
+                else{
+                    onHoldReads.put(readAlnName, remainingReadSignals-1);
+                }
             }
         }
     }
 
-    private double getSignalThreshold(Signal firstSignal, Signal secondSignal) {
-        if (firstSignal.isSimpleVariation() && secondSignal.isSimpleVariation()){
+    private double getSignalThreshold(ReadSignal firstSignal, ReadSignal secondSignal) {
+        if (firstSignal.isIndel() && secondSignal.isIndel()){
             return INDEL_SIGNAL_THRESHOLD;
         }
-        if(firstSignal.getSource() == Signal.Source.SOFT_CLIP && secondSignal.getSource() == Signal.Source.SOFT_CLIP){
+        if(firstSignal.isSoftClip() && secondSignal.isSoftClip()){
             // If both signals are soft-clips, use a different threshold
             return SOFTCLIP_SIGNAL_THRESHOLD;
         }
-        if ((firstSignal.isSimpleVariation() && secondSignal.getSource() == Signal.Source.SOFT_CLIP)
-                || (firstSignal.getSource() == Signal.Source.SOFT_CLIP && secondSignal.isSimpleVariation())){
+        if ((firstSignal.isIndel() && secondSignal.isSoftClip())
+                || (firstSignal.isSoftClip() && secondSignal.isIndel())){
             return INDEL_SOFTCLIP_SIGNAL_THRESHOLD;
         }
         if (Signal.Source.INSERT_SIZE == firstSignal.getSource() && Signal.Source.INSERT_SIZE == secondSignal.getSource()){
@@ -677,21 +696,36 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         return SOFTCLIP_SIGNAL_THRESHOLD;
     }
 
-    private boolean isDifferentSimpleVariation(Signal firstSignal, Signal secondSignal) {
-        if (firstSignal.isSimpleVariation() && secondSignal.isSimpleVariation()){
-            return firstSignal.getCalledVariation().getVariantType() != secondSignal.getCalledVariation().getVariantType();
+    private boolean isDifferentIndelVariation(ReadSignal firstSignal, ReadSignal secondSignal) {
+        if (firstSignal.isIndel() && secondSignal.isIndel()){
+            return firstSignal.getIndelSignalType() != secondSignal.getIndelSignalType();
         }
         return false;
     }
 
-    private void classifyGermlineComplexSignal(Signal signal) {
-        if( !signal.isGermline() ) {
-            String readAlnId = signal.getReadAlnName();
-            AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnId);
+    private void classifyGermlineComplexSignal(ReadSignal signal) {
+        if( !signal.isHandled() ) {
             //The anonymizedRead is null if it comes from the offset before the first pileup position,
             //it is used for classification but is left to be returned by other thread
-            if(anonymizedRead != null) anonymizedRead.addSignalToAnonymize(signal);
+            if (signal instanceof MultiSourceCIGARSignal multiSourceSignal) {
+                for (Map.Entry<String, Integer> entry : multiSourceSignal.getSources().entrySet()){
+                    String readAlnId = entry.getKey();
+                    AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnId);
+                    if (anonymizedRead != null) {
+                        Signal readSpecificSignal = multiSourceSignal.getReadAlnSignal(readAlnId, entry.getValue());
+                        anonymizedRead.addSignalToAnonymize(readSpecificSignal);
+                        readSpecificSignal.setIsGermline(true);
+                        readSpecificSignal.setHandled(true);
+                    }
+                }
+            }
+            else {
+                String readAlnId = signal.getReadAlnName();
+                AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnId);
+                if(anonymizedRead != null) anonymizedRead.addSignalToAnonymize((Signal) signal);
+            }
             signal.setIsGermline(true);
+            signal.setHandled(true);
         }
     }
 
@@ -704,6 +738,99 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
 
     private void logProcessedPileups() {
         if (numProcessedPileups % 1_000_000 == 0) LOGGER.info("GenomicRegion["+ genomicRegion.toString()+"]: "+ "Processed " + numProcessedPileups + " pileup positions");
+    }
+
+    class SignalCollection{
+
+        private Map<String, ReadSignal> normalSignals;
+        private Map<String, ReadSignal> tumorSignals;
+        public SignalCollection() {
+            init();
+        }
+
+        private void init() {
+            normalSignals = new LinkedHashMap<>(1_000_000);
+            tumorSignals = new LinkedHashMap<>(1_000_000);
+        }
+
+        public void add(ReadSignal signal) {
+            Map<String, ReadSignal> signals = signal.isFromNormalDataset() ? normalSignals : tumorSignals;
+            if (signal.isInterAlignmentSignal()){
+                signals.put(signal.getSignalKey(), signal);
+                return;
+            }
+            boolean existsInNormal = normalSignals.containsKey(signal.getSignalKey());
+            boolean existsInTumor = tumorSignals.containsKey(signal.getSignalKey());
+            if(existsInNormal || existsInTumor) {
+                ReadSignal existingSignal = existsInNormal ? normalSignals.get(signal.getSignalKey()) : tumorSignals.get(signal.getSignalKey());
+                boolean comeFromSameSourceDataset = signal.isFromNormalDataset() == existingSignal.isFromNormalDataset();
+                if(existsInNormal && existsInTumor) {
+                    existingSignal = signal.isFromNormalDataset() ? normalSignals.get(signal.getSignalKey()) : tumorSignals.get(signal.getSignalKey());
+                    addToExistingSignals(signal, signals, existingSignal);
+                    signal.setIsGermline(true);
+                }
+                else if(comeFromSameSourceDataset) {
+                    addToExistingSignals(signal, signals, existingSignal);
+                }
+                else {
+                    signals.put(signal.getSignalKey(), signal);
+                }
+                if(signal.isFromNormalDataset() || existingSignal.isFromNormalDataset()) {
+                    signal.setIsGermline(true);
+                    existingSignal.setIsGermline(true);
+                }
+            }
+            else {
+                signals.put(signal.getSignalKey(), signal);
+            }
+        }
+
+        private void addToExistingSignals(ReadSignal signal, Map<String, ReadSignal> signals, ReadSignal existingSignal) {
+            if(existingSignal instanceof MultiSourceCIGARSignal existingMultiSourceSignal) {
+                existingMultiSourceSignal.addSource(signal.getReadAlnName(), signal.getInReadPosition());
+            }
+            else {
+                MultiSourceCIGARSignal multiSourceCIGARSignal = new MultiSourceCIGARSignal(existingSignal);
+                multiSourceCIGARSignal.addSource(signal.getReadAlnName(), signal.getInReadPosition());
+                signals.replace(existingSignal.getSignalKey(), multiSourceCIGARSignal);
+            }
+        }
+
+        public List<ReadSignal> getSignalsList() {
+            List<ReadSignal> answer = new ArrayList<>(size());
+            Iterator<ReadSignal> normalIt = normalSignals.values().iterator();
+            Iterator<ReadSignal> tumorIt = tumorSignals.values().iterator();
+            ReadSignal normal = normalIt.hasNext() ? normalIt.next() : null;
+            ReadSignal tumor = tumorIt.hasNext() ? tumorIt.next() : null;
+            while (normal != null || tumor != null) {
+                if (normal == null) {
+                    answer.add(tumor);
+                    tumor = tumorIt.hasNext() ? tumorIt.next() : null;
+                }
+                else if (tumor == null) {
+                    answer.add(normal);
+                    normal = normalIt.hasNext() ? normalIt.next() : null;
+                }
+                else if (normal.getLocation() <= tumor.getLocation()) {
+                    answer.add(normal);
+                    normal = normalIt.hasNext() ? normalIt.next() : null;
+                }
+                else {
+                    answer.add(tumor);
+                    tumor = tumorIt.hasNext() ? tumorIt.next() : null;
+                }
+            }
+            return answer;
+        }
+
+        public int size() {
+            return normalSignals.size() + tumorSignals.size();
+        }
+
+        public void clear() {
+            normalSignals.clear();
+            tumorSignals.clear();
+        }
     }
 
     @Override

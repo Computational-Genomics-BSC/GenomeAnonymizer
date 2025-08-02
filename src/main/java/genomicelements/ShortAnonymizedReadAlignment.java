@@ -34,8 +34,8 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
 
     List<CigarElement> anonymizedCigarElements;
     private Cigar anonymizedCigar;
-    private List<PairCalledVariation> SNVsimpleSignals;
-    private List<PairCalledVariation> indelSimpleSignals;
+    private List<Signal> SNVsimpleSignals;
+    private List<Signal> indelSimpleSignals;
     private List<Signal> complexSignals;
 
     //Anonymization behaviour modifiers
@@ -317,12 +317,12 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
 
     private int estimateNewReadSize(int originalSeqLength) {
         int newSize = originalSeqLength;
-        for(PairCalledVariation indel : indelSimpleSignals) {
-            PairCalledVariation.VariantType variantType = indel.getVariantType();
-            if (PairCalledVariation.VariantType.DEL.equals(variantType)) {
+        for(Signal indel : indelSimpleSignals) {
+            Signal.IndelSignalType variantType = indel.getIndelSignalType();
+            if (variantType == Signal.IndelSignalType.DELETION) {
                 newSize += indel.getLength();
             }
-            if (PairCalledVariation.VariantType.INS.equals(variantType)) {
+            if (variantType == Signal.IndelSignalType.INSERTION) {
                 newSize -= indel.getLength();
             }
         }
@@ -393,8 +393,8 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
 
     private byte[] processSNVoperations(int originalSeqLength) {
         byte[] snvOps = new byte[originalSeqLength];
-        for (PairCalledVariation snv : SNVsimpleSignals){
-            int snvOpPosition = snv.getInReadPosition(this);
+        for (Signal snv : SNVsimpleSignals){
+            int snvOpPosition = snv.getInReadPosition();
             //Change to retrieve from memoized ref genome
             byte op = snv.getRefAllele()[0];
             snvOps[snvOpPosition] = op;
@@ -407,9 +407,9 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         int[] operations = new int[n];
         // A negative operation (op) value, causes an elimination of the signal, whereas a positive value generates
         // an additive change with base pair filling from the reference genome
-        for (PairCalledVariation indel : indelSimpleSignals){
-            int indelOpPos = indel.getInReadPosition(this);
-            int op = PairCalledVariation.VariantType.INS == indel.getVariantType() ?
+        for (Signal indel : indelSimpleSignals){
+            int indelOpPos = indel.getInReadPosition();
+            int op = Signal.IndelSignalType.INSERTION == indel.getIndelSignalType() ?
                     -(indel.getLength()) : indel.getLength();
             operations[indelOpPos] = op;
             if(op < 0){
@@ -520,16 +520,11 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
 
     public boolean addSignalToAnonymize(Signal signal){
         boolean added = false;
-        if (Signal.Source.SIMPLE_VARIATION == signal.getSource()){
-            PairCalledVariation variation = signal.getCalledVariation();
-            String varType = PairCalledVariation.VariantType.SNV.equals(variation.getVariantType()) ?
-                    PairCalledVariation.GENERIC_TYPE_SNV : PairCalledVariation.GENERIC_TYPE_INDEL;
-            if (PairCalledVariation.GENERIC_TYPE_SNV.equals(varType)) {
-                added = SNVsimpleSignals.add(variation);
-            }
-            if(PairCalledVariation.GENERIC_TYPE_INDEL.equals(varType)){
-                added = indelSimpleSignals.add(variation);
-            }
+        if (signal.isSNV()){
+            added = SNVsimpleSignals.add(signal);
+        }
+        else if(signal.isIndel()){
+            added = indelSimpleSignals.add(signal);
         }
         else {
             // Add complex signals: SOFT_CLIP, STRAND_ORIENTATION, INSERT_SIZE, CHROM_CHANGE
@@ -539,8 +534,7 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
     }
 
     public void rescueIndelSignalToAnonymize(Signal signal) {
-        PairCalledVariation variation = signal.getCalledVariation();
-        indelSimpleSignals.remove(variation);
+        indelSimpleSignals.remove(signal);
     }
 
     public String getReadAlignmentId(){

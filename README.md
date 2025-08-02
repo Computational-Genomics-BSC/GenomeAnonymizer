@@ -1,90 +1,86 @@
 # GenomeAnonymizer
 
-GenomeAnonymizer is a tool for anonymizing genomic data by processing BAM/CRAM files and applying various privacy-preserving transformations. It is designed for researchers and organizations who need to share or analyze genomic data while protecting sensitive information.
+GenomeAnonymizer is a software for anonymizing Short Read Whole Genome Sequencing (WGS/WES) data by generating a Somatic Tumor Twin (STT) dataset from BAM/CRAM files, by eliminating all germline variation and keeping the somatic variation profile. This ensures privacy preservation while allowing for tumor data analysis allowing researchers and organizations to share and analyze tumor genomic data while protecting individual sensitive information.
 
 ## Features
 
 - Anonymizes genomic alignments in BAM/CRAM files
-- Supports multiple anonymization strategies
-- Flexible configuration via command-line arguments
-- Output in standard formats for downstream analysis
+- Output in standard formats (BAM/CRAM) for downstream analysis
+- Provides custom classes to use as a library in other Genomic Java applications (e.g., for Pileup analysis of tumor-normal pairs)
 
-## Requirements
+## Installation and Usage
 
-- Java 21 or higher
-- Gradle (for building from source)
-- [htsjdk](https://samtools.github.io/htsjdk/) library (included as dependency)
+GenomeAnonymizer is available as a pre-built container image on DockerHub, making it easy to run with either Docker or Singularity. Alternatively, you can use the JAR file directly if you have Java installed.
 
-## Installation
+### Option 1: Docker Container (Recommended)
 
-Clone the repository and build the project using Gradle:
+#### Prerequisites
+- Docker installed on your system
 
+#### Pull and Run
 ```bash
-git clone https://github.com/Computational-Genomics-BSC/GenomeAnonymizer.git
-cd GenomeAnonymizer
-./gradlew build
+# Pull the image from DockerHub
+docker pull genomeanonymizer/genomeanonymizer:latest
+
+# Run GenomeAnonymizer
+docker run --rm genomeanonymizer:latest java -Xmx16g -jar /GenomeAnonymizer.jar \
+    -in $PATH/normal_sample_input.bam \
+    -it $PATH/tumor_sample_input.fa \
+    -o $PATH/output.bam \
+    -r $PATH/reference.fa \
+    -t 12
 ```
 
-The executable JAR will be located in `build/libs/`.
+### Option 2: Singularity Container
 
-## Usage
+Singularity is commonly used in HPC environments where Docker may not be available.
 
-You can run GenomeAnonymizer using the following command:
+#### Prerequisites
+- Singularity installed on your system
 
+#### Pull and Run
 ```bash
-java -jar build/libs/GenomeAnonymizer.jar [arguments]
+# Pull the image from DockerHub
+singularity pull docker://genomeanonymizer/genomeanonymizer:latest
+
+# Run GenomeAnonymizer
+singularity exec java -Xmx16g -jar genomeanonymizer_latest.sif \
+    -in $PATH/normal_sample_input.bam \
+    -it $PATH/tumor_sample_input.fa \
+    -o $PATH/output.bam \
+    -r $PATH/reference.fa \
+    -t 12
 ```
 
-### Arguments
+### Option 3: Local JAR File
 
-| Argument                | Description                                                                                 | Required | Example                                 |
-|-------------------------|---------------------------------------------------------------------------------------------|----------|-----------------------------------------|
-| `-i`, `--input`         | Input BAM/CRAM file                                                                         | Yes      | `-i input.bam`                          |
-| `-o`, `--output`        | Output BAM/CRAM file                                                                        | Yes      | `-o anonymized.bam`                     |
-| `-r`, `--reference`     | Reference FASTA file (required for CRAM input/output)                                       | No       | `-r reference.fa`                       |
-| `-m`, `--mode`          | Anonymization mode (`mask`, `shuffle`, `remove`, etc.)                                      | Yes      | `-m mask`                               |
-| `-s`, `--seed`          | Random seed for reproducibility                                                             | No       | `-s 42`                                 |
-| `-t`, `--threads`       | Number of threads to use                                                                    | No       | `-t 4`                                  |
-| `--regions`             | BED file with regions to anonymize                                                          | No       | `--regions regions.bed`                 |
-| `--exclude`             | BED file with regions to exclude from anonymization                                         | No       | `--exclude exclude.bed`                 |
-| `--min-mapq`            | Minimum mapping quality for reads to be considered                                          | No       | `--min-mapq 20`                         |
-| `--include-duplicates`  | Include duplicate reads in anonymization                                                    | No       | `--include-duplicates`                  |
-| `--help`                | Show help message                                                                           | No       | `--help`                                |
+If you prefer to run GenomeAnonymizer directly with Java (useful for development or when containers are not available).
 
-> **Note:** For a full list of arguments and their descriptions, run:
-> ```bash
-> java -jar build/libs/GenomeAnonymizer.jar --help
-> ```
+#### Prerequisites
+- Java 21 or higher installed on your system
+- Gradle for building the project
 
-### Example Commands
-
-**Basic anonymization:**
+#### Download and Run
 ```bash
-java -jar build/libs/GenomeAnonymizer.jar -i input.bam -o anonymized.bam -m mask
+# Building locally: ./gradlew build
+# The JAR will be available at: build/libs/GenomeAnonymizer-1.0.0.jar
+
+# Run GenomeAnonymizer
+java -Xmx16g -jar build/libs/GenomeAnonymizer-1.0.0.jar \
+    -in $PATH/normal_sample_input.bam \
+    -it $PATH/tumor_sample_input.fa \
+    -o $PATH/output.bam \
+    -r $PATH/reference.fa \
+    -t 12
 ```
 
-**Anonymize with a specific region and random seed:**
-```bash
-java -jar build/libs/GenomeAnonymizer.jar -i input.bam -o anonymized.bam -m shuffle --regions regions.bed -s 1234
-```
+## Command Line Options
 
-**Anonymize a CRAM file with reference:**
-```bash
-java -jar build/libs/GenomeAnonymizer.jar -i input.cram -o anonymized.cram -r reference.fa -m remove
-```
-
-## Output
-
-The output file will be a BAM or CRAM file with the specified anonymization applied. The format matches the input file unless otherwise specified.
-
-## Citation
-
-If you use GenomeAnonymizer in your research, please cite the repository and the associated publication (if available).
-
-## License
-
-This project is licensed under the MIT License. See the `LICENSE` file for details.
-
----
-
-For questions or support, please open an issue on the [GitHub repository](https://github.com/Computational-Genomics-BSC/GenomeAnonymizer).
+Common parameters:
+- `-in`: Normal sample input BAM/CRAM file
+- `-it`: Tumor sample input BAM/CRAM file
+- `-o, --output`: Output prefix for the output BAM files
+- `-r, --reference`: Reference genome FASTA file
+- `-t, --threads`: Number of threads to use for processing (default is 12)
+- `-tmpDir`: Temporary directory for intermediate files, to be used when access to `/tmp` is not available
+- `-h`: Display help information
