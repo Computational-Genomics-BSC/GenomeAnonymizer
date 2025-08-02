@@ -45,7 +45,7 @@ jobs:
         with:
           images: |
             ${{ secrets.DOCKER_USERNAME }}/genomeanonymizer
-            ghcr.io/${{ github.repository }}
+            latest
 
       - name: Build and push Docker images
         id: push
