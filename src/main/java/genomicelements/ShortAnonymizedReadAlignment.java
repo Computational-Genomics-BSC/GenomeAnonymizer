@@ -104,6 +104,10 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         int newPairStart;
         int newPairLength = getLength();
         int distanceFromMate = insertSize - (getLength()+getLength());
+        // Fix negative or zero distanceFromMate to prevent invalid newPairStart coordinates
+        if(distanceFromMate <= 0) {
+            distanceFromMate = 100;
+        }
         boolean newMapsFirst = hasChromChangeSignal ? readAlignment.getReadNegativeStrandFlag()
                 && (alnStart - distanceFromMate - newPairLength + 1 >= 1)
                 : readAlignment.getMateAlignmentStart() < readAlignment.getAlignmentStart();
@@ -283,13 +287,63 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
                     tempQualitiesArray[m] = anonymizedQualitiesArray[k];
                     m--;
                 }
-                anonymizedSequenceArray = tempSequenceArray;
-                anonymizedQualitiesArray = tempQualitiesArray;
-                alnStart -= (m+1);
-                makeAdditiveChange(0, alnStart - 1, m + 1, true);
+                // Only extend left if the new alignment start position would be positive
+                int newAlnStart = alnStart - (m+1);
+                if(newAlnStart > 0) {
+                    anonymizedSequenceArray = tempSequenceArray;
+                    anonymizedQualitiesArray = tempQualitiesArray;
+                    alnStart = newAlnStart;
+                    makeAdditiveChange(0, alnStart - 1, m + 1, true);
+                }
+                else {
+                    // Cut the read by removing last consecutive bases that are encoded as 0
+                    int cutLength = 0;
+                    for(int k = anonymizedSequenceArray.length - 1; k >= 0; k--) {
+                        if(anonymizedSequenceArray[k] == 0) {
+                            cutLength++;
+                        } else {
+                            break;
+                        }
+                    }
+                    if(cutLength > 0) {
+                        int newLength = anonymizedSequenceArray.length - cutLength;
+                        anonymizedSequenceArray = Arrays.copyOf(anonymizedSequenceArray, newLength);
+                        anonymizedQualitiesArray = Arrays.copyOf(anonymizedQualitiesArray, newLength);
+                    }
+                }
+                // If extension made position negative, don't extend but keep everything else the same
             }
             else {
-                makeAdditiveChange(j, currentRefAlnPos, expectedSize-j);
+                // Check if right extension would go out of bounds
+                int extensionLength = expectedSize - j;
+                int maxAllowedExtension = referenceContigSequence.length - currentRefAlnPos;
+
+                if(extensionLength <= maxAllowedExtension) {
+                    // Safe to extend normally
+                    makeAdditiveChange(j, currentRefAlnPos, extensionLength);
+                }
+                else {
+                    // Extension would go out of bounds, limit it or cut the read
+                    if(maxAllowedExtension > 0) {
+                        // Extend only what's safe
+                        makeAdditiveChange(j, currentRefAlnPos, maxAllowedExtension);
+                    }
+                    // Cut any remaining zero-encoded bases from the end
+                    int cutLength = 0;
+                    for(int k = anonymizedSequenceArray.length - 1; k >= 0; k--) {
+                        if(anonymizedSequenceArray[k] == 0) {
+                            cutLength++;
+                        }
+                        else {
+                            break;
+                        }
+                    }
+                    if(cutLength > 0) {
+                        int newLength = anonymizedSequenceArray.length - cutLength;
+                        anonymizedSequenceArray = Arrays.copyOf(anonymizedSequenceArray, newLength);
+                        anonymizedQualitiesArray = Arrays.copyOf(anonymizedQualitiesArray, newLength);
+                    }
+                }
             }
         }
         // Cut the read if the new size is larger than the original

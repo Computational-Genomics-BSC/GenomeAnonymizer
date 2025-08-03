@@ -20,7 +20,7 @@ GenomeAnonymizer is available as a pre-built container image on DockerHub, makin
 #### Pull and Run
 ```bash
 # Pull the image from DockerHub
-docker pull genomeanonymizer/genomeanonymizer:latest
+docker pull ngaitan55/genomeanonymizer
 
 # Run GenomeAnonymizer
 docker run --rm genomeanonymizer:latest java -Xmx16g -jar /GenomeAnonymizer.jar \
@@ -41,10 +41,10 @@ Singularity is commonly used in HPC environments where Docker may not be availab
 #### Pull and Run
 ```bash
 # Pull the image from DockerHub
-singularity pull docker://genomeanonymizer/genomeanonymizer:latest
+singularity pull docker://ngaitan55/genomeanonymizer
 
 # Run GenomeAnonymizer
-singularity exec java -Xmx16g -jar genomeanonymizer_latest.sif \
+singularity exec genomeanonymizer_latest.sif java -Xmx16g -jar /GenomeAnonymizer.jar \
     -in $PATH/normal_sample_input.bam \
     -it $PATH/tumor_sample_input.fa \
     -o $PATH/output.bam \
