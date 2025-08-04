@@ -537,23 +537,24 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 new File(outputPath), new File(refGenomePath));
         // Merge the records
         final MergingSamRecordIterator iterator = new MergingSamRecordIterator(headerMerger, readers, false);
-        Map<String, Integer> generatedReadPairs = new HashMap<>();
-        Map<String, ModifiedPairsRequired> readPairRequirements = new HashMap<>();
+        // Use initial capacity based on expected number of reads to reduce resizing
+        Map<String, Integer> generatedReadPairs = new HashMap<>(8192);
+        Map<String, ModifiedPairsRequired> readPairRequirements = new HashMap<>(8192);
+        // Cache the salt string to avoid repeated concatenation
         while (iterator.hasNext()) {
             final SAMRecord record = iterator.next();
+            String originalReadName = record.getReadName();
             boolean keepPair = keepPair(record, generatedReadPairs, readPairRequirements);
             if(keepPair) {
-                // Set the read name to the hash of the read name + salt
-                record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
-                if(readsToCorrectOrientation.containsKey(record.getReadName()) && !record.isSecondaryOrSupplementary()) {
-                    int pairCount = readsToCorrectOrientation.get(record.getReadName());
+                if(readsToCorrectOrientation.containsKey(originalReadName) && !record.isSecondaryOrSupplementary()) {
+                    int pairCount = readsToCorrectOrientation.get(originalReadName);
                     if (pairCount == 0) {
                         ShortAnonymizedReadAlignment.correctOrientation(record, true);
-                        readsToCorrectOrientation.put(record.getReadName(), 1);
+                        readsToCorrectOrientation.put(originalReadName, 1);
                     }
                     else if (pairCount == 1) {
                         ShortAnonymizedReadAlignment.correctOrientation(record);
-                        readsToCorrectOrientation.remove(record.getReadName());
+                        readsToCorrectOrientation.remove(originalReadName);
                     }
                 }
                 record.setAttribute(ORIGIN_PAIR_TAG, null);
@@ -561,14 +562,16 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 //Very specific tags that are not needed
                 record.setAttribute("mc", null);
                 record.setAttribute("ms", null);
+                // Set the read name to the hash of the read name + salt
+                record.setReadName(UUID.nameUUIDFromBytes((record.getReadName() + hashSalt).getBytes()).toString());
                 // Add the record to the writer
                 writer.addAlignment(record);
             }
             // Remove the read pair from the requirements map after they have been met
-            ModifiedPairsRequired readPairStatus = readPairRequirements.get(record.getReadName());
+            ModifiedPairsRequired readPairStatus = readPairRequirements.get(originalReadName);
             if (readPairStatus != null && readPairStatus.collectedAllPairs()) {
-                generatedReadPairs.remove(record.getReadName());
-                readPairRequirements.remove(record.getReadName());
+                generatedReadPairs.remove(originalReadName);
+                readPairRequirements.remove(originalReadName);
             }
         }
         // Close the files
@@ -628,42 +631,44 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         return true;
     }
 
-    public class ModifiedPairsRequired{
-        boolean[] collectedFirstPairs = new boolean[2];
-        boolean[] collectedSecondPairs = new boolean[2];
-        boolean needsBothSecondPairs = false;
+    public static class ModifiedPairsRequired{
+        // Use byte instead of boolean arrays to reduce memory overhead
+        // Bit flags: 0x01 = collectedFirstPairs[0], 0x02 = collectedFirstPairs[1]
+        //           0x04 = collectedSecondPairs[0], 0x08 = collectedSecondPairs[1]
+        //           0x10 = needsBothSecondPairs
+        private byte flags = 0x01; // collectedFirstPairs[0] = true by default
 
         public ModifiedPairsRequired() {
-            this.collectedFirstPairs[0] = true;
+            // Constructor optimization - no array initialization needed
         }
 
         public boolean collectedAllPairs(){
-            if(needsBothSecondPairs){
-                return collectedFirstPairs[0] && collectedFirstPairs[1] && collectedSecondPairs[0] && collectedSecondPairs[1];
+            if((flags & 0x10) != 0){ // needsBothSecondPairs
+                return (flags & 0x0F) == 0x0F; // All four flags set
             }
             else{
-                return collectedFirstPairs[0] && collectedFirstPairs[1] && collectedSecondPairs[0];
+                return (flags & 0x07) == 0x07; // First three flags set
             }
         }
 
         public boolean collectedSecondLeftmost(){
-            return collectedSecondPairs[0];
+            return (flags & 0x04) != 0; // collectedSecondPairs[0]
         }
 
         public void setNeedsBothSecondPairs() {
-            this.needsBothSecondPairs = true;
+            flags |= 0x10;
         }
 
         public void addFirstRighmostPair(){
-            this.collectedFirstPairs[1] = true;
+            flags |= 0x02; // collectedFirstPairs[1] = true
         }
 
         public void addSecondLeftmostPair(){
-            this.collectedSecondPairs[0] = true;
+            flags |= 0x04; // collectedSecondPairs[0] = true
         }
 
         public void addSecondRighmostPair(){
-            this.collectedSecondPairs[1] = true;
+            flags |= 0x08; // collectedSecondPairs[1] = true
         }
     }
 }
