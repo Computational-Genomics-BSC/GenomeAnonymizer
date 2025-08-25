@@ -62,11 +62,15 @@ If you prefer to run GenomeAnonymizer directly with Java (useful for development
 
 #### Download and Run
 ```bash
-# Building locally: ./gradlew build
-# The JAR will be available at: build/libs/GenomeAnonymizer-1.0.0.jar
+# Building locally: 
+git clone https://github.com/Computational-Genomics-BSC/GenomeAnonymizer.git
+cd GenomeAnonymizer
+./gradlew build
+# The JAR will be available at: build/libs/GenomeAnonymizer-<LATEST_VERSION>.jar
+ln -s build/libs/GenomeAnonymizer-<LATEST_VERSION>.jar GenomeAnonymizer.jar
 
 # Run GenomeAnonymizer
-java -Xmx16g -jar build/libs/GenomeAnonymizer-1.0.0.jar \
+java -Xmx16g -jar GenomeAnonymizer.jar \
     -in $PATH/normal_sample_input.bam \
     -it $PATH/tumor_sample_input.fa \
     -o $PATH/output.bam \
@@ -76,11 +80,11 @@ java -Xmx16g -jar build/libs/GenomeAnonymizer-1.0.0.jar \
 
 ## Command Line Options
 
-Common parameters:
+Essential parameters:
 - `-in`: Normal sample input BAM/CRAM file
 - `-it`: Tumor sample input BAM/CRAM file
-- `-o, --output`: Output prefix for the output BAM files
-- `-r, --reference`: Reference genome FASTA file
-- `-t, --threads`: Number of threads to use for processing (default is 12)
+- `-o`: Output prefix for the output BAM files
+- `-r`: Reference genome FASTA file
+- `-t`: Number of threads to use for processing (default is 12)
 - `-tmpDir`: Temporary directory for intermediate files, to be used when access to `/tmp` is not available
 - `-h`: Display help information
