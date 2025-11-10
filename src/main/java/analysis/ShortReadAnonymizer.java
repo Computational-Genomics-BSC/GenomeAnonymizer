@@ -244,7 +244,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private Tuple<UnsafeStringHashSet, List<Integer>> queryReadsToExcludeInPartition(String filePath, GenomicRegion partition) throws IOException {
         UnsafeStringHashSet readsToExcludeInPartition = new UnsafeStringHashSet(65536);
         List<Integer> insertSizesBinsInPartition = new ArrayList<>(Collections.nCopies(INSERT_SIZE_BIN_COUNT, 0));
-        HighCoverageFilter highCoverageFilter = new HighCoverageFilter(maxDepth);
+        HighCoverageFilter highCoverageFilter = maxDepth > 0 ? new HighCoverageFilter(maxDepth) : null;
         try(SamReader reader = factory.open(new File(filePath))){
             SAMRecordIterator it = reader.query(partition.getSequenceName(), partition.getStart(), partition.getEnd(), false);
             while (it.hasNext()) {
@@ -258,12 +258,14 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                     readsToExcludeInPartition.add(samRecord.getReadName());
                     continue;
                 }
-                // Check if the read is in high coverage
-                boolean inHighCoverage = highCoverageFilter.addRead(samRecord.getAlignmentStart(), samRecord.getAlignmentEnd(), 
-                        samRecord.getReadName(), samRecord.getFirstOfPairFlag() ? 0 : 1);
-                if (inHighCoverage) {
-                    readsToExcludeInPartition.add(samRecord.getReadName());
-                    continue;
+                if (highCoverageFilter != null) {
+                    // Check if the read is in high coverage
+                    boolean inHighCoverage = highCoverageFilter.addRead(samRecord.getAlignmentStart(), samRecord.getAlignmentEnd(), 
+                            samRecord.getReadName(), samRecord.getFirstOfPairFlag() ? 0 : 1);
+                    if (inHighCoverage) {
+                        readsToExcludeInPartition.add(samRecord.getReadName());
+                        continue;
+                    }
                 }
                 // Only use the first read for insert size calculations
                 if (!samRecord.getReadPairedFlag() || !samRecord.getFirstOfPairFlag()) {
