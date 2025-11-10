@@ -22,7 +22,6 @@ public class GenomeAnonymizer {
 
     public final static int DEFAULT_MIN_MAPPING_QUALITY = 0;
     public static final int DEFAULT_MAX_READS_IN_RAM = 500_000;
-    public static final int DEFAULT_MIN_MAX_DEPTH = 100;
 
     public final static String BAM_FILE = ".bam";
     public final static String SAM_FILE = ".sam";
@@ -33,7 +32,7 @@ public class GenomeAnonymizer {
     private File tmpDir;
     private int randomSeed;
     private int maxReadsInMemory;
-    private int maxDepth = -1;
+    private int maxDepth = 0;
 
     /**
      * Run anonymizer with the benchmark of somatic variants functionality. Any somatic variant will be sparred from anonymization
@@ -52,7 +51,7 @@ public class GenomeAnonymizer {
         GlobalRandom.setSeed(randomSeed);
         AnonymizerAlgorithm anonymizer = getAnonymizer(algorithm, normalPath, tumorPath, refGenome, outputPrefix);
         if (tmpDir != null) anonymizer.setTmpDir(tmpDir);
-        if(maxDepth > 100) anonymizer.setMaxDepth(maxDepth);
+        if (maxDepth != 0) anonymizer.setMaxDepth(maxDepth);
         anonymizer.setThreadNumber(nThreads);
         anonymizer.setMaxReadsInRam(maxReadsInMemory);
         anonymizer.setMinimumMappingQuality(minMappingQuality);
@@ -130,10 +129,6 @@ public class GenomeAnonymizer {
             }
             if (commandLine.hasOption("maxDepth")) {
                 int maxDepth = Integer.parseInt(commandLine.getOptionValue("maxDepth"));
-                if (maxDepth <= DEFAULT_MIN_MAX_DEPTH) {
-                    throw new IllegalArgumentException("Maximum depth must be higher than " + DEFAULT_MIN_MAX_DEPTH +
-                            ". If you want to disable this feature, use -1 as value.");
-                }
                 appInstance.setMaxDepth(maxDepth);
             }
             LOGGER.info("Running with parameters - \n normalPath: " + normalPath + "\n tumorPath: " + tumorPath +
@@ -220,8 +215,7 @@ public class GenomeAnonymizer {
         options.addOption( Option.builder("maxDepth")
                 .desc("Maximum depth of reads to be considered in the anonymization process. If set, reads in regions with depth " +
                         "higher than this value will be excluded (default=10000)" +
-                        ". Use -1 to disable this feature" +
-                        ". If set to a value lower than 100, it will be ignored.")
+                        ". Use -1 to disable this feature")
                 .argName("INTEGER")
                 .hasArg(true)
                 .build());
