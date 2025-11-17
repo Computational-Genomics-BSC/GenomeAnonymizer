@@ -87,4 +87,5 @@ Essential parameters:
 - `-r`: Reference genome FASTA file
 - `-t`: Number of threads to use for processing (default is 12)
 - `-tmpDir`: Temporary directory for intermediate files, to be used when access to `/tmp` is not available
+- `-maxDepth`: Maximum depth threshold for reads in a given genomic region. For gene panels or deep sequencing samples, this parameter should be set to -1 to avoid read filtering.
 - `-h`: Display help information
