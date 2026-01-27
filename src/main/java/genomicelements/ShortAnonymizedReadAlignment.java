@@ -2,6 +2,7 @@ package genomicelements;
 
 import htsjdk.samtools.*;
 import htsjdk.samtools.util.SequenceUtil;
+import utils.DNAalphabet;
 
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -124,7 +125,12 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         byte[] newPairSequenceArray = new byte[newPairLength];
         int refPos = newPairStart - 1;
         for(int i = 0; i < newPairLength; i++){
-            newPairSequenceArray[i] = referenceContigSequence[refPos];
+            if(DNAalphabet.isValidByteBase(referenceContigSequence[refPos])){
+                newPairSequenceArray[i] = referenceContigSequence[refPos];
+            }
+            else{
+                newPairSequenceArray[i] = (byte) 'N';
+            }
             refPos++;
         }
         //Generate read qualities from the average base quality of the mate
@@ -397,7 +403,12 @@ public class ShortAnonymizedReadAlignment implements AnonymizedRead, GenomicRegi
         int j = initPos;
         int r = refInitPos;
         for(int l = 0; l < length; l++){
+            if(DNAalphabet.isValidByteBase(referenceContigSequence[r])){
             anonymizedSequenceArray[j] = referenceContigSequence[r];
+            }
+            else{
+                anonymizedSequenceArray[j] = (byte) 'N';
+            }
             anonymizedQualitiesArray[j] = averageBaseQuality;
             j++;
             r++;

@@ -2,6 +2,7 @@ package genomicelements;
 
 import htsjdk.samtools.*;
 import htsjdk.samtools.SAMRecord;
+import utils.DNAalphabet;
 import utils.MapCacheFIFO;
 
 import java.util.*;
@@ -9,17 +10,13 @@ import java.util.function.Consumer;
 
 import genomicelements.PileupRead.PileupReadStatus;
 
+import static utils.DNAalphabet.ALPHABET;
+
 /**
  * @author Nicolas Gaitan
  * Iterable interface to traverse locus pileups over a stream of alignments, as SAMRecord objects
  */
 public class LocusPileupIterator implements Iterable<LocusPileUp> {
-
-    public static final Set<Character> ALPHABET = new HashSet<>(
-            Arrays.asList(
-                    'A', 'T', 'C', 'G', 'N'
-            )
-    );
 
     public static final int CLAIM_ALL_READS_PILEUP_MODE = 0;
     public static final int CLAIM_NEW_READS_ONLY_PILEUP_MODE = 1;
@@ -132,7 +129,7 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
                     int pileupPos = refPos + i;
                     int pileUpReadPos = readPos + i;
                     char readBaseUpper = Character.toUpperCase((char) bases[pileUpReadPos]);
-                    if (!ALPHABET.contains(readBaseUpper)) {
+                    if (!DNAalphabet.isValidBase(readBaseUpper)) {
                         throw new IllegalArgumentException("Invalid nucleotide detected: " + readBaseUpper + ". Expected one of: A, G, C, T, N.");
                     }
                     LocusPileUp pileup = cache.get(pileupPos);
@@ -148,7 +145,7 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
                     else pileupRead.setStatus(PileupReadStatus.PILEUP_READ_STATUS_REPEATED);
                     if(pileupMode == CLAIM_NEW_AND_DIFFERING_READS_ONLY_PILEUP_MODE){
                         char referenceBaseUpper = Character.toUpperCase((char) refSequence[pileupPos-1]);
-                        if(ALPHABET.contains(referenceBaseUpper)) pileupRead.setReferenceBase(referenceBaseUpper);
+                        if(DNAalphabet.isValidBase(referenceBaseUpper)) pileupRead.setReferenceBase(referenceBaseUpper);
                     }
                     pileup.addPileupRead(pileupRead);
                     alignedCount++;
