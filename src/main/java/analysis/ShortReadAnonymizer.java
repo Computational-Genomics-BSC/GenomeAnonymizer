@@ -61,6 +61,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private SamReaderFactory factory;
 
     private int minimumMappingQuality = DEFAULT_MIN_MAPPING_QUALITY;
+    private boolean includeDuplicates = false;
     private int hashSalt;
     private int threads = 1;
     private int maxReadsInRam = DEFAULT_MAX_READS_IN_RAM;
@@ -100,6 +101,10 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     @Override
     public void setMaxDepth(int maxDepth) {
         this.maxDepth = maxDepth;
+    }
+
+    public void setIncludeDuplicates(boolean includeDuplicates) {
+        this.includeDuplicates = includeDuplicates;
     }
 
     public void setThreadNumber(int threads) {
@@ -374,6 +379,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 anonymizedReadProvider.setInsertSizeMinThreshold(insertSizeMinThreshold);
                 anonymizedReadProvider.setInsertSizeMaxThreshold(insertSizeMaxThreshold);
                 anonymizedReadProvider.setRefSequence(referenceSequences.get(genomicPartition.getSequenceName()));
+                anonymizedReadProvider.setIncludeDuplicates(includeDuplicates);
                 anonymizedReadProvider.init(inputNormalPath, inputTumorPath, refGenomePath, genomicPartition);
                 long startcallVariation = System.currentTimeMillis();
                 for (AnonymizedRead anonymizedRead : anonymizedReadProvider) {

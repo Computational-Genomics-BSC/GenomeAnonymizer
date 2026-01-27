@@ -33,6 +33,7 @@ public class GenomeAnonymizer {
     private int randomSeed;
     private int maxReadsInMemory;
     private int maxDepth = 0;
+    private boolean includeDuplicates = false;
 
     /**
      * Run anonymizer with the benchmark of somatic variants functionality. Any somatic variant will be sparred from anonymization
@@ -55,6 +56,7 @@ public class GenomeAnonymizer {
         anonymizer.setThreadNumber(nThreads);
         anonymizer.setMaxReadsInRam(maxReadsInMemory);
         anonymizer.setMinimumMappingQuality(minMappingQuality);
+        anonymizer.setIncludeDuplicates(includeDuplicates);
         anonymizer.setPartitions();
         long start1 = System.currentTimeMillis();
         anonymizer.queryReadsToExclude();
@@ -72,6 +74,10 @@ public class GenomeAnonymizer {
 
     private void setMinimumMappingQuality(int minMQ) {
         this.minMappingQuality = minMQ;
+    }
+
+    private void setIncludeDuplicates(boolean includeDuplicates) {
+        this.includeDuplicates = includeDuplicates;
     }
 
     public void setRandomSeed(int randomSeed) {
@@ -121,8 +127,10 @@ public class GenomeAnonymizer {
             String mode = commandLine.getOptionValue("m", DEFAULT_RUN_MODE_FUNCTIONALITY);
             int minMQ = Integer.parseInt(commandLine.getOptionValue("minMQ", String.valueOf(DEFAULT_MIN_MAPPING_QUALITY)));
             int randomSeed = Integer.parseInt(commandLine.getOptionValue("s", "-1"));
+            boolean includeDuplicates = commandLine.hasOption("includeDuplicates");
             appInstance.setMinimumMappingQuality(minMQ);
             appInstance.setRandomSeed(randomSeed);
+            appInstance.setIncludeDuplicates(includeDuplicates);
             if (commandLine.hasOption("tmpDir")) {
                 String tmpDirPath = commandLine.getOptionValue("tmpDir");
                 appInstance.setTmpDir(new File(tmpDirPath));
@@ -218,6 +226,10 @@ public class GenomeAnonymizer {
                         ". Use -1 to disable this feature")
                 .argName("INTEGER")
                 .hasArg(true)
+                .build());
+        options.addOption( Option.builder("includeDuplicates")
+                .desc("Include duplicate reads in the output files (default=false)")
+                .hasArg(false)
                 .build());
         return options;
     }

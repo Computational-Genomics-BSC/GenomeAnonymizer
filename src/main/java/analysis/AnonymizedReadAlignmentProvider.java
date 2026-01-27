@@ -71,6 +71,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     private GenomicRegion genomicRegion;
 
     private int minMappingQuality = DEFAULT_MIN_MAPPING_QUALITY;
+    private boolean includeDuplicates = false;
 
     private int numProcessedPileups = 0;
 
@@ -95,6 +96,10 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
 
     public void setMinMappingQuality(int minMappingQuality) {
         this.minMappingQuality = minMappingQuality;
+    }
+
+    public void setIncludeDuplicates(boolean includeDuplicates) {
+        this.includeDuplicates = includeDuplicates;
     }
 
     public void setRefSequence(byte[] refSequence) {
@@ -124,7 +129,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 leftLimit, genomicRegion.getEnd());
         leftExtendedRegion.setSequenceIdx(region.getSequenceIdx());
         pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, refSequence, leftExtendedRegion);
-        pairPileupReader.setIncludeDuplicates(false);
+        pairPileupReader.setIncludeDuplicates(includeDuplicates);
         pairPileupReader.setReadsToExclude(readsToExclude);
     }
 

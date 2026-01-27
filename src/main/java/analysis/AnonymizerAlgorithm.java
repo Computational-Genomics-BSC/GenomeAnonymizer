@@ -19,4 +19,5 @@ public interface AnonymizerAlgorithm {
     public void setMaxReadsInRam(int maxReadsInMemory);
     public void setTmpDir(File tmpDir);
     public void setMaxDepth(int maxDepth);
+    public void setIncludeDuplicates(boolean includeDuplicates);
 }

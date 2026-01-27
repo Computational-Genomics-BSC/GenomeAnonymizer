@@ -27,7 +27,7 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
     private SamReader tumorSamReader;
 
     private int minimumMappingQuality = DEFAULT_MIN_MAPPING_QUALITY;
-    private boolean includeDuplicates = true;
+    private boolean includeDuplicates = false;
 
     private Set<String> readsToExclude;
     private byte[] referenceSequence = new byte[0];
