@@ -65,8 +65,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private int hashSalt;
     private int threads = 1;
     private int maxReadsInRam = DEFAULT_MAX_READS_IN_RAM;
-
-    //TODO: Save partitioned files names sorted by region coordinates
+    private String sampleType = GenomeAnonymizer.SAMPLE_TYPE_WGS;
 
     public ShortReadAnonymizer(String inputNormalPath, String inputTumorPath, String refGenomePath, String outputPrefix) {
         this.inputNormalPath = inputNormalPath;
@@ -113,6 +112,11 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
 
     public void setMaxReadsInRam(int maxReadsInRam) {
         this.maxReadsInRam = maxReadsInRam;
+    }
+
+    @Override
+    public void setSampleType(String sampleType) {
+        this.sampleType = sampleType;
     }
 
     private SAMFileHeader buildFileHeader(String bamFile, String sampleSuffix) throws IOException {
@@ -380,6 +384,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 anonymizedReadProvider.setInsertSizeMaxThreshold(insertSizeMaxThreshold);
                 anonymizedReadProvider.setRefSequence(referenceSequences.get(genomicPartition.getSequenceName()));
                 anonymizedReadProvider.setIncludeDuplicates(includeDuplicates);
+                anonymizedReadProvider.setSampleType(sampleType);
                 anonymizedReadProvider.init(inputNormalPath, inputTumorPath, refGenomePath, genomicPartition);
                 long startcallVariation = System.currentTimeMillis();
                 for (AnonymizedRead anonymizedRead : anonymizedReadProvider) {

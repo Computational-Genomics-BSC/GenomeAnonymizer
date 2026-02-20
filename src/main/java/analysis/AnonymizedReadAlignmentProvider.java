@@ -75,6 +75,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
 
     private int numProcessedPileups = 0;
 
+    private String sampleType = GenomeAnonymizer.SAMPLE_TYPE_WGS;
+
     //DEBUG
     public Map<String, Long> METHOD_TIME_MAP = new HashMap<>();
     //DEBUG
@@ -100,6 +102,10 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
 
     public void setIncludeDuplicates(boolean includeDuplicates) {
         this.includeDuplicates = includeDuplicates;
+    }
+
+    public void setSampleType(String sampleType) {
+        this.sampleType = sampleType;
     }
 
     public void setRefSequence(byte[] refSequence) {
@@ -142,7 +148,15 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 endclassifyVariationInPairedPileup-startclassifyVariationInPairedPileup :
                 v + endclassifyVariationInPairedPileup-startclassifyVariationInPairedPileup);
         long startprocessSimpleSignals = System.currentTimeMillis();
-        processSNVSignals();
+        if (GenomeAnonymizer.SAMPLE_TYPE_GENE_PANEL.equals(sampleType)) {
+            // For gene panel mode, use a less stringent threshold
+            int size = pileup.getNormalPileup() != null ? pileup.getNormalPileup().size() : 0;
+            processGenePanelSNVSignals(size);
+        }
+        else {
+            // WGS mode - use original stringent logic
+            processWGSSNVSignals();
+        }
         snvSignals.clear();
         long endprocessSimpleSignals = System.currentTimeMillis();
         METHOD_TIME_MAP.compute("processSimpleSNVSignals",  (k,v) -> v == null ?
@@ -367,8 +381,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         snvSignals.add(snvSignal);
     }
 
-    private void processSNVSignals() {
-        boolean[] seen = new boolean[256]; // Assuming ASCII characters, 256 is enough to cover all bases
+    private void processWGSSNVSignals() {
+        boolean[] seen = new boolean[256];
         boolean[] isGermline = new boolean[256];
         for (Signal var : snvSignals) {
             seen[var.getAltAllele()[0]] = true;
@@ -383,6 +397,48 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnId);
                 //The anonymizedRead is null if it comes from the offset before the first pileup position,
                 //it is used for classification but is left to be returned by other thread
+                if(anonymizedRead != null) anonymizedRead.addSignalToAnonymize(var);
+            }
+        }
+    }
+
+    /**
+     * Process SNV signals for gene panel mode with less stringent germline determination.
+     * Only marks signals as germline if they appear in more normal reads than the calculated threshold.
+     */
+    private void processGenePanelSNVSignals(int size) {
+        int readThreshold = calculateGenePanelThreshold(size);
+
+        // Count how many normal reads have each alt allele (only count from normal dataset)
+        // Using an int array indexed by byte values for more efficient access than a HashMap
+        int[] altAlleleNormalReadCount = new int[256];
+        int[] altAlleleTumoralReadCount = new int[256];
+        for (Signal var : snvSignals) {
+            byte altAllele = var.getAltAllele()[0];
+            if (var.isFromNormalDataset()) {
+                altAlleleNormalReadCount[altAllele]++;
+            }
+            else {
+                altAlleleTumoralReadCount[altAllele]++;
+            }
+        }
+
+        // Mark as germline only if the alt allele appears in enough normal reads to exceed the threshold
+        // This prevents marking error-generated variation as germline (thus allowing somatics in output)
+        // In gene panel mode, we're less stringent: variants present in few reads are allowed through
+        for (Signal var : snvSignals) {
+            byte altAllele = var.getAltAllele()[0];
+            int normalReadCount = altAlleleNormalReadCount[altAllele];
+            int tumorReadCount = altAlleleTumoralReadCount[altAllele];
+            boolean hasGermlineLikeNormalOverTumorRatio = tumorReadCount == 0
+                    || (double) normalReadCount / tumorReadCount > 0.33;
+
+            // Only count as germline if it exceeds the threshold in normal reads or overlaps uncovered position
+            // This allows somatic variants (only present in reads affected by sequencing error) to passthrough intact
+            boolean isGermline = (normalReadCount > readThreshold || hasGermlineLikeNormalOverTumorRatio) || overlapsUncoveredPosition(var);
+            if (isGermline) {
+                String readAlnId = var.getReadAlnName();
+                AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnId);
                 if(anonymizedRead != null) anonymizedRead.addSignalToAnonymize(var);
             }
         }
@@ -678,6 +734,21 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 }
             }
         }
+    }
+
+    /**
+     * Calculate the gene panel threshold based on sequencing depth.
+     * Uses 1% sequencing error rate with 1/4 probability of specific base error.
+     * Threshold = error_rate * (1/4) * depth = 0.01 * 0.25 * depth = 0.0025 * depth
+     */
+    private int calculateGenePanelThreshold(int sequencingDepth) {
+        if (GenomeAnonymizer.SAMPLE_TYPE_GENE_PANEL.equals(sampleType) && sequencingDepth > 0) {
+            // Sequencing error rate: 1% (0.01)
+            // Probability of specific base error: 1/4 (0.25)
+            // Threshold = 0.01 * 0.25 * depth ?
+            return (int) Math.round(0.01 * sequencingDepth);
+        }
+        return 0;
     }
 
     private double getSignalThreshold(ReadSignal firstSignal, ReadSignal secondSignal) {

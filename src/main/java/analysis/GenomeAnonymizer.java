@@ -15,7 +15,7 @@ import java.util.logging.SimpleFormatter;
  */
 public class GenomeAnonymizer {
 
-    public static final String VERSION = "1.0.0";
+    public static final String VERSION = "1.1.0";
     private static final Logger LOGGER = logConfigure();
 
     public static final String DEFAULT_RUN_MODE_FUNCTIONALITY = "default";
@@ -27,13 +27,18 @@ public class GenomeAnonymizer {
     public final static String SAM_FILE = ".sam";
     public final static String CRAM_FILE = ".cram";
 
+    public static final String SAMPLE_TYPE_WGS = "WGS";
+    public static final String SAMPLE_TYPE_GENE_PANEL = "gene_panel";
+
+
     //Optional arguments attributes
     private int minMappingQuality = DEFAULT_MIN_MAPPING_QUALITY;
     private File tmpDir;
     private int randomSeed;
     private int maxReadsInMemory;
-    private int maxDepth = 0;
+    private int maxDepth = 10_000;
     private boolean includeDuplicates = false;
+    private String sampleType = SAMPLE_TYPE_WGS;
 
     /**
      * Run anonymizer with the benchmark of somatic variants functionality. Any somatic variant will be sparred from anonymization
@@ -57,6 +62,7 @@ public class GenomeAnonymizer {
         anonymizer.setMaxReadsInRam(maxReadsInMemory);
         anonymizer.setMinimumMappingQuality(minMappingQuality);
         anonymizer.setIncludeDuplicates(includeDuplicates);
+        anonymizer.setSampleType(sampleType);
         anonymizer.setPartitions();
         long start1 = System.currentTimeMillis();
         anonymizer.queryReadsToExclude();
@@ -89,6 +95,10 @@ public class GenomeAnonymizer {
     }
 
     private void setMaxDepth(int maxDepth) {this.maxDepth = maxDepth;}
+
+    private void setSampleType(String sampleType) {
+        this.sampleType = sampleType;
+    }
 
     private static AnonymizerAlgorithm getAnonymizer(String algorithm, String normalPath, String tumorPath,
                                                      String refGenome, String outputPrefix) {
@@ -124,31 +134,29 @@ public class GenomeAnonymizer {
             int nThreads = Integer.parseInt(commandLine.getOptionValue("t", "12"));
             int maxReadsInMemory = Integer.parseInt(commandLine.getOptionValue("maxReadsInMemory", String.valueOf(DEFAULT_MAX_READS_IN_RAM)));
             appInstance.setMaxReadsInMemory(maxReadsInMemory);
-            String mode = commandLine.getOptionValue("m", DEFAULT_RUN_MODE_FUNCTIONALITY);
             int minMQ = Integer.parseInt(commandLine.getOptionValue("minMQ", String.valueOf(DEFAULT_MIN_MAPPING_QUALITY)));
             int randomSeed = Integer.parseInt(commandLine.getOptionValue("s", "-1"));
             boolean includeDuplicates = commandLine.hasOption("includeDuplicates");
+            String sampleType = commandLine.getOptionValue("sampleType", SAMPLE_TYPE_WGS);
             appInstance.setMinimumMappingQuality(minMQ);
             appInstance.setRandomSeed(randomSeed);
             appInstance.setIncludeDuplicates(includeDuplicates);
+            appInstance.setSampleType(sampleType);
             if (commandLine.hasOption("tmpDir")) {
                 String tmpDirPath = commandLine.getOptionValue("tmpDir");
                 appInstance.setTmpDir(new File(tmpDirPath));
             }
+            int maxDepth = 10_000;
             if (commandLine.hasOption("maxDepth")) {
-                int maxDepth = Integer.parseInt(commandLine.getOptionValue("maxDepth"));
+                maxDepth = Integer.parseInt(commandLine.getOptionValue("maxDepth"));
                 appInstance.setMaxDepth(maxDepth);
             }
             LOGGER.info("Running with parameters - \n normalPath: " + normalPath + "\n tumorPath: " + tumorPath +
                         "\n refGenome: " + refGenome + "\n outputPrefix: " + outputPrefix +
-                        "\n mode: " + mode + "\n minMQ: " + minMQ + "\n nThreads: " + nThreads);
-            if(DEFAULT_RUN_MODE_FUNCTIONALITY.equals(mode)){
-                if(commandLine.hasOption("v")) LOGGER.warning("Mode is not set to benchmark, but vcf file was provided," +
-                        " default mode will be run normally," +
-                        " but variants recorded in the vcf will not be kept");
-                appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, AnonymizerAlgorithm.SHORT_READ_ALGORITHM,
-                        DEFAULT_RUN_MODE_FUNCTIONALITY, nThreads);
-            }
+                        "\n minMQ: " + minMQ + "\n nThreads: " + nThreads + "\n includeDuplicates: " + includeDuplicates +
+                        "\n maxDepth: " + maxDepth + "\n sampleType: " + sampleType);
+            appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, AnonymizerAlgorithm.SHORT_READ_ALGORITHM,
+                    DEFAULT_RUN_MODE_FUNCTIONALITY, nThreads);
         }
         catch (Exception e){
             LOGGER.log(Level.SEVERE,
@@ -197,14 +205,6 @@ public class GenomeAnonymizer {
                 .argName("INTEGER")
                 .type(Integer.class)
                 .build());
-        options.addOption(Option.builder("m")
-                .desc("""
-                        Mode that defines the functionality of the anonymizer, between: \
-                        'default': Anonymizes all possible germline variants\
-                        """)
-                .argName("STRING")
-                .hasArg(true)
-                .build());
         options.addOption(Option.builder("s")
                 .desc("Seed for random number generation. Use -1 for random seed. Default is -1")
                 .argName("INTEGER")
@@ -230,6 +230,11 @@ public class GenomeAnonymizer {
         options.addOption( Option.builder("includeDuplicates")
                 .desc("Include duplicate reads in the output files (default=false)")
                 .hasArg(false)
+                .build());
+        options.addOption(Option.builder("sampleType")
+                .desc("Type of sample: 'WGS' for whole genome sequencing or 'gene_panel' for gene panel sequencing (default=WGS)")
+                .argName("STRING")
+                .hasArg(true)
                 .build());
         return options;
     }

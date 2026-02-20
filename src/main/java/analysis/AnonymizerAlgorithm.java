@@ -20,4 +20,5 @@ public interface AnonymizerAlgorithm {
     public void setTmpDir(File tmpDir);
     public void setMaxDepth(int maxDepth);
     public void setIncludeDuplicates(boolean includeDuplicates);
+    public void setSampleType(String sampleType);
 }
