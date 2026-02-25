@@ -21,6 +21,7 @@ public class LocusPileUp implements GenomicRegion{
     private int start;
     private int sequenceIdx = 0;
     private int size = 0;
+    private int nonDuplicateSize = 0;
     private List<PileupRead> pileupReads;
     //Limit to the number of reads that can be piled up at a given locus
     private int pileupReadLimit = DEFAULT_PILEUP_READ_LIMIT;
@@ -41,6 +42,7 @@ public class LocusPileUp implements GenomicRegion{
 
     public void addPileupRead(PileupRead read){
         size++;
+        if(!read.getRead().getDuplicateReadFlag()) nonDuplicateSize++;
         //If a valid OnPileupQueue is provided when instantiated, the PileupRead is added to the queue
         // (modes: CLAIM_NEW_READS_ONLY_PILEUP_MODE, CLAIM_NEW_AND_DIFFERING_READS_ONLY_PILEUP_MODE)
         if(readCollection != null){
@@ -98,6 +100,10 @@ public class LocusPileUp implements GenomicRegion{
 
     public int size() {
         return size;
+    }
+
+    public int getNonDuplicateSize() {
+        return nonDuplicateSize;
     }
 
     public void setPileupReadLimit(int pileupReadLimit) {

@@ -149,9 +149,9 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 v + endclassifyVariationInPairedPileup-startclassifyVariationInPairedPileup);
         long startprocessSimpleSignals = System.currentTimeMillis();
         if (GenomeAnonymizer.SAMPLE_TYPE_GENE_PANEL.equals(sampleType)) {
-            // For gene panel mode, use a less stringent threshold
-            int size = pileup.getNormalPileup() != null ? pileup.getNormalPileup().size() : 0;
-            processGenePanelSNVSignals(size);
+            int normalDepth = pileup.getNormalPileup() != null ? pileup.getNormalPileup().getNonDuplicateSize() : 0;
+            int tumorDepth = pileup.getTumorPileup() != null ? pileup.getTumorPileup().getNonDuplicateSize() : 0;
+            processGenePanelSNVSignals(normalDepth, tumorDepth);
         }
         else {
             // WGS mode - use original stringent logic
@@ -406,8 +406,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
      * Process SNV signals for gene panel mode with less stringent germline determination.
      * Only marks signals as germline if they appear in more normal reads than the calculated threshold.
      */
-    private void processGenePanelSNVSignals(int size) {
-        int readThreshold = calculateGenePanelThreshold(size);
+    private void processGenePanelSNVSignals(int normalDepth, int tumorDepth) {
+        int readThreshold = calculateGenePanelThreshold(normalDepth);
 
         // Count how many normal reads have each alt allele (only count from normal dataset)
         // Using an int array indexed by byte values for more efficient access than a HashMap
@@ -428,14 +428,14 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         // In gene panel mode, we're less stringent: variants present in few reads are allowed through
         for (Signal var : snvSignals) {
             byte altAllele = var.getAltAllele()[0];
-            int normalReadCount = altAlleleNormalReadCount[altAllele];
-            int tumorReadCount = altAlleleTumoralReadCount[altAllele];
-            boolean hasGermlineLikeNormalOverTumorRatio = tumorReadCount == 0
-                    || (double) normalReadCount / tumorReadCount > 0.33;
-
+            int normalALTReadCount = altAlleleNormalReadCount[altAllele];
+            int tumorALTReadCount = altAlleleTumoralReadCount[altAllele];
+            double normalALTReadFraction = normalALTReadCount > 0 ? (double) normalALTReadCount / normalDepth : 0.0;
+            double tumorALTReadFraction = tumorALTReadCount > 0 ? (double) tumorALTReadCount / tumorDepth : 0.0;
+            boolean hasGermlineLikeNormalTumorRatio = tumorALTReadCount == 0 || normalALTReadFraction / tumorALTReadFraction > 0.33;
             // Only count as germline if it exceeds the threshold in normal reads or overlaps uncovered position
             // This allows somatic variants (only present in reads affected by sequencing error) to passthrough intact
-            boolean isGermline = (normalReadCount > readThreshold || hasGermlineLikeNormalOverTumorRatio) || overlapsUncoveredPosition(var);
+            boolean isGermline = (normalALTReadCount > readThreshold || hasGermlineLikeNormalTumorRatio) || overlapsUncoveredPosition(var);
             if (isGermline) {
                 String readAlnId = var.getReadAlnName();
                 AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnId);
@@ -742,13 +742,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
      * Threshold = error_rate * (1/4) * depth = 0.01 * 0.25 * depth = 0.0025 * depth
      */
     private int calculateGenePanelThreshold(int sequencingDepth) {
-        if (GenomeAnonymizer.SAMPLE_TYPE_GENE_PANEL.equals(sampleType) && sequencingDepth > 0) {
-            // Sequencing error rate: 1% (0.01)
-            // Probability of specific base error: 1/4 (0.25)
-            // Threshold = 0.01 * 0.25 * depth ?
-            return (int) Math.round(0.01 * sequencingDepth);
-        }
-        return 0;
+        // Sequencing error rate: 1% (0.01)
+        return (int) Math.round(0.01 * sequencingDepth);
     }
 
     private double getSignalThreshold(ReadSignal firstSignal, ReadSignal secondSignal) {
