@@ -30,7 +30,7 @@ FROM eclipse-temurin:21-jre
 WORKDIR /app
 
 # Copy the built JAR from builder stage
-COPY --from=builder /app/build/libs/app-1.0.0.jar /GenomeAnonymizer.jar
+COPY --from=builder /app/build/libs/app*.jar /GenomeAnonymizer.jar
 
 # Create an entrypoint script
 #RUN echo '#!/bin/bash\njava "$@" -jar /app/GenomeAnonymizer.jar' > /app/entrypoint.sh && \
@@ -46,5 +46,5 @@ CMD [ "sh" ]
 # Add labels for metadata
 LABEL maintainer="Nicolas Gaitan & Rodrigo Martin - BSC-CNS Computational Genomics Group"
 LABEL description="GenomeAnonymizer - Software for anonymizing Short Read WGS/WES data"
-LABEL version="1.0.0"
+LABEL version="1.1.0"
 LABEL java.version="21"

@@ -8,7 +8,7 @@ set -e
 # Configuration
 IMAGE_NAME="genomeanonymizer"
 TAG="latest"
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 # Check if Docker is available and user has permissions
 if ! command -v docker &> /dev/null; then

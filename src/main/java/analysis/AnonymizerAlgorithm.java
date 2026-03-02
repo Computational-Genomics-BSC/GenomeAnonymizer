@@ -21,4 +21,6 @@ public interface AnonymizerAlgorithm {
     public void setMaxDepth(int maxDepth);
     public void setIncludeDuplicates(boolean includeDuplicates);
     public void setSampleType(String sampleType);
+    public void setFixVAF(boolean fixVAF);
+    public void setMinDepthForVAFCorrection(int minDepth);
 }

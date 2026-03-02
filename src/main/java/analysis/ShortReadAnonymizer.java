@@ -6,6 +6,7 @@ import htsjdk.samtools.reference.FastaSequenceIndex;
 import htsjdk.samtools.reference.FastaSequenceIndexEntry;
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
 import htsjdk.samtools.util.IOUtil;
+import htsjdk.samtools.util.SequenceUtil;
 import utils.GlobalRandom;
 import utils.Tuple;
 import utils.UnsafeStringHashSet;
@@ -66,6 +67,9 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private int threads = 1;
     private int maxReadsInRam = DEFAULT_MAX_READS_IN_RAM;
     private String sampleType = GenomeAnonymizer.SAMPLE_TYPE_WGS;
+    private boolean fixVAF = false;
+    private int minDepthForVAFCorrection = GenomeAnonymizer.DEFAULT_MIN_DEPTH_FOR_VAF_CORRECTION;
+    private Map<String, TreeMap<Integer, SomaticSiteVAF>> somaticSiteVAFs = new HashMap<>();
 
     public ShortReadAnonymizer(String inputNormalPath, String inputTumorPath, String refGenomePath, String outputPrefix) {
         this.inputNormalPath = inputNormalPath;
@@ -117,6 +121,16 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     @Override
     public void setSampleType(String sampleType) {
         this.sampleType = sampleType;
+    }
+
+    @Override
+    public void setFixVAF(boolean fixVAF) {
+        this.fixVAF = fixVAF;
+    }
+
+    @Override
+    public void setMinDepthForVAFCorrection(int minDepth) {
+        this.minDepthForVAFCorrection = minDepth;
     }
 
     private SAMFileHeader buildFileHeader(String bamFile, String sampleSuffix) throws IOException {
@@ -332,9 +346,27 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             for (String readName : answer.readsToCorrectOrientation()) {
                 readsToCorrectOrientation.putIfAbsent(readName, 0);
             }
+            // Aggregate somatic site VAF data from partitions (partitions don't overlap, so putAll is safe)
+            if (fixVAF && GenomeAnonymizer.SAMPLE_TYPE_GENE_PANEL.equals(sampleType)) {
+                for (var entry : answer.partitionSomaticSiteVAFs().entrySet()) {
+                    somaticSiteVAFs.computeIfAbsent(entry.getKey(), k -> new TreeMap<>())
+                        .putAll(entry.getValue());
+                }
+            }
         }
         // Merge the anonymized reads from all partition files
         mergeAnonymizedReads(normalPaths, tumorPaths);
+        // Correct VAFs at somatic sites if enabled
+        if (fixVAF && GenomeAnonymizer.SAMPLE_TYPE_GENE_PANEL.equals(sampleType) && !somaticSiteVAFs.isEmpty()) {
+            LOGGER.info("Starting VAF correction in merged BAM files for " + somaticSiteVAFs.size() + " somatic sites");
+            String normalBam = outputPrefix + ".anonymized.N" + BAM_FILE;
+            String tumorBam = outputPrefix + ".anonymized.T" + BAM_FILE;
+            // Pass 1: count current VAFs in merged BAMs (parallel per genomic partition)
+            Map<Long, int[]> normalSiteCounts = countCurrentVAFs(normalBam);
+            Map<Long, int[]> tumorSiteCounts = countCurrentVAFs(tumorBam);
+            // Pass 2: correct VAFs in merged BAMs (two threads, one per dataset)
+            applyVAFCorrections(normalBam, normalSiteCounts, tumorBam, tumorSiteCounts);
+        }
         // Delete the temporary files
         deleteTempFiles(normalPaths);
         deleteTempFiles(tumorPaths);
@@ -385,6 +417,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                 anonymizedReadProvider.setRefSequence(referenceSequences.get(genomicPartition.getSequenceName()));
                 anonymizedReadProvider.setIncludeDuplicates(includeDuplicates);
                 anonymizedReadProvider.setSampleType(sampleType);
+                anonymizedReadProvider.setMinMappingQuality(minimumMappingQuality);
+                anonymizedReadProvider.setMinDepthForVAFCorrection(minDepthForVAFCorrection);
                 anonymizedReadProvider.init(inputNormalPath, inputTumorPath, refGenomePath, genomicPartition);
                 long startcallVariation = System.currentTimeMillis();
                 for (AnonymizedRead anonymizedRead : anonymizedReadProvider) {
@@ -434,7 +468,8 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
                             writeReadTime :
                             v + writeReadTime);
                 }
-                answer = new PartitionAnswer(partitionPairsToUpdate, partitionReadsToCorrectOrientation, partitionSupplementariesToEliminate);
+                answer = new PartitionAnswer(partitionPairsToUpdate, partitionReadsToCorrectOrientation,
+                    partitionSupplementariesToEliminate, anonymizedReadProvider.getSomaticSiteVAFs());
                 long endcallVariation = System.currentTimeMillis();
                 //TIME DEBUG
                 anonymizedReadProvider.METHOD_TIME_MAP.put("callVariation", endcallVariation - startcallVariation);
@@ -460,7 +495,9 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
         }
     }
 
-    public record PartitionAnswer(Map<String, Integer> partitionPairsToUpdate, Set<String> readsToCorrectOrientation, Set<String> partitionSupplementariesToEliminate) { }
+    public record PartitionAnswer(Map<String, Integer> partitionPairsToUpdate, Set<String> readsToCorrectOrientation,
+                                     Set<String> partitionSupplementariesToEliminate,
+                                     Map<String, TreeMap<Integer, SomaticSiteVAF>> partitionSomaticSiteVAFs) { }
 
     private SAMFileWriter openSingleOutputStream(String path, String outputPath, boolean isNormalDataset) throws IOException {
         SAMFileWriterFactory factory = new SAMFileWriterFactory();
@@ -642,6 +679,260 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             if(record.getMateAlignmentStart() == -1) return false;
         }
         return true;
+    }
+
+    /**
+     * Encode a contig index and position into a single long key for compact storage.
+     */
+    private static long encodeSiteKey(int contigIdx, int position) {
+        return ((long) contigIdx << 32) | (position & 0xFFFFFFFFL);
+    }
+
+    /**
+     * Count current ALT/total depth at each potential somatic site in a merged BAM file.
+     * Parallelizes over genomic partitions (similar to queryReadsToExclude).
+     * Returns a map of encoded site key -> {altCount, totalCount} for each somatic site.
+     */
+    private Map<Long, int[]> countCurrentVAFs(String mergedBamPath) {
+        ExecutorService exec = Executors.newFixedThreadPool(threads);
+        List<CompletableFuture<Map<Long, int[]>>> futures = new ArrayList<>();
+        for (GenomicRegion partition : genomicPartitions) {
+            // Skip partitions on contigs with no somatic sites
+            if (!somaticSiteVAFs.containsKey(partition.getSequenceName())) continue;
+            CompletableFuture<Map<Long, int[]>> future = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return countCurrentVAFsInPartition(mergedBamPath, partition);
+                } catch (IOException e) {
+                    LOGGER.log(Level.SEVERE,
+                            "Exception counting VAFs in region: " + partition.getSequenceName()
+                                    + " " + partition.getStart() + " " + partition.getEnd(), e);
+                    throw new RuntimeException(e);
+                }
+            }, exec);
+            futures.add(future);
+        }
+        Map<Long, int[]> siteCounts = new HashMap<>();
+        try {
+            for (CompletableFuture<Map<Long, int[]>> future : futures) {
+                Map<Long, int[]> partitionCounts = future.get();
+                for (Map.Entry<Long, int[]> entry : partitionCounts.entrySet()) {
+                    siteCounts.merge(entry.getKey(), entry.getValue(), (a, b) -> {
+                        a[0] += b[0];
+                        a[1] += b[1];
+                        return a;
+                    });
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Exception when retrieving VAF counts from thread", e);
+            throw new RuntimeException(e);
+        }
+        exec.shutdown();
+        return siteCounts;
+    }
+
+    /**
+     * Count ALT/total depth at somatic sites within a single genomic partition of a merged BAM.
+     */
+    private Map<Long, int[]> countCurrentVAFsInPartition(String bamPath, GenomicRegion partition) throws IOException {
+        Map<Long, int[]> partitionCounts = new HashMap<>();
+        TreeMap<Integer, SomaticSiteVAF> contigSites = somaticSiteVAFs.get(partition.getSequenceName());
+        if (contigSites == null) return partitionCounts;
+        // Only consider somatic sites within this partition's range
+        NavigableMap<Integer, SomaticSiteVAF> sitesInRange = contigSites.subMap(partition.getStart(), true, partition.getEnd(), true);
+        if (sitesInRange.isEmpty()) return partitionCounts;
+        int contigIdx = partition.getSequenceIdx();
+        try (SamReader reader = factory.open(new File(bamPath))) {
+            SAMRecordIterator it = reader.query(partition.getSequenceName(), partition.getStart(), partition.getEnd(), false);
+            while (it.hasNext()) {
+                SAMRecord record = it.next();
+                if (record.getReadUnmappedFlag() || record.getDuplicateReadFlag() || record.isSecondaryOrSupplementary()) continue;
+                // Clamp alignment bounds to the partition range: reads returned by contained=false queries
+                // can extend beyond partition boundaries, which would cause subMap toKey-out-of-range errors
+                int alignStart = Math.max(record.getAlignmentStart(), partition.getStart());
+                int alignEnd = Math.min(record.getAlignmentEnd(), partition.getEnd());
+                if (alignStart > alignEnd) continue;
+                // Only check somatic sites that fall within this read's alignment span
+                NavigableMap<Integer, SomaticSiteVAF> overlapping = sitesInRange.subMap(alignStart, true, alignEnd, true);
+                for (Map.Entry<Integer, SomaticSiteVAF> siteEntry : overlapping.entrySet()) {
+                    int refPos = siteEntry.getKey();
+                    SomaticSiteVAF siteVAF = siteEntry.getValue();
+                    int readPos = record.getReadPositionAtReferencePosition(refPos);
+                    if (readPos == 0) continue; // position is deleted or clipped
+                    byte base = record.getReadBases()[readPos - 1];
+                    long key = encodeSiteKey(contigIdx, refPos);
+                    int[] counts = partitionCounts.computeIfAbsent(key, k -> new int[2]);
+                    counts[1]++; // totalCount
+                    if (base == siteVAF.altAllele()) {
+                        counts[0]++; // altCount
+                    }
+                }
+            }
+        }
+        return partitionCounts;
+    }
+
+    /**
+     * Compute per-site adjustments needed to restore original VAFs.
+     * Returns a map of encoded site key -> {readsToFlipToAlt, readsToFlipToRef, altAllele, refBase}.
+     */
+    private Map<Long, int[]> computeVAFAdjustments(Map<Long, int[]> siteCounts, boolean isNormalDataset) {
+        Map<Long, int[]> adjustments = new HashMap<>();
+        for (Map.Entry<String, TreeMap<Integer, SomaticSiteVAF>> contigEntry : somaticSiteVAFs.entrySet()) {
+            String contig = contigEntry.getKey();
+            byte[] refBases = referenceSequences.get(contig);
+            if (refBases == null) continue;
+            // Find contig index from any partition file header — we use the key encoding convention
+            // We need to iterate to find the right index; this is only done once per contig
+            int contigIdx = -1;
+            for (GenomicRegion partition : genomicPartitions) {
+                if (partition.getSequenceName().equals(contig)) {
+                    contigIdx = partition.getSequenceIdx();
+                    break;
+                }
+            }
+            if (contigIdx < 0) continue;
+            for (Map.Entry<Integer, SomaticSiteVAF> siteEntry : contigEntry.getValue().entrySet()) {
+                int position = siteEntry.getKey();
+                SomaticSiteVAF siteVAF = siteEntry.getValue();
+                long key = encodeSiteKey(contigIdx, position);
+                int[] counts = siteCounts.get(key);
+                if (counts == null || counts[1] == 0) continue;
+                int currentAlt = counts[0];
+                int totalDepth = counts[1];
+                float currentVAF = (float) currentAlt / totalDepth;
+                float originalVAF = isNormalDataset ? siteVAF.normalVAF() : siteVAF.tumorVAF();
+                int targetAlt = isNormalDataset
+                        ? (int)(originalVAF * totalDepth)                          // floor: never add spurious ALT to normal
+                        : (int) Math.ceil((double) originalVAF * totalDepth);      // ceil: surpass rather than lag in tumor
+                int diff = targetAlt - currentAlt;
+                if (diff == 0) continue;
+                byte refBase = refBases[position - 1]; // 0-based array, 1-based position
+                int readsToFlipToAlt = Math.max(diff, 0);
+                int readsToFlipToRef = Math.max(-diff, 0);
+                byte medianAltQuality = isNormalDataset ? siteVAF.medianNormalAltQuality() : siteVAF.medianTumorAltQuality();
+                adjustments.put(key, new int[]{readsToFlipToAlt, readsToFlipToRef, siteVAF.altAllele() & 0xFF, refBase & 0xFF, medianAltQuality & 0xFF});
+            }
+        }
+        return adjustments;
+    }
+
+    /**
+     * Apply VAF corrections to both normal and tumor merged BAMs using two threads.
+     */
+    private void applyVAFCorrections(String normalBam, Map<Long, int[]> normalSiteCounts,
+                                      String tumorBam, Map<Long, int[]> tumorSiteCounts) {
+        Map<Long, int[]> normalAdj = computeVAFAdjustments(normalSiteCounts, true);
+        Map<Long, int[]> tumorAdj = computeVAFAdjustments(tumorSiteCounts, false);
+        if (normalAdj.isEmpty() && tumorAdj.isEmpty()) return;
+        String normalOut = outputPrefix + ".anonymized.N.fixVAF" + BAM_FILE;
+        String tumorOut = outputPrefix + ".anonymized.T.fixVAF" + BAM_FILE;
+        LOGGER.log(Level.INFO, "Applying VAF corrections: " + normalAdj.size() + " normal sites, " + tumorAdj.size() + " tumor sites");
+        try {
+            ExecutorService exec = Executors.newFixedThreadPool(2);
+            Future<?> normalFuture = exec.submit(() -> {
+                try {
+                    fixVAFSingleBAM(normalBam, normalOut, normalAdj);
+                } catch (Exception e) {
+                    LOGGER.log(Level.SEVERE, "Exception applying VAF corrections to normal BAM", e);
+                    throw new RuntimeException(e);
+                }
+            });
+            Future<?> tumorFuture = exec.submit(() -> {
+                try {
+                    fixVAFSingleBAM(tumorBam, tumorOut, tumorAdj);
+                } catch (Exception e) {
+                    LOGGER.log(Level.SEVERE, "Exception applying VAF corrections to tumor BAM", e);
+                    throw new RuntimeException(e);
+                }
+            });
+            exec.shutdown();
+            normalFuture.get();
+            tumorFuture.get();
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Exception applying VAF corrections", e);
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Apply VAF corrections to a single BAM file. Reads the input BAM, modifies bases at somatic sites
+     * according to adjustments, recalculates MD/NM tags, and writes to output.
+     */
+    private void fixVAFSingleBAM(String inputPath, String outputPath, Map<Long, int[]> adjustments) {
+        if (adjustments.isEmpty()) {
+            // No corrections needed, just copy the file
+            try {
+                java.nio.file.Files.copy(new File(inputPath).toPath(), new File(outputPath).toPath());
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "Error copying BAM for fixVAF (no adjustments): " + inputPath, e);
+            }
+            return;
+        }
+        // Make a mutable copy of adjustments so counters can be decremented during streaming
+        Map<Long, int[]> adjCopy = new HashMap<>();
+        for (Map.Entry<Long, int[]> entry : adjustments.entrySet()) {
+            adjCopy.put(entry.getKey(), entry.getValue().clone());
+        }
+        try (SamReader reader = factory.open(new File(inputPath))) {
+            SAMFileHeader header = reader.getFileHeader();
+            SAMFileWriterFactory writerFactory = new SAMFileWriterFactory();
+            writerFactory.setCompressionLevel(1);
+            writerFactory.setMaxRecordsInRam(maxReadsInRam / 2);
+            writerFactory.setCreateIndex(true);
+            try (SAMFileWriter writer = writerFactory.makeWriter(header, true, new File(outputPath), new File(refGenomePath))) {
+                SAMRecordIterator it = reader.iterator();
+                while (it.hasNext()) {
+                    SAMRecord record = it.next();
+                    if (!record.getReadUnmappedFlag() && !record.getDuplicateReadFlag() && !record.isSecondaryOrSupplementary()) {
+                        String contig = record.getContig();
+                        TreeMap<Integer, SomaticSiteVAF> contigSites = somaticSiteVAFs.get(contig);
+                        if (contigSites != null) {
+                            int alignStart = record.getAlignmentStart();
+                            int alignEnd = record.getAlignmentEnd();
+                            int contigIdx = header.getSequenceIndex(contig);
+                            NavigableMap<Integer, SomaticSiteVAF> overlapping = contigSites.subMap(alignStart, true, alignEnd, true);
+                            boolean modified = false;
+                            for (Map.Entry<Integer, SomaticSiteVAF> siteEntry : overlapping.entrySet()) {
+                                int refPos = siteEntry.getKey();
+                                long key = encodeSiteKey(contigIdx, refPos);
+                                int[] adj = adjCopy.get(key);
+                                if (adj == null) continue;
+                                int readsToFlipToAlt = adj[0];
+                                int readsToFlipToRef = adj[1];
+                                byte altAllele = (byte) adj[2];
+                                byte refBase = (byte) adj[3];
+                                byte medianAltQuality = (byte) adj[4];
+                                if (readsToFlipToAlt == 0 && readsToFlipToRef == 0) continue;
+                                int readPos = record.getReadPositionAtReferencePosition(refPos);
+                                if (readPos == 0) continue;
+                                byte currentBase = record.getReadBases()[readPos - 1];
+                                if (readsToFlipToAlt > 0 && currentBase == refBase) {
+                                    record.getReadBases()[readPos - 1] = altAllele;
+                                    record.getBaseQualities()[readPos - 1] = medianAltQuality;
+                                    adj[0]--;
+                                    modified = true;
+                                } else if (readsToFlipToRef > 0 && currentBase == altAllele) {
+                                    record.getReadBases()[readPos - 1] = refBase;
+                                    adj[1]--;
+                                    modified = true;
+                                }
+                            }
+                            if (modified) {
+                                byte[] refBases = referenceSequences.get(contig);
+                                if (refBases != null) {
+                                    SequenceUtil.calculateMdAndNmTags(record, refBases, true, true);
+                                }
+                            }
+                        }
+                    }
+                    writer.addAlignment(record);
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "Error applying VAF corrections to BAM: " + inputPath, e);
+            throw new RuntimeException(e);
+        }
     }
 
     public static class ModifiedPairsRequired{

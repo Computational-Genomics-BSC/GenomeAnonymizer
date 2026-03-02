@@ -132,6 +132,7 @@ public class SamplePairReadAlignmentReader implements Iterable<PairedPileup>, Cl
             LocusPileupIterator pileupClass = new LocusPileupIterator(reader, region.getSequenceName(), region.getStart(), region.getEnd(), referenceSequence);
             pileupClass.setReadsToExclude(readsToExclude);
             pileupClass.setIncludeDuplicates(includeDuplicates);
+            pileupClass.setMinimumMappingQuality(minimumMappingQuality);
             return pileupClass.iterator();
         }
 

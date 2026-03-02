@@ -19,6 +19,8 @@ public class Signal implements GenomicRegion, ReadSignal, Cloneable{
     private boolean isGermline = false;
     private boolean isHandled = false; // Indicates if the signal has been tested for classification
     private boolean classifiedByDistance = false;
+    private boolean comesFromDuplicate = false;
+    private byte baseQuality = 0;
     private byte[] altAllele;
     private byte[] refAllele;
     private IndelSignalType indelSignalType = IndelSignalType.NOT_INDEL;
@@ -114,6 +116,22 @@ public class Signal implements GenomicRegion, ReadSignal, Cloneable{
 
     public boolean isClassifiedByDistance() {
         return classifiedByDistance;
+    }
+
+    public boolean comesFromDuplicateRead() {
+        return comesFromDuplicate;
+    }
+
+    public void setComesFromDuplicate(boolean comesFromDuplicate) {
+        this.comesFromDuplicate = comesFromDuplicate;
+    }
+
+    public byte getBaseQuality() {
+        return baseQuality;
+    }
+
+    public void setBaseQuality(byte baseQuality) {
+        this.baseQuality = baseQuality;
     }
 
     public byte[] getAltAllele() {

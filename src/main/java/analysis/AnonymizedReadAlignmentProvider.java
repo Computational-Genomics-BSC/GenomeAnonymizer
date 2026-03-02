@@ -76,6 +76,10 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     private int numProcessedPileups = 0;
 
     private String sampleType = GenomeAnonymizer.SAMPLE_TYPE_WGS;
+    private int minDepthForVAFCorrection = GenomeAnonymizer.DEFAULT_MIN_DEPTH_FOR_VAF_CORRECTION;
+
+    // Map of chromosome -> (sorted position -> original VAF data) for potential somatic sites
+    private Map<String, TreeMap<Integer, SomaticSiteVAF>> somaticSiteVAFs = new HashMap<>();
 
     //DEBUG
     public Map<String, Long> METHOD_TIME_MAP = new HashMap<>();
@@ -108,6 +112,14 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         this.sampleType = sampleType;
     }
 
+    public void setMinDepthForVAFCorrection(int minDepthForVAFCorrection) {
+        this.minDepthForVAFCorrection = minDepthForVAFCorrection;
+    }
+
+    public Map<String, TreeMap<Integer, SomaticSiteVAF>> getSomaticSiteVAFs() {
+        return somaticSiteVAFs;
+    }
+
     public void setRefSequence(byte[] refSequence) {
         this.refSequence = refSequence;
     }
@@ -137,6 +149,7 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         pairPileupReader = new SamplePairReadAlignmentReader(normalPath, tumorPath, refGenome, refSequence, leftExtendedRegion);
         pairPileupReader.setIncludeDuplicates(includeDuplicates);
         pairPileupReader.setReadsToExclude(readsToExclude);
+        pairPileupReader.setMinimumMappingQuality(minMappingQuality);
     }
 
     public void processNextPairedPileup(PairedPileup pileup, boolean hasNext){
@@ -149,8 +162,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 v + endclassifyVariationInPairedPileup-startclassifyVariationInPairedPileup);
         long startprocessSimpleSignals = System.currentTimeMillis();
         if (GenomeAnonymizer.SAMPLE_TYPE_GENE_PANEL.equals(sampleType)) {
-            int normalDepth = pileup.getNormalPileup() != null ? pileup.getNormalPileup().getNonDuplicateSize() : 0;
-            int tumorDepth = pileup.getTumorPileup() != null ? pileup.getTumorPileup().getNonDuplicateSize() : 0;
+            int normalDepth = pileup.getNormalPileup() != null ? pileup.getNormalPileup().getPropperSize() : 0;
+            int tumorDepth = pileup.getTumorPileup() != null ? pileup.getTumorPileup().getPropperSize() : 0;
             processGenePanelSNVSignals(normalDepth, tumorDepth);
         }
         else {
@@ -378,6 +391,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         snvSignal.setIsFromNormalDataset(isNormalDataset);
         snvSignal.setAltAllele(altAllele);
         snvSignal.setRefAllele(refAllele);
+        if(includeDuplicates && pileupRead.getRead().getDuplicateReadFlag()) snvSignal.setComesFromDuplicate(true);
+        snvSignal.setBaseQuality(pileupRead.getRead().getBaseQualities()[inReadPosition]);
         snvSignals.add(snvSignal);
     }
 
@@ -409,23 +424,36 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
     private void processGenePanelSNVSignals(int normalDepth, int tumorDepth) {
         int readThreshold = calculateGenePanelThreshold(normalDepth);
 
-        // Count how many normal reads have each alt allele (only count from normal dataset)
-        // Using an int array indexed by byte values for more efficient access than a HashMap
+        // Count how many normal/tumor reads have each alt allele and collect their base qualities
+        // Using int arrays indexed by byte values for more efficient access than a HashMap
         int[] altAlleleNormalReadCount = new int[256];
         int[] altAlleleTumoralReadCount = new int[256];
+        List<Byte>[] normalAltQualities = new List[256];
+        List<Byte>[] tumorAltQualities = new List[256];
         for (Signal var : snvSignals) {
             byte altAllele = var.getAltAllele()[0];
+            if(var.comesFromDuplicateRead()) continue;
+            int alleleIdx = altAllele & 0xFF;
             if (var.isFromNormalDataset()) {
                 altAlleleNormalReadCount[altAllele]++;
+                if (normalAltQualities[alleleIdx] == null) normalAltQualities[alleleIdx] = new ArrayList<>();
+                normalAltQualities[alleleIdx].add(var.getBaseQuality());
             }
             else {
                 altAlleleTumoralReadCount[altAllele]++;
+                if (tumorAltQualities[alleleIdx] == null) tumorAltQualities[alleleIdx] = new ArrayList<>();
+                tumorAltQualities[alleleIdx].add(var.getBaseQuality());
             }
         }
 
         // Mark as germline only if the alt allele appears in enough normal reads to exceed the threshold
         // This prevents marking error-generated variation as germline (thus allowing somatics in output)
         // In gene panel mode, we're less stringent: variants present in few reads are allowed through
+        // Track which alleles have already been captured at this position to avoid duplicates
+        boolean[] alleleCaptured = new boolean[256];
+        double[] normalALTReadFractions = new double[256];
+        double[] tumorALTReadFractions = new double[256];
+        List<Signal> candidateSomaticSignals = new ArrayList<>();
         for (Signal var : snvSignals) {
             byte altAllele = var.getAltAllele()[0];
             int normalALTReadCount = altAlleleNormalReadCount[altAllele];
@@ -440,8 +468,44 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 String readAlnId = var.getReadAlnName();
                 AnonymizedRead anonymizedRead = anonymizedReadCache.get(readAlnId);
                 if(anonymizedRead != null) anonymizedRead.addSignalToAnonymize(var);
+            } else if (!alleleCaptured[altAllele & 0xFF] && tumorALTReadCount > 0) {
+                // Capture original VAF data for this potential somatic site (used by fixVAF correction)
+                alleleCaptured[altAllele & 0xFF] = true;
+                normalALTReadFractions[altAllele & 0xFF] = normalALTReadFraction;
+                tumorALTReadFractions[altAllele & 0xFF] = tumorALTReadFraction;
+                candidateSomaticSignals.add(var);
             }
         }
+        // After processing all signals, add the best potential somatic ALT to the somaticSiteVAFs map
+        // Skip VAF correction entirely if original tumor depth is below the minimum threshold to avoid
+        // false variant calls at low-coverage sites in the anonymized BAM
+        if (tumorDepth < minDepthForVAFCorrection) return;
+        double highestTumorVAF = 0.0;
+        for  (Signal var : candidateSomaticSignals) {
+            byte altAllele = var.getAltAllele()[0];
+            int alleleIdx = altAllele & 0xFF;
+            double normalVAF = normalALTReadFractions[alleleIdx];
+            double tumorVAF = tumorALTReadFractions[alleleIdx];
+            if (tumorVAF > highestTumorVAF) {
+                byte medTumorQuality = computeMedianQuality(tumorAltQualities[alleleIdx]);
+                // Fall back to tumor quality if no normal ALT reads exist at this (somatic) site
+                byte medNormalQuality = normalAltQualities[alleleIdx] != null
+                        ? computeMedianQuality(normalAltQualities[alleleIdx])
+                        : medTumorQuality;
+                somaticSiteVAFs.computeIfAbsent(var.getSequenceName(), k -> new TreeMap<>())
+                    .put(var.getLocation(), new SomaticSiteVAF(altAllele, (float) normalVAF, (float) tumorVAF, medNormalQuality, medTumorQuality));
+                highestTumorVAF = tumorVAF; // Only add one potential somatic site per position (the one with the highest tumor VAF)
+            }
+        }
+    }
+
+    private byte computeMedianQuality(List<Byte> qualities) {
+        if (qualities == null || qualities.isEmpty()) return 0;
+        List<Byte> sorted = new ArrayList<>(qualities);
+        Collections.sort(sorted);
+        int size = sorted.size();
+        if (size % 2 == 1) return sorted.get(size / 2);
+        return (byte) (((sorted.get((size - 1) / 2) & 0xFF) + (sorted.get(size / 2) & 0xFF)) / 2);
     }
 
     /**

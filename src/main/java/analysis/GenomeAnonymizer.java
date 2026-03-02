@@ -22,6 +22,7 @@ public class GenomeAnonymizer {
 
     public final static int DEFAULT_MIN_MAPPING_QUALITY = 0;
     public static final int DEFAULT_MAX_READS_IN_RAM = 500_000;
+    public static final int DEFAULT_MIN_DEPTH_FOR_VAF_CORRECTION = 20;
 
     public final static String BAM_FILE = ".bam";
     public final static String SAM_FILE = ".sam";
@@ -39,6 +40,8 @@ public class GenomeAnonymizer {
     private int maxDepth = 10_000;
     private boolean includeDuplicates = false;
     private String sampleType = SAMPLE_TYPE_WGS;
+    private boolean fixVAF = false;
+    private int minDepthForVAFCorrection = DEFAULT_MIN_DEPTH_FOR_VAF_CORRECTION;
 
     /**
      * Run anonymizer with the benchmark of somatic variants functionality. Any somatic variant will be sparred from anonymization
@@ -63,6 +66,8 @@ public class GenomeAnonymizer {
         anonymizer.setMinimumMappingQuality(minMappingQuality);
         anonymizer.setIncludeDuplicates(includeDuplicates);
         anonymizer.setSampleType(sampleType);
+        anonymizer.setFixVAF(fixVAF);
+        anonymizer.setMinDepthForVAFCorrection(minDepthForVAFCorrection);
         anonymizer.setPartitions();
         long start1 = System.currentTimeMillis();
         anonymizer.queryReadsToExclude();
@@ -98,6 +103,14 @@ public class GenomeAnonymizer {
 
     private void setSampleType(String sampleType) {
         this.sampleType = sampleType;
+    }
+
+    public void setFixVAF(boolean fixVAF) {
+        this.fixVAF = fixVAF;
+    }
+
+    private void setMinDepthForVAFCorrection(int minDepthForVAFCorrection) {
+        this.minDepthForVAFCorrection = minDepthForVAFCorrection;
     }
 
     private static AnonymizerAlgorithm getAnonymizer(String algorithm, String normalPath, String tumorPath,
@@ -140,8 +153,12 @@ public class GenomeAnonymizer {
             String sampleType = commandLine.getOptionValue("sampleType", SAMPLE_TYPE_WGS);
             appInstance.setMinimumMappingQuality(minMQ);
             appInstance.setRandomSeed(randomSeed);
+            boolean fixVAF = commandLine.hasOption("fixVAF");
+            int minDepthVAF = Integer.parseInt(commandLine.getOptionValue("minDepthVAF", String.valueOf(DEFAULT_MIN_DEPTH_FOR_VAF_CORRECTION)));
             appInstance.setIncludeDuplicates(includeDuplicates);
             appInstance.setSampleType(sampleType);
+            appInstance.setFixVAF(fixVAF);
+            appInstance.setMinDepthForVAFCorrection(minDepthVAF);
             if (commandLine.hasOption("tmpDir")) {
                 String tmpDirPath = commandLine.getOptionValue("tmpDir");
                 appInstance.setTmpDir(new File(tmpDirPath));
@@ -154,7 +171,8 @@ public class GenomeAnonymizer {
             LOGGER.info("Running with parameters - \n normalPath: " + normalPath + "\n tumorPath: " + tumorPath +
                         "\n refGenome: " + refGenome + "\n outputPrefix: " + outputPrefix +
                         "\n minMQ: " + minMQ + "\n nThreads: " + nThreads + "\n includeDuplicates: " + includeDuplicates +
-                        "\n maxDepth: " + maxDepth + "\n sampleType: " + sampleType);
+                        "\n maxDepth: " + maxDepth + "\n sampleType: " + sampleType +
+                        "\n fixVAF: " + fixVAF + "\n minDepthVAF: " + minDepthVAF);
             appInstance.run(normalPath, tumorPath, refGenome, outputPrefix, AnonymizerAlgorithm.SHORT_READ_ALGORITHM,
                     DEFAULT_RUN_MODE_FUNCTIONALITY, nThreads);
         }
@@ -235,6 +253,17 @@ public class GenomeAnonymizer {
                 .desc("Type of sample: 'WGS' for whole genome sequencing or 'gene_panel' for gene panel sequencing (default=WGS)")
                 .argName("STRING")
                 .hasArg(true)
+                .build());
+        options.addOption(Option.builder("fixVAF")
+                .desc("Correct VAF values at somatic sites after anonymization (gene_panel mode only, default=false)")
+                .hasArg(false)
+                .build());
+        options.addOption(Option.builder("minDepthVAF")
+                .desc("Minimum original tumor depth required to apply VAF correction at a somatic site. Sites with lower depth " +
+                        "are left uncorrected to avoid false variant calls (gene_panel mode only, default=" + DEFAULT_MIN_DEPTH_FOR_VAF_CORRECTION + ")")
+                .argName("INTEGER")
+                .hasArg(true)
+                .type(Integer.class)
                 .build());
         return options;
     }
