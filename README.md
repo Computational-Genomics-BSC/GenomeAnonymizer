@@ -85,7 +85,32 @@ Essential parameters:
 - `-it`: Tumor sample input BAM/CRAM file
 - `-o`: Output prefix for the output BAM files
 - `-r`: Reference genome FASTA file
-- `-t`: Number of threads to use for processing (default is 12)
+- `-t`: Number of threads to use for processing (default: 12)
 - `-tmpDir`: Temporary directory for intermediate files, to be used when access to `/tmp` is not available
-- `-maxDepth`: Maximum depth threshold for reads in a given genomic region. For gene panels or deep sequencing samples, this parameter should be set to -1 to avoid read filtering.
+- `-maxDepth`: Maximum depth threshold for reads in a given genomic region (default: 10000). Use `-1` to disable depth filtering (recommended for gene panels and deep sequencing samples).
 - `-h`: Display help information
+
+Advanced parameters:
+- `-sampleType`: Type of sample — `WGS` for whole genome sequencing or `gene_panel` for gene panel sequencing (default: `WGS`)
+- `-fixVAF`: Correct VAF values at somatic sites after anonymization. Only applies in `gene_panel` mode (flag, default: disabled)
+- `-minDepthVAF`: Minimum original tumor depth required to apply VAF correction at a somatic site; sites below this threshold are left uncorrected to avoid false variant calls. Only applies in `gene_panel` mode with `-fixVAF` (default: 20)
+- `-minMQ`: Minimum mapping quality for reads to be included in the anonymization process (default: 0; scale: 0–60 PHRED)
+- `-includeDuplicates`: Include duplicate reads in the output (flag, default: disabled)
+- `-maxReadsInMemory`: Maximum number of reads held in memory at once. Lower this on memory-constrained systems (default: 500000)
+- `-s`: Seed for random number generation. Use `-1` for a random seed (default: -1)
+
+### Recommended command for gene panels
+
+When processing gene panel samples, depth filtering should be disabled (`-maxDepth -1`), the sample type set to `gene_panel`, and VAF correction enabled (`-fixVAF`) to preserve accurate allele frequencies after anonymization:
+
+```bash
+java -Xmx16g -jar GenomeAnonymizer.jar \
+    -in $PATH/normal_sample_input.bam \
+    -it $PATH/tumor_sample_input.bam \
+    -o $PATH/output \
+    -r $PATH/reference.fa \
+    -t 12 \
+    -sampleType gene_panel \
+    -maxDepth -1 \
+    -fixVAF
+```
