@@ -671,17 +671,14 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         int n = typeSignals.size();
         List<ReadSignal> currentPartition = new ArrayList<>();
         List<List<ReadSignal>> connectedPartitionSignals = new ArrayList<>();
-        for(int i = 0; i < n-1; i++){
+        for(int i = 0; i < n; i++){
             ReadSignal currentSignal = typeSignals.get(i);
             currentPartition.add(currentSignal);
-            ReadSignal nextSignal = typeSignals.get(i+1);
-            int locationDistance = Math.abs(nextSignal.getLocation() - currentSignal.getLocation());
-            boolean lastSignalUnreachable = locationDistance > MAX_LOCATION_DISTANCE_THRESHOLD;
-            if(lastSignalUnreachable || currentPartition.size() >= signalPerPartitionLimit || (i==n-2)){
-                if(!lastSignalUnreachable){
-                    currentPartition.add(nextSignal);
-                    i++;
-                }
+            boolean isLastSignal = i == n-1;
+            boolean nextSignalUnreachable = !isLastSignal &&
+                    Math.abs(typeSignals.get(i+1).getLocation() - currentSignal.getLocation()) > MAX_LOCATION_DISTANCE_THRESHOLD;
+            //Every signal ends up in exactly one partition, including isolated signals and the last one of the list
+            if(isLastSignal || nextSignalUnreachable || currentPartition.size() >= signalPerPartitionLimit){
                 if(returnConnectedSignals) {
                     processPartition(currentPartition, true, connectedPartitionSignals);
                 }
@@ -707,6 +704,8 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
         AdjacencyList signalsGraph = new AdjacencyList(n, false);
         for (int i = 0; i < n; i++){
             ReadSignal firstSignal = signals.get(i);
+            //Signals that are undecidable or already known to be germline do not need another signal to be classified
+            classifyStandaloneGermlineSignal(firstSignal);
             for (int j = i + 1; j < n; j++){
                 ReadSignal secondSignal = signals.get(j);
                 //Avoid comparing signals from small deletions against insertions
@@ -733,19 +732,6 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                             endclassifyPGcomplexSignal - startclassifyPGcomplexSignal :
                             v + endclassifyPGcomplexSignal - startclassifyPGcomplexSignal);
                 }
-                else{
-                    //Classify signals that are not close enough to be considered as a germline signal,
-                    // but are undecidable as they are not overlapped by reads on the other dataset,
-                    // or SIMPLE_VARIATION that is already classified as germline
-                    if(overlapsUncoveredPosition(firstSignal) ||
-                            ( firstSignal.isIntraAlignmentSignal() && firstSignal.isGermline() )){
-                        classifyGermlineComplexSignal(firstSignal);
-                    }
-                    if(overlapsUncoveredPosition(secondSignal) ||
-                            ( secondSignal.isIntraAlignmentSignal() && secondSignal.isGermline() )){
-                        classifyGermlineComplexSignal(secondSignal);
-                    }
-                }
             }
             // Manage the read that has been analyzed, removing it from the onHoldReads map
             manageAnalyzedSignalsInHoldedReadAln(firstSignal);
@@ -769,6 +755,17 @@ public class AnonymizedReadAlignmentProvider implements Iterable<AnonymizedRead>
                 }
                 connectedSignals.add(connectedComponentSignals);
             }
+        }
+    }
+
+    /**
+     * Classifies as germline a signal that is undecidable because it is not overlapped by reads on the other dataset,
+     * or intra alignment variation that was already seen as germline when it was collected
+     * @param signal
+     */
+    private void classifyStandaloneGermlineSignal(ReadSignal signal) {
+        if(overlapsUncoveredPosition(signal) || ( signal.isIntraAlignmentSignal() && signal.isGermline() )){
+            classifyGermlineComplexSignal(signal);
         }
     }
 

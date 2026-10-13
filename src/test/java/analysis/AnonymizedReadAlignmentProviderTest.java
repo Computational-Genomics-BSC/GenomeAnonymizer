@@ -48,6 +48,7 @@ public class AnonymizedReadAlignmentProviderTest {
     // First deleted base of two deletions of 3 bp
     private static final int GERMLINE_DELETION = 1000;
     private static final int SOMATIC_DELETION = 1300;
+    private static final int TUMOR_ONLY_DELETION = 2400;
     private static final int DELETION_LENGTH = 3;
     private static final int MIN_DELETION_FLANK = 8;
 
@@ -67,14 +68,22 @@ public class AnonymizedReadAlignmentProviderTest {
         reference = TestAlignments.randomSequence(CONTIG_LENGTH, 17);
         header = TestAlignments.header(new String[]{CONTIG}, new int[]{CONTIG_LENGTH});
         referenceFile = TestAlignments.writeReference(tempDir, "ref.fa", new String[]{CONTIG}, new String[]{reference});
+        buildDataset(new int[]{GERMLINE_DELETION}, new int[]{GERMLINE_DELETION, SOMATIC_DELETION}, new int[0]);
+    }
+
+    /**
+     * Writes the tumor-normal pair with the given deletions in the region covered by both samples, and in the
+     * region covered only by the tumor
+     */
+    private void buildDataset(int[] normalDeletions, int[] tumorDeletions, int[] tumorOnlyRegionDeletions) {
         normalRecords = new ArrayList<>();
         tumorRecords = new ArrayList<>();
         for (int start = SHARED_FIRST_START; start <= SHARED_LAST_START; start += TILE_STEP) {
-            addPair(normalRecords, "n" + start, start, new int[]{GERMLINE_SNV}, new int[]{GERMLINE_DELETION});
-            addPair(tumorRecords, "t" + start, start, new int[]{GERMLINE_SNV, SOMATIC_SNV}, new int[]{GERMLINE_DELETION, SOMATIC_DELETION});
+            addPair(normalRecords, "n" + start, start, new int[]{GERMLINE_SNV}, normalDeletions);
+            addPair(tumorRecords, "t" + start, start, new int[]{GERMLINE_SNV, SOMATIC_SNV}, tumorDeletions);
         }
         for (int start = TUMOR_ONLY_FIRST_START; start <= TUMOR_ONLY_LAST_START; start += TILE_STEP) {
-            addPair(tumorRecords, "t" + start, start, new int[]{TUMOR_ONLY_SNV}, new int[0]);
+            addPair(tumorRecords, "t" + start, start, new int[]{TUMOR_ONLY_SNV}, tumorOnlyRegionDeletions);
         }
         normalFile = TestAlignments.writeIndexedBam(tempDir, "normal.bam", header, normalRecords);
         tumorFile = TestAlignments.writeIndexedBam(tempDir, "tumor.bam", header, tumorRecords);
@@ -198,6 +207,55 @@ public class AnonymizedReadAlignmentProviderTest {
         assertTrue(inputDeletions > 0);
         List<List<SAMRecord>> anonymized = anonymize(newProvider());
         assertEquals(inputDeletions, countDeletions(anonymized.get(1), SOMATIC_DELETION));
+    }
+
+    @Test
+    void isolatedDeletionWhereTheNormalHasNoCoverageIsRemoved() throws IOException {
+        // The deletion is the only indel or soft clip of the region, so there is no other signal to compare it with
+        buildDataset(new int[0], new int[0], new int[]{TUMOR_ONLY_DELETION});
+        assertTrue(countDeletions(tumorRecords, TUMOR_ONLY_DELETION) > 0);
+        List<List<SAMRecord>> anonymized = anonymize(newProvider());
+        assertEquals(0, countDeletions(anonymized.get(1), TUMOR_ONLY_DELETION));
+        assertEquals(tumorRecords.size(), anonymized.get(1).size());
+    }
+
+    @Test
+    void lastDeletionFarFromThePreviousSignalIsClassified() throws IOException {
+        // The deletion is the last signal and is more than MAX_LOCATION_DISTANCE_THRESHOLD away from the previous one
+        buildDataset(new int[]{GERMLINE_DELETION}, new int[]{GERMLINE_DELETION, SOMATIC_DELETION}, new int[]{TUMOR_ONLY_DELETION});
+        assertTrue(TUMOR_ONLY_DELETION - SOMATIC_DELETION > AnonymizedReadAlignmentProvider.MAX_LOCATION_DISTANCE_THRESHOLD);
+        int somaticDeletions = countDeletions(tumorRecords, SOMATIC_DELETION);
+        List<List<SAMRecord>> anonymized = anonymize(newProvider());
+        assertEquals(0, countDeletions(anonymized.get(1), TUMOR_ONLY_DELETION));
+        assertEquals(0, countDeletions(anonymized.get(1), GERMLINE_DELETION));
+        assertEquals(somaticDeletions, countDeletions(anonymized.get(1), SOMATIC_DELETION));
+    }
+
+    @Test
+    void indelsOfDifferentTypeInTheSameNormalReadAreRemovedWhereTheTumorHasNoCoverage() throws IOException {
+        // A deletion and an insertion are never compared with each other, and both come from the same read
+        normalRecords = new ArrayList<>();
+        tumorRecords = new ArrayList<>();
+        int start = 2001;
+        String bases = reference.substring(start - 1, start + 19) + reference.substring(start + 22, start + 32) + "A"
+                + reference.substring(start + 32, start + 51);
+        normalRecords.add(TestAlignments.read(header, "n1", CONTIG, start, "20M3D10M1I19M", bases, true, false, CONTIG,
+                start + MATE_OFFSET, true, MATE_OFFSET + READ_LENGTH));
+        normalRecords.add(TestAlignments.read(header, "n1", CONTIG, start + MATE_OFFSET, READ_LENGTH + "M",
+                reference.substring(start + MATE_OFFSET - 1, start + MATE_OFFSET - 1 + READ_LENGTH), false, true, CONTIG,
+                start, false, -(MATE_OFFSET + READ_LENGTH)));
+        for (int tumorStart = SHARED_FIRST_START; tumorStart <= SHARED_FIRST_START + 100; tumorStart += TILE_STEP) {
+            addPair(tumorRecords, "t" + tumorStart, tumorStart, new int[0], new int[0]);
+        }
+        normalFile = TestAlignments.writeIndexedBam(tempDir, "normal.bam", header, normalRecords);
+        tumorFile = TestAlignments.writeIndexedBam(tempDir, "tumor.bam", header, tumorRecords);
+        List<List<SAMRecord>> anonymized = anonymize(newProvider());
+        assertEquals(2, anonymized.get(0).size());
+        for (SAMRecord record : anonymized.get(0)) {
+            assertEquals(READ_LENGTH + "M", record.getCigarString(), record.getReadName());
+            assertEquals(reference.substring(record.getAlignmentStart() - 1, record.getAlignmentStart() - 1 + READ_LENGTH),
+                    record.getReadString(), record.getReadName());
+        }
     }
 
     @Test
