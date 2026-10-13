@@ -11,6 +11,7 @@ import java.util.function.Consumer;
 import genomicelements.PileupRead.PileupReadStatus;
 
 import static utils.DNAalphabet.ALPHABET;
+import static utils.Operations.isMitochondrialSequence;
 
 /**
  * @author Nicolas Gaitan
@@ -214,6 +215,8 @@ public class LocusPileupIterator implements Iterable<LocusPileUp> {
 
     public boolean passesFilters(SAMRecord read){
         if(readsToExclude.contains(read.getReadName())) return false;
+        // The mitochondrial chromosome is left out of the result, along with the pairs of the reads mapped to it
+        if(isMitochondrialSequence(read.getReferenceName()) || isMitochondrialSequence(read.getMateReferenceName())) return false;
         if(read.getMappingQuality() < minimumMappingQuality) return false;
         if(read.getReadUnmappedFlag() || read.getMateUnmappedFlag()) return false;
         if(!includeDuplicates && read.getDuplicateReadFlag()) return false;

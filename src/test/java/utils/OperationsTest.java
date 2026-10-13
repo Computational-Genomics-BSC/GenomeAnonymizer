@@ -11,6 +11,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class OperationsTest {
 
     @Test
+    void mitochondrialSequenceIsRecognizedByItsCommonNames() {
+        assertTrue(Operations.isMitochondrialSequence("chrM"));
+        assertTrue(Operations.isMitochondrialSequence("MT"));
+        assertTrue(Operations.isMitochondrialSequence("chrMT"));
+        assertTrue(Operations.isMitochondrialSequence("M"));
+        assertTrue(Operations.isMitochondrialSequence("chrm"));
+        assertFalse(Operations.isMitochondrialSequence("chr1"));
+        assertFalse(Operations.isMitochondrialSequence("chrM_random"));
+        // Unmapped mates have no reference name
+        assertFalse(Operations.isMitochondrialSequence("*"));
+        assertFalse(Operations.isMitochondrialSequence(null));
+    }
+
+    @Test
     void compareOrdersBySequenceIndexFirst() {
         assertEquals(-3, Operations.compare(0, 100, 200, 1, 1, 50));
         assertEquals(3, Operations.compare(2, 1, 50, 1, 100, 200));

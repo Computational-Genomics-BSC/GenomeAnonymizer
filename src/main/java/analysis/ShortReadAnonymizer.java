@@ -21,6 +21,7 @@ import java.util.logging.Logger;
 
 import static analysis.GenomeAnonymizer.*;
 import static genomicelements.ShortAnonymizedReadAlignment.*;
+import static utils.Operations.isMitochondrialSequence;
 
 /**
  * AnonymizerAlgorithm implementation for short read data
@@ -46,7 +47,7 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
     private List<GenomicRegion> genomicPartitions = new ArrayList<>();
     private Map<String, byte[]> referenceSequences = new HashMap<>();
 
-    // Set that contains all the reads that will be excluded from the result (e.g. Unmapped and MAPQ < filter)
+    // Set that contains all the reads that will be excluded from the result (e.g. Unmapped, MAPQ < filter and mitochondrial)
     private UnsafeStringHashSet readsToExclude;
     private Map<String, Integer> updatedMatePositions;
     private Map<String, Integer> readsToCorrectOrientation;
@@ -272,6 +273,12 @@ public class ShortReadAnonymizer implements AnonymizerAlgorithm {
             SAMRecordIterator it = reader.query(partition.getSequenceName(), partition.getStart(), partition.getEnd(), false);
             while (it.hasNext()) {
                 SAMRecord samRecord = it.next();
+                // Any alignment in the mitochondrial chromosome excludes the read by name, so its pair and its supplementary
+                // alignments in other chromosomes are left out too. This goes before the supplementary filter on purpose
+                if (isMitochondrialSequence(samRecord.getReferenceName()) || isMitochondrialSequence(samRecord.getMateReferenceName())) {
+                    readsToExcludeInPartition.add(samRecord.getReadName());
+                    continue;
+                }
                 // Skip secondary and supplementary reads
                 if (samRecord.isSecondaryOrSupplementary() || samRecord.getReadUnmappedFlag() || samRecord.getMateUnmappedFlag()) {
                     continue;

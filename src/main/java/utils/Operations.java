@@ -12,9 +12,20 @@ import java.util.Map;
  */
 public class Operations {
 
+    // Names given to the mitochondrial chromosome by the common reference builds (UCSC, Ensembl/GRCh37, GenBank accession of the rCRS)
+    public static final String[] MITOCHONDRIAL_SEQUENCE_NAMES = {"chrM", "MT", "chrMT", "M", "NC_012920.1"};
+
     // public static Operations getInstance(){
     //     return new Operations();
     //}
+
+    public static boolean isMitochondrialSequence(String sequenceName) {
+        if (sequenceName == null) return false;
+        for (String mitochondrialName : MITOCHONDRIAL_SEQUENCE_NAMES) {
+            if (mitochondrialName.equalsIgnoreCase(sequenceName)) return true;
+        }
+        return false;
+    }
 
     public static int compare(int seqIdx1, int first1, int last1, int seqIdx2, int first2, int last2) {
         if (seqIdx1 < seqIdx2) {

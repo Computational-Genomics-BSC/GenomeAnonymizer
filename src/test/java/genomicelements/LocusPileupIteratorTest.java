@@ -183,6 +183,33 @@ public class LocusPileupIteratorTest {
     }
 
     @Test
+    void mitochondrialReadsAndTheirPairsAreSkipped() throws IOException {
+        String mitochondrialContig = "chrM";
+        header = TestAlignments.header(new String[]{CONTIG, mitochondrialContig}, new int[]{CONTIG_LENGTH, CONTIG_LENGTH});
+        records.clear();
+        String bases = reference.substring(FIRST_START - 1, FIRST_START - 1 + READ_LENGTH);
+        SAMRecord[] nuclearPair = TestAlignments.properPair(header, "nuclear", CONTIG, reference, FIRST_START, FIRST_START + MATE_OFFSET, READ_LENGTH);
+        SAMRecord[] mitochondrialPair = TestAlignments.properPair(header, "mito", mitochondrialContig, reference, FIRST_START, FIRST_START + MATE_OFFSET, READ_LENGTH);
+        records.add(nuclearPair[0]);
+        records.add(nuclearPair[1]);
+        // A read whose pair maps to the mitochondrial chromosome
+        records.add(TestAlignments.read(header, "split", CONTIG, 501, READ_LENGTH + "M", bases, true, false, mitochondrialContig, 501, true, 0));
+        records.add(mitochondrialPair[0]);
+        records.add(mitochondrialPair[1]);
+        records.add(TestAlignments.read(header, "split", mitochondrialContig, 501, READ_LENGTH + "M", bases, false, true, CONTIG, 501, false, 0));
+        try (SamReader reader = openReader()) {
+            TreeMap<Integer, LocusPileUp> pileups = collect(new LocusPileupIterator(reader, CONTIG, 1, CONTIG_LENGTH));
+            // Only the nuclear pair is left
+            assertEquals(2 * READ_LENGTH, pileups.size());
+            assertFalse(pileups.containsKey(501));
+        }
+        try (SamReader reader = openReader()) {
+            TreeMap<Integer, LocusPileUp> pileups = collect(new LocusPileupIterator(reader, mitochondrialContig, 1, CONTIG_LENGTH));
+            assertTrue(pileups.isEmpty());
+        }
+    }
+
+    @Test
     void deletedAndInsertedBasesDoNotMakePileups() throws IOException {
         records.clear();
         // 20 aligned bases, 5 deleted, 4 inserted and 26 aligned
